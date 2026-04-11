@@ -112,17 +112,20 @@ public class SelectionTracker
             return;
         }
 
-        _ = Application.Current.Dispatcher.InvokeAsync(() =>
+        _ = Application.Current.Dispatcher.InvokeAsync(async () =>
         {
             try
             {
                 if (!SettingsManager.Current.Enabled) return;
                 if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps)) return;
+
+                // Only show paste in editable fields
+                if (!await Task.Run(() => ForegroundApp.IsEditableFieldFocused())) return;
+
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
                 _toolbar ??= new ToolbarWindow();
                 _toolbar.Registry = _actionRegistry;
-                Trace.WriteLine($"[SnapActions] LongPress: showing at ({cursorPos.X},{cursorPos.Y})");
                 _toolbar.ShowPasteMode(cursorPos.X, cursorPos.Y);
                 _lastShowTime = DateTime.UtcNow;
             }
