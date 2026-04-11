@@ -9,7 +9,6 @@ public static class TextCapture
     private const int INPUT_KEYBOARD = 1;
     private const ushort VK_CONTROL = 0x11;
     private const ushort VK_INSERT = 0x2D;  // Ctrl+Insert = Copy (avoids letter-key hooks)
-    private const ushort VK_SHIFT = 0x10;
     private const ushort VK_V = 0x56;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint WM_COPY = 0x0301;

@@ -86,8 +86,6 @@
                         <Path Data="{StaticResource IconSearch}" Fill="{StaticResource TextSecondaryBrush}"
                               Width="14" Height="14" Stretch="Uniform"/>
                     </Button>
-                    <Button x:Name="MoreButton" Style="{StaticResource CategoryButtonStyle}"
-                            Content="..." Click="MoreButton_Click" ToolTip="More Actions"/>
                 </StackPanel>
             </StackPanel>
         </Border>

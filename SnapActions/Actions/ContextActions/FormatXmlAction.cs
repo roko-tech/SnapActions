@@ -31,7 +31,7 @@ public partial class StripTagsAction : IAction
 {
     public string Id => "strip_tags";
     public string Name => "Strip Tags";
-    public string IconKey => "IconStripTags";
+    public string IconKey => "IconFormatXml";
     public ActionCategory Category => ActionCategory.Context;
 
     public bool CanExecute(string text, TextAnalysis analysis) => analysis.Type == TextType.XmlHtml;

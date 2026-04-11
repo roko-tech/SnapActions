@@ -120,9 +120,11 @@ public class MouseHook : IDisposable
         }
         else if (msg == WM_MOUSEMOVE && _isTracking && !_longPressFired)
         {
-            var hs = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
-            double dx = hs.pt.X - _mouseDownPoint.X;
-            double dy = hs.pt.Y - _mouseDownPoint.Y;
+            // Read only the POINT (first 8 bytes) instead of marshaling the full struct
+            int mx = Marshal.ReadInt32(lParam, 0);
+            int my = Marshal.ReadInt32(lParam, 4);
+            double dx = mx - _mouseDownPoint.X;
+            double dy = my - _mouseDownPoint.Y;
             if (dx * dx + dy * dy > 64)
                 _longPressTimer.Stop();
         }

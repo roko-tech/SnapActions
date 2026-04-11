@@ -13,11 +13,14 @@ public class DecodeBase64Action : IAction
 
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
+        // Use already-decoded value from detector if available
+        if (analysis.Metadata?.TryGetValue("decoded", out var decoded) == true)
+            return new ActionResult(true, decoded, "Base64 decoded");
+
         try
         {
             var bytes = Convert.FromBase64String(text.Trim());
-            var decoded = System.Text.Encoding.UTF8.GetString(bytes);
-            return new ActionResult(true, decoded, "Base64 decoded");
+            return new ActionResult(true, System.Text.Encoding.UTF8.GetString(bytes), "Base64 decoded");
         }
         catch
         {

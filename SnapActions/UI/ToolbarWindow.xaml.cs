@@ -95,7 +95,6 @@ public partial class ToolbarWindow : Window
         EncodeButton.Visibility = Visibility.Collapsed;
         SearchSeparator.Visibility = Visibility.Collapsed;
         SearchButton.Visibility = Visibility.Collapsed;
-        MoreButton.Visibility = Visibility.Collapsed;
         TypeBadge.Visibility = Visibility.Collapsed;
 
         PositionAndShow(x, y);
@@ -109,14 +108,11 @@ public partial class ToolbarWindow : Window
         bool hasTransform = _isEditable && s.ShowTransformActions && _actionGroups.Any(g => g.Name == "Transform");
         bool hasEncode = _isEditable && s.ShowEncodeActions && _actionGroups.Any(g => g.Name == "Encode");
         bool hasSearch = s.ShowSearchActions && _actionGroups.Any(g => g.Name == "Search");
-        bool hasMore = false;
-
         TransformSeparator.Visibility = hasTransform ? Visibility.Visible : Visibility.Collapsed;
         TransformButton.Visibility = hasTransform ? Visibility.Visible : Visibility.Collapsed;
         EncodeButton.Visibility = hasEncode ? Visibility.Visible : Visibility.Collapsed;
-        SearchSeparator.Visibility = (hasSearch || hasMore) ? Visibility.Visible : Visibility.Collapsed;
+        SearchSeparator.Visibility = hasSearch ? Visibility.Visible : Visibility.Collapsed;
         SearchButton.Visibility = hasSearch ? Visibility.Visible : Visibility.Collapsed;
-        MoreButton.Visibility = hasMore ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ── Positioning ──────────────────────────────────────────────
@@ -189,10 +185,16 @@ public partial class ToolbarWindow : Window
         _editMode = false;
         SubMenuPopup.IsOpen = false;
         var fadeOut = (Storyboard)FindResource("FadeOut");
-        EventHandler? h = null;
-        h = (_, _) => { fadeOut.Completed -= h; Hide(); };
-        fadeOut.Completed += h;
+        fadeOut.Stop(this);
+        fadeOut.Completed += FadeOut_Completed;
         fadeOut.Begin(this);
+    }
+
+    private void FadeOut_Completed(object? sender, EventArgs e)
+    {
+        var fadeOut = (Storyboard)FindResource("FadeOut");
+        fadeOut.Completed -= FadeOut_Completed;
+        Hide();
     }
 
     public bool IsPointInside(int screenX, int screenY)
@@ -726,7 +728,6 @@ public partial class ToolbarWindow : Window
         ShowSubMenu("Encode", ActionCategory.Encode, (FrameworkElement)sender);
     private void SearchButton_Click(object sender, RoutedEventArgs e) =>
         ShowSubMenu("Search", ActionCategory.Search, (FrameworkElement)sender);
-    private void MoreButton_Click(object sender, RoutedEventArgs e) { }
 
     // ── P/Invoke ─────────────────────────────────────────────────
 

@@ -99,7 +99,8 @@ public class TrayIconManager : IDisposable
         g.FillRectangle(textBrush, 6, 8, 6, 1);
         g.FillRectangle(textBrush, 6, 11, 4, 1);
         // Green dot
-        g.FillRectangle(new SolidBrush(Color.FromArgb(166, 227, 161)), 12, 11, 2, 2);
+        using var greenBrush = new SolidBrush(Color.FromArgb(166, 227, 161));
+        g.FillRectangle(greenBrush, 12, 11, 2, 2);
 
         IntPtr hIcon = bmp.GetHicon();
         var icon = Icon.FromHandle(hIcon);
