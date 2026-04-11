@@ -63,12 +63,8 @@ public static class ForegroundApp
             var focused = AutomationElement.FocusedElement;
             if (focused == null) return false;
 
-            // Only trust Edit controls (browser <input>, <textarea>)
+            // Only trust ControlType.Edit (browser <input>, <textarea>, Win32 edit boxes)
             if (focused.Current.ControlType == ControlType.Edit) return true;
-
-            // ValuePattern with IsReadOnly=false (explicit editable signal)
-            if (focused.TryGetCurrentPattern(ValuePattern.Pattern, out var vp))
-                if (!((ValuePattern)vp).Current.IsReadOnly) return true;
         }
         catch { }
         return false;
