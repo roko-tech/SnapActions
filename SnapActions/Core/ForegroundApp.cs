@@ -63,8 +63,15 @@ public static class ForegroundApp
             var focused = AutomationElement.FocusedElement;
             if (focused == null) return false;
 
-            // Only trust ControlType.Edit (browser <input>, <textarea>, Win32 edit boxes)
-            if (focused.Current.ControlType == ControlType.Edit) return true;
+            var ct = focused.Current.ControlType;
+
+            // Browser <input>, <textarea>, Win32 edit boxes
+            if (ct == ControlType.Edit) return true;
+
+            // Rich text editors (ProseMirror, CodeMirror, etc.) report as Group with TextPattern
+            // Desktop icons report as ListItem with ValuePattern - won't match here
+            if (ct == ControlType.Group && focused.TryGetCurrentPattern(TextPattern.Pattern, out _))
+                return true;
         }
         catch { }
         return false;
