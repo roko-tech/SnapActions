@@ -1,0 +1,51 @@
+using System.Diagnostics;
+using System.IO;
+using SnapActions.Detection;
+using SnapActions.Helpers;
+
+namespace SnapActions.Actions.ContextActions;
+
+public class OpenFilePathAction : IAction
+{
+    public string Id => "open_filepath";
+    public string Name => "Open";
+    public string IconKey => "IconOpenFile";
+    public ActionCategory Category => ActionCategory.Context;
+
+    public bool CanExecute(string text, TextAnalysis analysis) =>
+        analysis.Type == TextType.FilePath && Path.Exists(CleanPath(text));
+
+    public ActionResult Execute(string text, TextAnalysis analysis) =>
+        ProcessHelper.TryShellOpen(CleanPath(text));
+
+    internal static string CleanPath(string text) => text.Trim().Replace("\"", "");
+}
+
+public class OpenContainingFolderAction : IAction
+{
+    public string Id => "open_folder";
+    public string Name => "Open Folder";
+    public string IconKey => "IconFolder";
+    public ActionCategory Category => ActionCategory.Context;
+
+    public bool CanExecute(string text, TextAnalysis analysis) => analysis.Type == TextType.FilePath;
+
+    public ActionResult Execute(string text, TextAnalysis analysis)
+    {
+        var path = OpenFilePathAction.CleanPath(text);
+        try
+        {
+            if (File.Exists(path))
+                Process.Start("explorer.exe", $"/select,\"{path}\"");
+            else if (Directory.Exists(path))
+                Process.Start("explorer.exe", $"\"{path}\"");
+            else
+                return new ActionResult(false, Message: "Path not found");
+            return new ActionResult(true, Message: "Folder opened");
+        }
+        catch (Exception ex)
+        {
+            return new ActionResult(false, Message: ex.Message);
+        }
+    }
+}

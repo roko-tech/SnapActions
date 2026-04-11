@@ -1,0 +1,166 @@
+<Window x:Class="SnapActions.UI.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SnapActions Settings"
+        Width="540" Height="640"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Background="{StaticResource BackgroundBrush}">
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,15">
+            <TextBlock Text="SnapActions" FontSize="22" FontWeight="Bold"
+                       Foreground="{StaticResource AccentBrush}"/>
+            <TextBlock Text="Smart Text Selection Toolbar" FontSize="12"
+                       Foreground="{StaticResource TextSecondaryBrush}" Margin="0,2,0,0"/>
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <!-- General -->
+                <TextBlock Text="GENERAL" FontSize="11" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,6"/>
+                <CheckBox x:Name="EnabledCheck" Content="Enabled"
+                          Foreground="{StaticResource TextBrush}" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+                <CheckBox x:Name="AutoStartCheck" Content="Start with Windows"
+                          Foreground="{StaticResource TextBrush}" Margin="0,4"
+                          Checked="AutoStart_Changed" Unchecked="AutoStart_Changed"/>
+                <CheckBox x:Name="ReplaceSelectionCheck"
+                          Content="Replace selection when transforming text"
+                          Foreground="{StaticResource TextBrush}" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Show delay:" Foreground="{StaticResource TextBrush}"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="ShowDelayCombo" Width="120"
+                              SelectionChanged="ShowDelay_Changed">
+                        <ComboBoxItem Content="Instant" Tag="0"/>
+                        <ComboBoxItem Content="100 ms" Tag="100"/>
+                        <ComboBoxItem Content="200 ms" Tag="200"/>
+                        <ComboBoxItem Content="300 ms" Tag="300"/>
+                        <ComboBoxItem Content="500 ms" Tag="500"/>
+                        <ComboBoxItem Content="1 second" Tag="1000"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Auto-dismiss after:" Foreground="{StaticResource TextBrush}"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="DismissTimeCombo" Width="120"
+                              SelectionChanged="DismissTime_Changed">
+                        <ComboBoxItem Content="3 seconds" Tag="3000"/>
+                        <ComboBoxItem Content="5 seconds" Tag="5000"/>
+                        <ComboBoxItem Content="8 seconds" Tag="8000"/>
+                        <ComboBoxItem Content="15 seconds" Tag="15000"/>
+                        <ComboBoxItem Content="30 seconds" Tag="30000"/>
+                        <ComboBoxItem Content="Never" Tag="0"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <!-- Action Categories -->
+                <TextBlock Text="ACTIONS" FontSize="11" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,18,0,6"/>
+                <CheckBox x:Name="ShowTransformCheck" Content="Text Transforms"
+                          Foreground="{StaticResource TextBrush}" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+                <CheckBox x:Name="ShowEncodeCheck" Content="Encode/Decode"
+                          Foreground="{StaticResource TextBrush}" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+                <CheckBox x:Name="ShowSearchCheck" Content="Search engines"
+                          Foreground="{StaticResource TextBrush}" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+
+                <!-- Search Language -->
+                <TextBlock Text="SEARCH LANGUAGE" FontSize="11" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,18,0,6"/>
+                <StackPanel Orientation="Horizontal">
+                    <ComboBox x:Name="LanguageCombo" Width="200"
+                              SelectionChanged="Language_Changed">
+                        <ComboBoxItem Content="No filter" Tag=""/>
+                        <ComboBoxItem Content="English" Tag="en"/>
+                        <ComboBoxItem Content="Arabic" Tag="ar"/>
+                        <ComboBoxItem Content="Spanish" Tag="es"/>
+                        <ComboBoxItem Content="French" Tag="fr"/>
+                        <ComboBoxItem Content="German" Tag="de"/>
+                        <ComboBoxItem Content="Japanese" Tag="ja"/>
+                        <ComboBoxItem Content="Korean" Tag="ko"/>
+                        <ComboBoxItem Content="Chinese" Tag="zh"/>
+                        <ComboBoxItem Content="Portuguese" Tag="pt"/>
+                        <ComboBoxItem Content="Russian" Tag="ru"/>
+                        <ComboBoxItem Content="Turkish" Tag="tr"/>
+                        <ComboBoxItem Content="Hindi" Tag="hi"/>
+                        <ComboBoxItem Content="Italian" Tag="it"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <!-- Search Engines -->
+                <TextBlock Text="SEARCH ENGINES" FontSize="11" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,18,0,6"/>
+                <StackPanel x:Name="SearchEnginesPanel" Margin="0,0,0,4"/>
+
+                <!-- Add custom search engine -->
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="6"
+                        Padding="10" Margin="0,6,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Add Custom Search Engine" FontSize="11"
+                                   Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,6"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <TextBlock Text="Name:" Foreground="{StaticResource TextBrush}"
+                                       VerticalAlignment="Center" Width="50"/>
+                            <TextBox x:Name="CustomNameBox" Width="180"
+                                     Background="{StaticResource BackgroundBrush}"
+                                     Foreground="{StaticResource TextBrush}"
+                                     BorderBrush="{StaticResource BorderBrush}" Padding="4,2"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="URL:" Foreground="{StaticResource TextBrush}"
+                                       VerticalAlignment="Center" Width="50"/>
+                            <TextBox x:Name="CustomUrlBox" Width="350"
+                                     Background="{StaticResource BackgroundBrush}"
+                                     Foreground="{StaticResource TextBrush}"
+                                     BorderBrush="{StaticResource BorderBrush}" Padding="4,2"/>
+                        </StackPanel>
+                        <TextBlock Text="Use {0} for query, {1} for language. Example: https://site.com/search?q={0}&amp;lang={1}"
+                                   FontSize="10" Foreground="{StaticResource TextSecondaryBrush}"
+                                   Margin="50,2,0,4" TextWrapping="Wrap"/>
+                        <Button Content="Add" HorizontalAlignment="Left" Margin="50,2,0,0"
+                                Padding="16,4" Click="AddCustomEngine_Click"
+                                Background="{StaticResource AccentBrush}" Foreground="#1E1E2E"
+                                BorderThickness="0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Excluded Apps -->
+                <TextBlock Text="EXCLUDED APPS" FontSize="11" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,18,0,6"/>
+                <TextBlock Text="One process name per line"
+                           FontSize="10" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                <TextBox x:Name="ExcludedAppsBox" AcceptsReturn="True" Height="80"
+                         Background="{StaticResource SurfaceBrush}"
+                         Foreground="{StaticResource TextBrush}"
+                         BorderBrush="{StaticResource BorderBrush}"
+                         Padding="8" FontFamily="Consolas" FontSize="12"
+                         TextChanged="ExcludedApps_Changed"/>
+            </StackPanel>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
+            <Button Content="Save" Padding="20,8" Margin="0,0,8,0"
+                    Background="{StaticResource AccentBrush}" Foreground="#1E1E2E"
+                    BorderThickness="0" Click="Save_Click"/>
+            <Button Content="Close" Padding="20,8"
+                    Background="{StaticResource SurfaceBrush}"
+                    Foreground="{StaticResource TextBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>
