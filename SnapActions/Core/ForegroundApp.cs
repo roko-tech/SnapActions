@@ -31,36 +31,46 @@ public static class ForegroundApp
     }
 
     /// <summary>
-    /// Detects if the user is in an editable text field.
-    /// Uses Win32 caret check (fast, native controls) + UI Automation (browsers, WPF).
+    /// Permissive check for selection toolbar (show transform buttons).
+    /// Allows false positives - transforms just copy to clipboard harmlessly.
     /// </summary>
     public static bool IsEditableFieldFocused()
     {
-        // Fast path: Win32 caret (Notepad, native Edit controls)
         if (HasWin32Caret()) return true;
-
-        // UI Automation (browser inputs, Electron, ProseMirror, CodeMirror, etc.)
         try
         {
             var focused = AutomationElement.FocusedElement;
             if (focused == null) return false;
 
-            // Edit controls are always editable
-            if (focused.Current.ControlType == ControlType.Edit)
-                return true;
-
-            // ValuePattern with IsReadOnly=false → editable
+            if (focused.Current.ControlType == ControlType.Edit) return true;
             if (focused.TryGetCurrentPattern(ValuePattern.Pattern, out var vp))
                 if (!((ValuePattern)vp).Current.IsReadOnly) return true;
-
-            // TextPattern support → editable text area
-            // Regular webpage text does NOT support TextPattern.
-            // Only actual editors do (ProseMirror, CodeMirror, contenteditable, etc.)
-            if (focused.TryGetCurrentPattern(TextPattern.Pattern, out _))
-                return true;
+            if (focused.TryGetCurrentPattern(TextPattern.Pattern, out _)) return true;
         }
         catch { }
+        return false;
+    }
 
+    /// <summary>
+    /// Strict check for paste mode. Only returns true when we're confident
+    /// the user is in a real text input (Win32 caret or ControlType.Edit).
+    /// </summary>
+    public static bool IsTextInputFocused()
+    {
+        if (HasWin32Caret()) return true;
+        try
+        {
+            var focused = AutomationElement.FocusedElement;
+            if (focused == null) return false;
+
+            // Only trust Edit controls (browser <input>, <textarea>)
+            if (focused.Current.ControlType == ControlType.Edit) return true;
+
+            // ValuePattern with IsReadOnly=false (explicit editable signal)
+            if (focused.TryGetCurrentPattern(ValuePattern.Pattern, out var vp))
+                if (!((ValuePattern)vp).Current.IsReadOnly) return true;
+        }
+        catch { }
         return false;
     }
 

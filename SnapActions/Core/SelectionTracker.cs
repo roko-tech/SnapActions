@@ -119,8 +119,8 @@ public class SelectionTracker
                 if (!SettingsManager.Current.Enabled) return;
                 if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps)) return;
 
-                // Only show paste in editable fields
-                if (!await Task.Run(() => ForegroundApp.IsEditableFieldFocused())) return;
+                // Strict check: only show paste in real text inputs
+                if (!await Task.Run(() => ForegroundApp.IsTextInputFocused())) return;
 
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
