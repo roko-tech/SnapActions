@@ -22,9 +22,17 @@ public partial class ResultPopup : Window
 
         // Position near cursor using raw screen pixels / 96 DPI as baseline
         // (WPF handles DPI scaling for us when we set Left/Top)
-        Left = screenX - 100;
-        Top = screenY - 80;
+        // Show first, then position (need PresentationSource for DPI)
         Show();
+
+        double dpi = 1.0;
+        var source = PresentationSource.FromVisual(this);
+        if (source?.CompositionTarget != null)
+            dpi = source.CompositionTarget.TransformToDevice.M11;
+
+        Left = (screenX / dpi) - 100;
+        Top = (screenY / dpi) - 80;
+        Topmost = true;
         Activate();
 
         try
@@ -57,8 +65,21 @@ public partial class ResultPopup : Window
         var to = string.IsNullOrEmpty(targetLang) ? "en" : targetLang;
         var url = $"https://api.mymemory.translated.net/get?q={Uri.EscapeDataString(text)}&langpair=autodetect|{to}";
         var json = await http.GetStringAsync(url);
-        var match = System.Text.RegularExpressions.Regex.Match(json, "\"translatedText\"\\s*:\\s*\"([^\"]+)\"");
-        return match.Success ? System.Net.WebUtility.HtmlDecode(match.Groups[1].Value) : "Translation not available";
+
+        // Parse with System.Text.Json to properly decode Unicode escapes
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var translated = doc.RootElement
+                .GetProperty("responseData")
+                .GetProperty("translatedText")
+                .GetString();
+            return System.Net.WebUtility.HtmlDecode(translated ?? "Translation not available");
+        }
+        catch
+        {
+            return "Translation not available";
+        }
     }
 
     public static async Task<string> FetchDefinition(HttpClient http, string word)
@@ -66,16 +87,37 @@ public partial class ResultPopup : Window
         var url = $"https://api.dictionaryapi.dev/api/v2/entries/en/{Uri.EscapeDataString(word.Trim())}";
         var json = await http.GetStringAsync(url);
 
-        var defMatch = System.Text.RegularExpressions.Regex.Match(json, "\"definition\"\\s*:\\s*\"([^\"]+)\"");
-        var posMatch = System.Text.RegularExpressions.Regex.Match(json, "\"partOfSpeech\"\\s*:\\s*\"([^\"]+)\"");
-        var phoneticMatch = System.Text.RegularExpressions.Regex.Match(json, "\"phonetic\"\\s*:\\s*\"([^\"]+)\"");
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var entry = doc.RootElement[0];
+            var result = "";
 
-        var result = "";
-        if (phoneticMatch.Success) result += phoneticMatch.Groups[1].Value + "\n\n";
-        if (posMatch.Success) result += posMatch.Groups[1].Value + "\n";
-        if (defMatch.Success) result += defMatch.Groups[1].Value;
-        else result = "No definition found";
-        return result;
+            if (entry.TryGetProperty("phonetic", out var phonetic))
+                result += phonetic.GetString() + "\n\n";
+
+            var meanings = entry.GetProperty("meanings");
+            foreach (var meaning in meanings.EnumerateArray())
+            {
+                var pos = meaning.GetProperty("partOfSpeech").GetString();
+                result += $"{pos}\n";
+                var defs = meaning.GetProperty("definitions");
+                int count = 0;
+                foreach (var def in defs.EnumerateArray())
+                {
+                    if (count >= 2) break;
+                    result += $"  {def.GetProperty("definition").GetString()}\n";
+                    count++;
+                }
+                result += "\n";
+            }
+
+            return string.IsNullOrWhiteSpace(result) ? "No definition found" : result.TrimEnd();
+        }
+        catch
+        {
+            return "No definition found";
+        }
     }
 
     public static async Task<string> FetchCurrencyConversion(HttpClient http, string text)
@@ -105,15 +147,18 @@ public partial class ResultPopup : Window
         var url = $"https://api.frankfurter.app/latest?amount={amount}&from={src}&to={targets}";
         var json = await http.GetStringAsync(url);
 
-        var rates = System.Text.RegularExpressions.Regex.Matches(json, "\"(\\w+)\"\\s*:\\s*([\\d.]+)");
-        var result = $"{amount} {src} =\n";
-        foreach (System.Text.RegularExpressions.Match m in rates)
+        try
         {
-            var currency = m.Groups[1].Value;
-            var value = m.Groups[2].Value;
-            if (currency.Length == 3 && currency != "amount")
-                result += $"  {value} {currency}\n";
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var rates = doc.RootElement.GetProperty("rates");
+            var result = $"{amount} {src} =\n";
+            foreach (var rate in rates.EnumerateObject())
+                result += $"  {rate.Value} {rate.Name}\n";
+            return result.TrimEnd();
         }
-        return result.TrimEnd();
+        catch
+        {
+            return "Conversion failed";
+        }
     }
 }
