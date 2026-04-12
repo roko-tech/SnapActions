@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using SnapActions.Detection;
 using SnapActions.UI;
@@ -25,9 +26,14 @@ public partial class CurrencyConverterAction : IAction
     {
         var popup = new ResultPopup();
         var trimmed = text.Trim();
-        Helpers.NativeMethods.GetCursorPos(out var pt);
+        GetCursorPos(out var pt);
         popup.ShowAt(pt.X, pt.Y, "Currency Converter",
             async http => await ResultPopup.FetchCurrencyConversion(http, trimmed));
         return new ActionResult(true, Message: "Converting...");
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT pt);
 }
