@@ -8,11 +8,21 @@ public partial class ResultPopup : Window
     private string _resultText = "";
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(8) };
 
+    private bool _loaded;
+    private bool _closed;
+
     public ResultPopup()
     {
         InitializeComponent();
-        Deactivated += (_, _) => Close();
-        MouseLeave += (_, _) => Close();
+        Deactivated += (_, _) => SafeClose();
+        MouseLeave += (_, _) => { if (_loaded) SafeClose(); };
+    }
+
+    private void SafeClose()
+    {
+        if (_closed) return;
+        _closed = true;
+        try { Close(); } catch { }
     }
 
     public async void ShowAt(double screenX, double screenY, string title, Func<HttpClient, Task<string>> fetchResult)
@@ -40,6 +50,8 @@ public partial class ResultPopup : Window
         try
         {
             _resultText = await fetchResult(Http);
+            if (_closed) return;
+            _loaded = true;
             ResultText.Text = _resultText;
             LoadingText.Visibility = Visibility.Collapsed;
             ResultText.Visibility = Visibility.Visible;
@@ -47,6 +59,8 @@ public partial class ResultPopup : Window
         }
         catch (Exception ex)
         {
+            if (_closed) return;
+            _loaded = true;
             LoadingText.Text = $"Error: {ex.Message}";
         }
     }
