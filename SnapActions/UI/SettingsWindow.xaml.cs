@@ -18,8 +18,13 @@ public partial class SettingsWindow : Window
         InitializeComponent();
         _textBrush = (Brush)FindResource("TextBrush");
         _secondaryBrush = (Brush)FindResource("TextSecondaryBrush");
-        LoadSettings();
-        _loading = false;
+
+        // Defer loading so the window renders immediately
+        Loaded += (_, _) =>
+        {
+            LoadSettings();
+            _loading = false;
+        };
     }
 
     private void LoadSettings()
@@ -32,6 +37,7 @@ public partial class SettingsWindow : Window
         SelectComboByTag(DismissTimeCombo, s.ToolbarDismissTimeout.ToString(), 2);
         SelectComboByTag(ShowDelayCombo, s.ToolbarShowDelay.ToString(), 0);
         SelectComboByTag(LanguageCombo, s.SearchLanguage, 0);
+        SelectComboByTag(CurrencyCombo, s.TargetCurrency, 0);
 
         ShowTransformCheck.IsChecked = s.ShowTransformActions;
         ShowEncodeCheck.IsChecked = s.ShowEncodeActions;
@@ -129,6 +135,13 @@ public partial class SettingsWindow : Window
         if (_loading) return;
         if (LanguageCombo.SelectedItem is ComboBoxItem item)
             SettingsManager.Current.SearchLanguage = item.Tag?.ToString() ?? "";
+    }
+
+    private void Currency_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        if (CurrencyCombo.SelectedItem is ComboBoxItem item)
+            SettingsManager.Current.TargetCurrency = item.Tag?.ToString() ?? "USD";
     }
 
     private void EngineToggle_Changed(object sender, RoutedEventArgs e)

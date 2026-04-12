@@ -101,6 +101,30 @@
                     </ComboBox>
                 </StackPanel>
 
+                <!-- Target Currency -->
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Convert to:" Foreground="{StaticResource TextBrush}"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="CurrencyCombo" Width="120"
+                              SelectionChanged="Currency_Changed">
+                        <ComboBoxItem Content="USD" Tag="USD"/>
+                        <ComboBoxItem Content="EUR" Tag="EUR"/>
+                        <ComboBoxItem Content="GBP" Tag="GBP"/>
+                        <ComboBoxItem Content="SAR" Tag="SAR"/>
+                        <ComboBoxItem Content="AED" Tag="AED"/>
+                        <ComboBoxItem Content="KWD" Tag="KWD"/>
+                        <ComboBoxItem Content="JPY" Tag="JPY"/>
+                        <ComboBoxItem Content="CAD" Tag="CAD"/>
+                        <ComboBoxItem Content="AUD" Tag="AUD"/>
+                        <ComboBoxItem Content="CHF" Tag="CHF"/>
+                        <ComboBoxItem Content="CNY" Tag="CNY"/>
+                        <ComboBoxItem Content="INR" Tag="INR"/>
+                        <ComboBoxItem Content="BRL" Tag="BRL"/>
+                        <ComboBoxItem Content="KRW" Tag="KRW"/>
+                        <ComboBoxItem Content="TRY" Tag="TRY"/>
+                    </ComboBox>
+                </StackPanel>
+
                 <!-- Search Engines -->
                 <TextBlock Text="SEARCH ENGINES" FontSize="11" FontWeight="SemiBold"
                            Foreground="{StaticResource TextSecondaryBrush}" Margin="0,18,0,6"/>

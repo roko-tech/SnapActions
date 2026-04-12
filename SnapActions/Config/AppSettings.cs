@@ -35,6 +35,9 @@ public class AppSettings
 
     public List<SearchEngine> SearchEngines { get; set; } = GetDefaultEngines();
 
+    /// <summary>Target currency for conversion (e.g. "USD", "EUR", "SAR")</summary>
+    public string TargetCurrency { get; set; } = "USD";
+
     public List<string> DisabledActionIds { get; set; } = [];
 
     /// <summary>Action IDs pinned to the main toolbar bar.</summary>

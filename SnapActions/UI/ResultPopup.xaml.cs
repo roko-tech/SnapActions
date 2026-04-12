@@ -136,30 +136,35 @@ public partial class ResultPopup : Window
         }
     }
 
-    public static async Task<string> FetchCurrencyConversion(HttpClient http, string text)
+    private static readonly Dictionary<string, string[]> CurrencySymbols = new()
+    {
+        ["EUR"] = ["EUR", "\u20AC"], ["GBP"] = ["GBP", "\u00A3"],
+        ["JPY"] = ["JPY", "\u00A5"], ["SAR"] = ["SAR", "\uFDFC"],
+        ["AED"] = ["AED"], ["KWD"] = ["KWD"], ["CAD"] = ["CAD"],
+        ["AUD"] = ["AUD"], ["CHF"] = ["CHF"], ["CNY"] = ["CNY"],
+        ["INR"] = ["INR", "\u20B9"], ["BRL"] = ["BRL"], ["KRW"] = ["KRW"],
+        ["TRY"] = ["TRY", "\u20BA"], ["USD"] = ["USD", "$"],
+    };
+
+    public static async Task<string> FetchCurrencyConversion(HttpClient http, string text, string targetCurrency = "USD")
     {
         var numMatch = System.Text.RegularExpressions.Regex.Match(text, @"[\d,]+\.?\d*");
         if (!numMatch.Success) return "No amount found";
         var amount = numMatch.Value.Replace(",", "");
 
+        // Detect source currency
         var src = "USD";
         var upper = text.ToUpperInvariant();
-        if (upper.Contains("EUR") || text.Contains('\u20AC')) src = "EUR";
-        else if (upper.Contains("GBP") || text.Contains('\u00A3')) src = "GBP";
-        else if (upper.Contains("JPY") || text.Contains('\u00A5')) src = "JPY";
-        else if (upper.Contains("SAR")) src = "SAR";
-        else if (upper.Contains("AED")) src = "AED";
-        else if (upper.Contains("KWD")) src = "KWD";
-        else if (upper.Contains("CAD")) src = "CAD";
-        else if (upper.Contains("AUD")) src = "AUD";
-        else if (upper.Contains("CHF")) src = "CHF";
-        else if (upper.Contains("CNY")) src = "CNY";
-        else if (upper.Contains("INR")) src = "INR";
-        else if (upper.Contains("BRL")) src = "BRL";
-        else if (upper.Contains("KRW")) src = "KRW";
-        else if (upper.Contains("TRY")) src = "TRY";
+        foreach (var (code, symbols) in CurrencySymbols)
+        {
+            if (symbols.Any(s => upper.Contains(s.ToUpperInvariant()) || text.Contains(s)))
+            { src = code; break; }
+        }
 
-        var targets = src == "USD" ? "EUR,GBP,SAR,JPY" : "USD,EUR,GBP,SAR";
+        // Build target list: always include the user's target + a few common ones
+        var targets = new HashSet<string> { targetCurrency, "USD", "EUR", "GBP", "SAR" };
+        targets.Remove(src); // don't convert to self
+        var targetStr = string.Join(",", targets.Take(5));
         var url = $"https://api.frankfurter.app/latest?amount={amount}&from={src}&to={targets}";
         var json = await http.GetStringAsync(url);
 
