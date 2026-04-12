@@ -11,6 +11,8 @@ public partial class ResultPopup : Window
     public ResultPopup()
     {
         InitializeComponent();
+        Deactivated += (_, _) => Close();
+        MouseLeave += (_, _) => Close();
     }
 
     public async void ShowAt(double screenX, double screenY, string title, Func<HttpClient, Task<string>> fetchResult)
