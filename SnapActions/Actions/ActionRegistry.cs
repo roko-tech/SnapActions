@@ -28,6 +28,11 @@ public class ActionRegistry
             new DecodeBase64Action(),
             new GenerateUuidAction(),
             new ConvertTimezoneAction(),
+            new TranslateAction(),
+            new DictionaryAction(),
+            new CurrencyConverterAction(),
+            new DeleteTextAction(),
+            new PastePlainTextAction(),
 
             // Transform actions
             new CaseTransformAction("upper", "UPPERCASE", "IconUppercase", text => text.ToUpperInvariant()),
@@ -46,6 +51,8 @@ public class ActionRegistry
                 text => string.Join("\n", text.Split('\n').Order())),
             new WhitespaceAction("dedup_lines", "Remove Duplicates",
                 text => string.Join("\n", text.Split('\n').Distinct())),
+            new WhitespaceAction("remove_linebreaks", "Remove Line Breaks",
+                text => System.Text.RegularExpressions.Regex.Replace(text, @"[\r\n]+", " ").Trim()),
 
             // Encoding actions
             new EncodingAction("url_encode", "URL Encode", "IconEncode",
