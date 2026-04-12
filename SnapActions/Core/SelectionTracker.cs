@@ -47,13 +47,16 @@ public class SelectionTracker
     private bool IsClickOnToolbar(MouseHook.POINT pt) =>
         _toolbar is { IsVisible: true } && _toolbar.IsPointInside(pt.X, pt.Y);
 
+    /// <summary>Fast check: is the foreground window our own process? Avoids Process.GetProcessById.</summary>
+    private static bool IsSelfFocused()
+    {
+        var name = ForegroundApp.GetActiveProcessName();
+        return name != null && name.Equals("SnapActions", StringComparison.OrdinalIgnoreCase);
+    }
+
     private void OnMouseDown(MouseHook.POINT pt)
     {
-        if (IsClickOnToolbar(pt))
-        {
-            _mouseHook.CancelTracking();
-            return;
-        }
+        if (IsClickOnToolbar(pt)) { _mouseHook.CancelTracking(); return; }
 
         Application.Current.Dispatcher.InvokeAsync(() =>
         {
@@ -65,6 +68,8 @@ public class SelectionTracker
     private void OnSelectionLikely(MouseHook.POINT cursorPos)
     {
         if (IsClickOnToolbar(cursorPos)) return;
+        // Fast exit: skip everything if our own app is focused (settings window, etc.)
+        if (IsSelfFocused()) return;
 
         var now = DateTime.UtcNow;
         if ((now - _lastShowTime).TotalMilliseconds < DebounceMs) return;
@@ -78,7 +83,6 @@ public class SelectionTracker
                 if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps)) return;
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
-                // Run editable check in parallel with text capture (background thread)
                 var editableTask = Task.Run(() => ForegroundApp.IsEditableFieldFocused());
 
                 var text = await TextCapture.CaptureSelectedTextAsync();
@@ -106,11 +110,8 @@ public class SelectionTracker
 
     private void OnLongPress(MouseHook.POINT cursorPos)
     {
-        if (IsClickOnToolbar(cursorPos))
-        {
-            Trace.WriteLine("[SnapActions] LongPress: on toolbar, skipped");
-            return;
-        }
+        if (IsClickOnToolbar(cursorPos)) return;
+        if (IsSelfFocused()) return;
 
         _ = Application.Current.Dispatcher.InvokeAsync(async () =>
         {
@@ -119,7 +120,6 @@ public class SelectionTracker
                 if (!SettingsManager.Current.Enabled) return;
                 if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps)) return;
 
-                // Strict check: only show paste in real text inputs
                 if (!await Task.Run(() => ForegroundApp.IsTextInputFocused())) return;
 
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
