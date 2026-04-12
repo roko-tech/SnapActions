@@ -5,7 +5,9 @@
         Width="540" Height="640"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize"
-        Background="{StaticResource BackgroundBrush}">
+        Background="#FF1E1E2E"
+        RenderOptions.BitmapScalingMode="LowQuality"
+        TextOptions.TextFormattingMode="Display">
 
     <Grid Margin="20">
         <Grid.RowDefinitions>
@@ -16,29 +18,29 @@
 
         <StackPanel Grid.Row="0" Margin="0,0,0,15">
             <TextBlock Text="SnapActions" FontSize="22" FontWeight="Bold"
-                       Foreground="{StaticResource AccentBrush}"/>
+                       Foreground="#FF89B4FA"/>
             <TextBlock Text="Smart Text Selection Toolbar" FontSize="12"
-                       Foreground="{StaticResource TextSecondaryBrush}" Margin="0,2,0,0"/>
+                       Foreground="#FFA6ADC8" Margin="0,2,0,0"/>
         </StackPanel>
 
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel>
                 <!-- General -->
                 <TextBlock Text="GENERAL" FontSize="11" FontWeight="SemiBold"
-                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,6"/>
+                           Foreground="#FFA6ADC8" Margin="0,0,0,6"/>
                 <CheckBox x:Name="EnabledCheck" Content="Enabled"
-                          Foreground="{StaticResource TextBrush}" Margin="0,4"
+                          Foreground="#FFCDD6F4" Margin="0,4"
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>
                 <CheckBox x:Name="AutoStartCheck" Content="Start with Windows"
-                          Foreground="{StaticResource TextBrush}" Margin="0,4"
+                          Foreground="#FFCDD6F4" Margin="0,4"
                           Checked="AutoStart_Changed" Unchecked="AutoStart_Changed"/>
                 <CheckBox x:Name="ReplaceSelectionCheck"
                           Content="Replace selection when transforming text"
-                          Foreground="{StaticResource TextBrush}" Margin="0,4"
+                          Foreground="#FFCDD6F4" Margin="0,4"
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>
 
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                    <TextBlock Text="Show delay:" Foreground="{StaticResource TextBrush}"
+                    <TextBlock Text="Show delay:" Foreground="#FFCDD6F4"
                                VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <ComboBox x:Name="ShowDelayCombo" Width="120"
                               SelectionChanged="ShowDelay_Changed">
@@ -52,7 +54,7 @@
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                    <TextBlock Text="Auto-dismiss after:" Foreground="{StaticResource TextBrush}"
+                    <TextBlock Text="Auto-dismiss after:" Foreground="#FFCDD6F4"
                                VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <ComboBox x:Name="DismissTimeCombo" Width="120"
                               SelectionChanged="DismissTime_Changed">
@@ -67,20 +69,20 @@
 
                 <!-- Action Categories -->
                 <TextBlock Text="ACTIONS" FontSize="11" FontWeight="SemiBold"
-                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,18,0,6"/>
+                           Foreground="#FFA6ADC8" Margin="0,18,0,6"/>
                 <CheckBox x:Name="ShowTransformCheck" Content="Text Transforms"
-                          Foreground="{StaticResource TextBrush}" Margin="0,4"
+                          Foreground="#FFCDD6F4" Margin="0,4"
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>
                 <CheckBox x:Name="ShowEncodeCheck" Content="Encode/Decode"
-                          Foreground="{StaticResource TextBrush}" Margin="0,4"
+                          Foreground="#FFCDD6F4" Margin="0,4"
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>
                 <CheckBox x:Name="ShowSearchCheck" Content="Search engines"
-                          Foreground="{StaticResource TextBrush}" Margin="0,4"
+                          Foreground="#FFCDD6F4" Margin="0,4"
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>
 
                 <!-- Search Language -->
                 <TextBlock Text="SEARCH LANGUAGE" FontSize="11" FontWeight="SemiBold"
-                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,18,0,6"/>
+                           Foreground="#FFA6ADC8" Margin="0,18,0,6"/>
                 <StackPanel Orientation="Horizontal">
                     <ComboBox x:Name="LanguageCombo" Width="200"
                               SelectionChanged="Language_Changed">
@@ -103,7 +105,7 @@
 
                 <!-- Target Currency -->
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                    <TextBlock Text="Convert to:" Foreground="{StaticResource TextBrush}"
+                    <TextBlock Text="Convert to:" Foreground="#FFCDD6F4"
                                VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <ComboBox x:Name="CurrencyCombo" Width="120"
                               SelectionChanged="Currency_Changed">
@@ -127,50 +129,50 @@
 
                 <!-- Search Engines -->
                 <TextBlock Text="SEARCH ENGINES" FontSize="11" FontWeight="SemiBold"
-                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,18,0,6"/>
+                           Foreground="#FFA6ADC8" Margin="0,18,0,6"/>
                 <StackPanel x:Name="SearchEnginesPanel" Margin="0,0,0,4"/>
 
                 <!-- Add custom search engine -->
-                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="6"
+                <Border Background="#FF2D2D3D" CornerRadius="6"
                         Padding="10" Margin="0,6,0,0">
                     <StackPanel>
                         <TextBlock Text="Add Custom Search Engine" FontSize="11"
-                                   Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,6"/>
+                                   Foreground="#FFA6ADC8" Margin="0,0,0,6"/>
                         <StackPanel Orientation="Horizontal" Margin="0,2">
-                            <TextBlock Text="Name:" Foreground="{StaticResource TextBrush}"
+                            <TextBlock Text="Name:" Foreground="#FFCDD6F4"
                                        VerticalAlignment="Center" Width="50"/>
                             <TextBox x:Name="CustomNameBox" Width="180"
-                                     Background="{StaticResource BackgroundBrush}"
-                                     Foreground="{StaticResource TextBrush}"
-                                     BorderBrush="{StaticResource BorderBrush}" Padding="4,2"/>
+                                     Background="#FF1E1E2E"
+                                     Foreground="#FFCDD6F4"
+                                     BorderBrush="#FF3D3D50" Padding="4,2"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,4">
-                            <TextBlock Text="URL:" Foreground="{StaticResource TextBrush}"
+                            <TextBlock Text="URL:" Foreground="#FFCDD6F4"
                                        VerticalAlignment="Center" Width="50"/>
                             <TextBox x:Name="CustomUrlBox" Width="350"
-                                     Background="{StaticResource BackgroundBrush}"
-                                     Foreground="{StaticResource TextBrush}"
-                                     BorderBrush="{StaticResource BorderBrush}" Padding="4,2"/>
+                                     Background="#FF1E1E2E"
+                                     Foreground="#FFCDD6F4"
+                                     BorderBrush="#FF3D3D50" Padding="4,2"/>
                         </StackPanel>
                         <TextBlock Text="Use {0} for query, {1} for language. Example: https://site.com/search?q={0}&amp;lang={1}"
-                                   FontSize="10" Foreground="{StaticResource TextSecondaryBrush}"
+                                   FontSize="10" Foreground="#FFA6ADC8"
                                    Margin="50,2,0,4" TextWrapping="Wrap"/>
                         <Button Content="Add" HorizontalAlignment="Left" Margin="50,2,0,0"
                                 Padding="16,4" Click="AddCustomEngine_Click"
-                                Background="{StaticResource AccentBrush}" Foreground="#1E1E2E"
+                                Background="#FF89B4FA" Foreground="#1E1E2E"
                                 BorderThickness="0"/>
                     </StackPanel>
                 </Border>
 
                 <!-- Excluded Apps -->
                 <TextBlock Text="EXCLUDED APPS" FontSize="11" FontWeight="SemiBold"
-                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,18,0,6"/>
+                           Foreground="#FFA6ADC8" Margin="0,18,0,6"/>
                 <TextBlock Text="One process name per line"
-                           FontSize="10" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                           FontSize="10" Foreground="#FFA6ADC8" Margin="0,0,0,4"/>
                 <TextBox x:Name="ExcludedAppsBox" AcceptsReturn="True" Height="80"
-                         Background="{StaticResource SurfaceBrush}"
-                         Foreground="{StaticResource TextBrush}"
-                         BorderBrush="{StaticResource BorderBrush}"
+                         Background="#FF2D2D3D"
+                         Foreground="#FFCDD6F4"
+                         BorderBrush="#FF3D3D50"
                          Padding="8" FontFamily="Consolas" FontSize="12"
                          TextChanged="ExcludedApps_Changed"/>
             </StackPanel>
@@ -178,12 +180,12 @@
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
             <Button Content="Save" Padding="20,8" Margin="0,0,8,0"
-                    Background="{StaticResource AccentBrush}" Foreground="#1E1E2E"
+                    Background="#FF89B4FA" Foreground="#1E1E2E"
                     BorderThickness="0" Click="Save_Click"/>
             <Button Content="Close" Padding="20,8"
-                    Background="{StaticResource SurfaceBrush}"
-                    Foreground="{StaticResource TextBrush}"
-                    BorderBrush="{StaticResource BorderBrush}"
+                    Background="#FF2D2D3D"
+                    Foreground="#FFCDD6F4"
+                    BorderBrush="#FF3D3D50"
                     Click="Close_Click"/>
         </StackPanel>
     </Grid>

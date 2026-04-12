@@ -16,14 +16,19 @@ public partial class SettingsWindow : Window
     public SettingsWindow()
     {
         InitializeComponent();
-        _textBrush = (Brush)FindResource("TextBrush");
-        _secondaryBrush = (Brush)FindResource("TextSecondaryBrush");
+        _textBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xCD, 0xD6, 0xF4));
+        _secondaryBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xA6, 0xAD, 0xC8));
+        _textBrush.Freeze();
+        _secondaryBrush.Freeze();
 
-        // Defer loading so the window renders immediately
-        Loaded += (_, _) =>
+        // Defer heavy loading to after render, use dispatcher idle priority
+        ContentRendered += (_, _) =>
         {
-            LoadSettings();
-            _loading = false;
+            Dispatcher.InvokeAsync(() =>
+            {
+                LoadSettings();
+                _loading = false;
+            }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
         };
     }
 
