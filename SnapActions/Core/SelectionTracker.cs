@@ -57,6 +57,9 @@ public class SelectionTracker
     private void OnMouseDown(MouseHook.POINT pt)
     {
         if (IsClickOnToolbar(pt)) { _mouseHook.CancelTracking(); return; }
+        if (IsSelfFocused()) { _mouseHook.CancelTracking(); return; }
+
+        if (_toolbar is not { IsVisible: true }) return;
 
         Application.Current.Dispatcher.InvokeAsync(() =>
         {
