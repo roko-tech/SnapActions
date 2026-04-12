@@ -41,6 +41,7 @@ public partial class SettingsWindow : Window
 
         SelectComboByTag(DismissTimeCombo, s.ToolbarDismissTimeout.ToString(), 2);
         SelectComboByTag(ShowDelayCombo, s.ToolbarShowDelay.ToString(), 0);
+        SelectComboByTag(MultiClickCombo, s.MultiClickDelay.ToString(), 2);
         SelectComboByTag(LanguageCombo, s.SearchLanguage, 0);
         SelectComboByTag(CurrencyCombo, s.TargetCurrency, 0);
 
@@ -125,6 +126,14 @@ public partial class SettingsWindow : Window
         if (ShowDelayCombo.SelectedItem is ComboBoxItem item &&
             int.TryParse(item.Tag?.ToString(), out int ms))
             SettingsManager.Current.ToolbarShowDelay = ms;
+    }
+
+    private void MultiClick_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        if (MultiClickCombo.SelectedItem is ComboBoxItem item &&
+            int.TryParse(item.Tag?.ToString(), out int ms))
+            SettingsManager.Current.MultiClickDelay = ms;
     }
 
     private void DismissTime_Changed(object sender, SelectionChangedEventArgs e)

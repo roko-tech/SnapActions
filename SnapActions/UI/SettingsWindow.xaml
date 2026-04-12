@@ -54,6 +54,19 @@
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Multi-click delay:" Foreground="#FFCDD6F4"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="MultiClickCombo" Width="120"
+                              SelectionChanged="MultiClick_Changed">
+                        <ComboBoxItem Content="Instant" Tag="0"/>
+                        <ComboBoxItem Content="100 ms" Tag="100"/>
+                        <ComboBoxItem Content="200 ms" Tag="200"/>
+                        <ComboBoxItem Content="300 ms" Tag="300"/>
+                        <ComboBoxItem Content="400 ms" Tag="400"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                     <TextBlock Text="Auto-dismiss after:" Foreground="#FFCDD6F4"
                                VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <ComboBox x:Name="DismissTimeCombo" Width="120"

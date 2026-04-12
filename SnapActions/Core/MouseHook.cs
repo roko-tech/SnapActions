@@ -61,8 +61,9 @@ public class MouseHook : IDisposable
                 { Interval = TimeSpan.FromMilliseconds(500) };
             _longPressTimer.Tick += OnLongPressTimer;
 
+            var multiClickMs = Config.SettingsManager.Current.MultiClickDelay;
             _multiClickTimer = new DispatcherTimer(DispatcherPriority.Normal, _hookDispatcher)
-                { Interval = TimeSpan.FromMilliseconds(200) };
+                { Interval = TimeSpan.FromMilliseconds(multiClickMs > 0 ? multiClickMs : 1) };
             _multiClickTimer.Tick += OnMultiClickTimer;
 
             // Run message pump so the hook receives callbacks
@@ -176,8 +177,19 @@ public class MouseHook : IDisposable
                 if (since < 500 && cdx * cdx + cdy * cdy < 64)
                 {
                     _clickCount++;
-                    _multiClickTimer?.Stop();
-                    _multiClickTimer?.Start();
+                    if (Config.SettingsManager.Current.MultiClickDelay == 0)
+                    {
+                        // Instant: fire immediately on every multi-click
+                        if (_clickCount >= 2)
+                        {
+                            try { SelectionLikely?.Invoke(up); } catch { }
+                        }
+                    }
+                    else
+                    {
+                        _multiClickTimer?.Stop();
+                        _multiClickTimer?.Start();
+                    }
                 }
                 else
                 {

@@ -23,6 +23,8 @@ public class AppSettings
     public int ToolbarDismissTimeout { get; set; } = 8000;
     /// <summary>Delay in ms before showing toolbar after selection (0 = instant).</summary>
     public int ToolbarShowDelay { get; set; } = 0;
+    /// <summary>Delay in ms after double/triple click before firing (allows next click). 0 = instant.</summary>
+    public int MultiClickDelay { get; set; } = 200;
     public List<string> ExcludedApps { get; set; } = ["KeePass", "1Password", "Bitwarden"];
     public bool ReplaceSelectionOnTransform { get; set; } = true;
 
