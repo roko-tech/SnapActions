@@ -193,15 +193,11 @@ public partial class ResultPopup : Window
             var rates = doc.RootElement.GetProperty("rates");
             var amt = double.Parse(amount, System.Globalization.CultureInfo.InvariantCulture);
 
-            var targets = new[] { targetCurrency, "USD", "EUR", "GBP", "SAR", "AED", "JPY" }
-                .Where(c => c != src).Distinct().Take(5);
+            if (!rates.TryGetProperty(targetCurrency, out var rateVal))
+                return $"Cannot convert {src} to {targetCurrency}";
 
-            var result = $"{amount} {src} =\n";
-            foreach (var t in targets)
-            {
-                if (rates.TryGetProperty(t, out var rateVal))
-                    result += $"  {amt * rateVal.GetDouble():N2} {t}\n";
-            }
+            var converted = amt * rateVal.GetDouble();
+            var result = $"{amount} {src} = {converted:N2} {targetCurrency}";
             return result.TrimEnd();
         }
         catch
