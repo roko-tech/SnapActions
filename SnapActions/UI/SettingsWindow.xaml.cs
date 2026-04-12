@@ -1,17 +1,23 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using SnapActions.Config;
 using CheckBox = System.Windows.Controls.CheckBox;
+using ComboBox = System.Windows.Controls.ComboBox;
 
 namespace SnapActions.UI;
 
 public partial class SettingsWindow : Window
 {
     private bool _loading = true;
+    private Brush? _textBrush;
+    private Brush? _secondaryBrush;
 
     public SettingsWindow()
     {
         InitializeComponent();
+        _textBrush = (Brush)FindResource("TextBrush");
+        _secondaryBrush = (Brush)FindResource("TextSecondaryBrush");
         LoadSettings();
         _loading = false;
     }
@@ -23,34 +29,24 @@ public partial class SettingsWindow : Window
         AutoStartCheck.IsChecked = s.AutoStart;
         ReplaceSelectionCheck.IsChecked = s.ReplaceSelectionOnTransform;
 
-        // Dismiss time
-        for (int i = 0; i < DismissTimeCombo.Items.Count; i++)
-            if (DismissTimeCombo.Items[i] is ComboBoxItem item &&
-                int.TryParse(item.Tag?.ToString(), out int val) && val == s.ToolbarDismissTimeout)
-            { DismissTimeCombo.SelectedIndex = i; break; }
-        if (DismissTimeCombo.SelectedIndex < 0) DismissTimeCombo.SelectedIndex = 2;
+        SelectComboByTag(DismissTimeCombo, s.ToolbarDismissTimeout.ToString(), 2);
+        SelectComboByTag(ShowDelayCombo, s.ToolbarShowDelay.ToString(), 0);
+        SelectComboByTag(LanguageCombo, s.SearchLanguage, 0);
 
         ShowTransformCheck.IsChecked = s.ShowTransformActions;
         ShowEncodeCheck.IsChecked = s.ShowEncodeActions;
         ShowSearchCheck.IsChecked = s.ShowSearchActions;
 
-        // Show delay
-        for (int i = 0; i < ShowDelayCombo.Items.Count; i++)
-            if (ShowDelayCombo.Items[i] is ComboBoxItem sdi &&
-                int.TryParse(sdi.Tag?.ToString(), out int sdv) && sdv == s.ToolbarShowDelay)
-            { ShowDelayCombo.SelectedIndex = i; break; }
-        if (ShowDelayCombo.SelectedIndex < 0) ShowDelayCombo.SelectedIndex = 0;
-
-        // Language
-        for (int i = 0; i < LanguageCombo.Items.Count; i++)
-            if (LanguageCombo.Items[i] is ComboBoxItem li &&
-                li.Tag?.ToString() == s.SearchLanguage)
-            { LanguageCombo.SelectedIndex = i; break; }
-        if (LanguageCombo.SelectedIndex < 0) LanguageCombo.SelectedIndex = 0;
-
         BuildSearchEnginesList();
-
         ExcludedAppsBox.Text = string.Join("\n", s.ExcludedApps);
+    }
+
+    private static void SelectComboByTag(ComboBox combo, string tag, int fallback)
+    {
+        for (int i = 0; i < combo.Items.Count; i++)
+            if (combo.Items[i] is ComboBoxItem item && item.Tag?.ToString() == tag)
+            { combo.SelectedIndex = i; return; }
+        combo.SelectedIndex = fallback;
     }
 
     private void BuildSearchEnginesList()
@@ -62,40 +58,28 @@ public partial class SettingsWindow : Window
 
             var cb = new CheckBox
             {
-                Content = engine.Name,
-                IsChecked = engine.Enabled,
-                Foreground = (System.Windows.Media.Brush)FindResource("TextBrush"),
-                Width = 150,
-                Tag = engine.Id
+                Content = engine.Name, IsChecked = engine.Enabled,
+                Foreground = _textBrush, Width = 150, Tag = engine.Id
             };
             cb.Checked += EngineToggle_Changed;
             cb.Unchecked += EngineToggle_Changed;
             row.Children.Add(cb);
 
-            // Show URL hint for custom engines
             if (!engine.IsBuiltIn)
             {
                 row.Children.Add(new TextBlock
                 {
-                    Text = engine.UrlTemplate.Length > 40
-                        ? engine.UrlTemplate[..40] + "..."
-                        : engine.UrlTemplate,
-                    FontSize = 10,
-                    Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(4, 0, 0, 0)
+                    Text = engine.UrlTemplate.Length > 40 ? engine.UrlTemplate[..40] + "..." : engine.UrlTemplate,
+                    FontSize = 10, Foreground = _secondaryBrush,
+                    VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0)
                 });
 
                 var delBtn = new System.Windows.Controls.Button
                 {
-                    Content = "X",
-                    Width = 22, Height = 22,
-                    FontSize = 10,
+                    Content = "X", Width = 22, Height = 22, FontSize = 10,
                     Margin = new Thickness(6, 0, 0, 0),
-                    Background = System.Windows.Media.Brushes.Transparent,
-                    Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
-                    BorderThickness = new Thickness(0),
-                    Tag = engine.Id,
+                    Background = System.Windows.Media.Brushes.Transparent, Foreground = _secondaryBrush,
+                    BorderThickness = new Thickness(0), Tag = engine.Id,
                     Cursor = System.Windows.Input.Cursors.Hand
                 };
                 delBtn.Click += DeleteEngine_Click;
@@ -120,7 +104,8 @@ public partial class SettingsWindow : Window
     private void AutoStart_Changed(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
-        SettingsManager.SetAutoStart(AutoStartCheck.IsChecked == true);
+        var enable = AutoStartCheck.IsChecked == true;
+        Task.Run(() => SettingsManager.SetAutoStart(enable));
     }
 
     private void ShowDelay_Changed(object sender, SelectionChangedEventArgs e)
@@ -128,9 +113,7 @@ public partial class SettingsWindow : Window
         if (_loading) return;
         if (ShowDelayCombo.SelectedItem is ComboBoxItem item &&
             int.TryParse(item.Tag?.ToString(), out int ms))
-        {
             SettingsManager.Current.ToolbarShowDelay = ms;
-            }
     }
 
     private void DismissTime_Changed(object sender, SelectionChangedEventArgs e)
@@ -138,28 +121,21 @@ public partial class SettingsWindow : Window
         if (_loading) return;
         if (DismissTimeCombo.SelectedItem is ComboBoxItem item &&
             int.TryParse(item.Tag?.ToString(), out int ms))
-        {
             SettingsManager.Current.ToolbarDismissTimeout = ms;
-            }
     }
 
     private void Language_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_loading) return;
         if (LanguageCombo.SelectedItem is ComboBoxItem item)
-        {
             SettingsManager.Current.SearchLanguage = item.Tag?.ToString() ?? "";
-            }
     }
 
     private void EngineToggle_Changed(object sender, RoutedEventArgs e)
     {
         if (_loading || sender is not CheckBox { Tag: string id }) return;
         var engine = SettingsManager.Current.SearchEngines.FirstOrDefault(en => en.Id == id);
-        if (engine != null)
-        {
-            engine.Enabled = ((CheckBox)sender).IsChecked == true;
-            }
+        if (engine != null) engine.Enabled = ((CheckBox)sender).IsChecked == true;
     }
 
     private void DeleteEngine_Click(object sender, RoutedEventArgs e)
@@ -175,12 +151,10 @@ public partial class SettingsWindow : Window
         var url = CustomUrlBox.Text.Trim();
         if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(url)) return;
 
-        // Auto-add {0} if missing
         if (!url.Contains("{0}"))
             url += (url.Contains('?') ? "&" : "?") + "q={0}";
 
         var id = "custom_" + name.ToLowerInvariant().Replace(' ', '_');
-        // Prevent duplicate IDs
         if (SettingsManager.Current.SearchEngines.Any(en => en.Id == id))
             id += "_" + DateTime.Now.Ticks % 10000;
 
@@ -203,14 +177,12 @@ public partial class SettingsWindow : Window
             .Select(a => a.Trim()).Where(a => a.Length > 0).ToList();
     }
 
-    private void Save_Click(object sender, RoutedEventArgs e)
-    {
-        SettingsManager.Save();
-    }
+    private void Save_Click(object sender, RoutedEventArgs e) =>
+        Task.Run(() => SettingsManager.Save());
 
     private void Close_Click(object sender, RoutedEventArgs e)
     {
-        SettingsManager.Save();
+        Task.Run(() => SettingsManager.Save());
         Close();
     }
 }
