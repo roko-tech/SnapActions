@@ -47,12 +47,21 @@ public class SelectionTracker
     private bool IsClickOnToolbar(MouseHook.POINT pt) =>
         _toolbar is { IsVisible: true } && _toolbar.IsPointInside(pt.X, pt.Y);
 
-    /// <summary>Fast check: is the foreground window our own process? Avoids Process.GetProcessById.</summary>
+    private static readonly uint _ownPid = (uint)Environment.ProcessId;
+
+    /// <summary>Cheap check: is the foreground window our own process? No Process object allocation.</summary>
     private static bool IsSelfFocused()
     {
-        var name = ForegroundApp.GetActiveProcessName();
-        return name != null && name.Equals("SnapActions", StringComparison.OrdinalIgnoreCase);
+        IntPtr hwnd = GetForegroundWindow();
+        if (hwnd == IntPtr.Zero) return false;
+        GetWindowThreadProcessId(hwnd, out uint pid);
+        return pid == _ownPid;
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
     private void OnMouseDown(MouseHook.POINT pt)
     {
