@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 using SnapActions.Detection;
-using SnapActions.Helpers;
+using SnapActions.UI;
 
 namespace SnapActions.Actions.ContextActions;
 
@@ -23,11 +23,11 @@ public partial class CurrencyConverterAction : IAction
 
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
-        var encoded = Uri.EscapeDataString(text.Trim());
-        var lang = Config.SettingsManager.Current.SearchLanguage;
-        var hl = string.IsNullOrEmpty(lang) ? "" : $"&hl={lang}";
-        return ProcessHelper.TryShellOpen(
-            $"https://www.google.com/search?q={encoded}+to+USD{hl}",
-            "Converting currency...");
+        var popup = new ResultPopup();
+        var trimmed = text.Trim();
+        Helpers.NativeMethods.GetCursorPos(out var pt);
+        popup.ShowAt(pt.X, pt.Y, "Currency Converter",
+            async http => await ResultPopup.FetchCurrencyConversion(http, trimmed));
+        return new ActionResult(true, Message: "Converting...");
     }
 }

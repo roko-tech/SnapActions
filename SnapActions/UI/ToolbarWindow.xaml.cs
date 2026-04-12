@@ -466,12 +466,20 @@ public partial class ToolbarWindow : Window
 
     // ── Preview on hover ─────────────────────────────────────────
 
+    // Actions that have side effects and must NOT be executed during preview
+    private static readonly HashSet<string> _noPreviewIds =
+        ["delete_text", "paste_plain", "translate", "dictionary", "currency_convert"];
+
     private void SubMenuButton_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
     {
         if (sender is not Button { Tag: IAction action }) return;
         string preview;
 
-        if (action.Category == ActionCategory.Transform || action.Category == ActionCategory.Encode)
+        if (_noPreviewIds.Contains(action.Id))
+        {
+            preview = action.Name;
+        }
+        else if (action.Category == ActionCategory.Transform || action.Category == ActionCategory.Encode)
         {
             if (!string.IsNullOrEmpty(_selectedText))
             {

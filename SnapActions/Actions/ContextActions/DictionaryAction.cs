@@ -1,5 +1,5 @@
 using SnapActions.Detection;
-using SnapActions.Helpers;
+using SnapActions.UI;
 
 namespace SnapActions.Actions.ContextActions;
 
@@ -13,7 +13,6 @@ public class DictionaryAction : IAction
     public bool CanExecute(string text, TextAnalysis analysis)
     {
         var t = text.Trim();
-        // Only for short text (1-3 words, no special chars)
         return t.Length > 0 && t.Length <= 60 && !t.Contains('\n')
             && t.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 3
             && analysis.Type == TextType.PlainText;
@@ -21,9 +20,11 @@ public class DictionaryAction : IAction
 
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
-        var encoded = Uri.EscapeDataString(text.Trim());
-        return ProcessHelper.TryShellOpen(
-            $"https://www.google.com/search?q=define+{encoded}",
-            "Looking up definition...");
+        var popup = new ResultPopup();
+        var word = text.Trim();
+        Helpers.NativeMethods.GetCursorPos(out var pt);
+        popup.ShowAt(pt.X, pt.Y, $"Define: {word}",
+            async http => await ResultPopup.FetchDefinition(http, word));
+        return new ActionResult(true, Message: "Looking up...");
     }
 }

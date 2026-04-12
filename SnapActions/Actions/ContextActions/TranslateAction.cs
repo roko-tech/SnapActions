@@ -1,5 +1,5 @@
 using SnapActions.Detection;
-using SnapActions.Helpers;
+using SnapActions.UI;
 
 namespace SnapActions.Actions.ContextActions;
 
@@ -11,15 +11,19 @@ public class TranslateAction : IAction
     public ActionCategory Category => ActionCategory.Context;
 
     public bool CanExecute(string text, TextAnalysis analysis) =>
-        !string.IsNullOrWhiteSpace(text) && text.Length <= 5000;
+        !string.IsNullOrWhiteSpace(text) && text.Length <= 500;
 
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
         var lang = Config.SettingsManager.Current.SearchLanguage;
-        var tl = string.IsNullOrEmpty(lang) ? "en" : lang;
-        var encoded = Uri.EscapeDataString(text.Trim());
-        return ProcessHelper.TryShellOpen(
-            $"https://translate.google.com/?sl=auto&tl={tl}&text={encoded}",
-            "Opened Google Translate");
+        var popup = new ResultPopup();
+        var trimmed = text.Trim();
+
+        // Get cursor position for popup placement
+        Helpers.NativeMethods.GetCursorPos(out var pt);
+        popup.ShowAt(pt.X, pt.Y, $"Translate to {(string.IsNullOrEmpty(lang) ? "English" : lang.ToUpper())}",
+            async http => await ResultPopup.FetchTranslation(http, trimmed, lang));
+
+        return new ActionResult(true, Message: "Translating...");
     }
 }
