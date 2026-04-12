@@ -30,6 +30,7 @@ public class ActionRegistry
             new ConvertTimezoneAction(),
             new TranslateAction(),
             new DictionaryAction(),
+            new SpellCheckAction(),
             new CurrencyConverterAction(),
             new DeleteTextAction(),
             new PastePlainTextAction(),

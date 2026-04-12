@@ -470,7 +470,7 @@ public partial class ToolbarWindow : Window
 
     // Actions that have side effects and must NOT be executed during preview
     private static readonly HashSet<string> _noPreviewIds =
-        ["delete_text", "paste_plain", "translate", "dictionary", "currency_convert"];
+        ["delete_text", "paste_plain", "translate", "dictionary", "currency_convert", "spell_check"];
 
     private void SubMenuButton_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
     {
