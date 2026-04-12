@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using SnapActions.Detection;
 using SnapActions.UI;
 
@@ -17,19 +16,10 @@ public class TranslateAction : IAction
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
         var lang = Config.SettingsManager.Current.SearchLanguage;
-        var popup = new ResultPopup();
         var trimmed = text.Trim();
-
-        // Get cursor position for popup placement
-        GetCursorPos(out var pt);
-        popup.ShowAt(pt.X, pt.Y, $"Translate to {(string.IsNullOrEmpty(lang) ? "English" : lang.ToUpper())}",
+        ResultPopup.ShowNearCursor(
+            $"Translate to {(string.IsNullOrEmpty(lang) ? "English" : lang.ToUpper())}",
             async http => await ResultPopup.FetchTranslation(http, trimmed, lang));
-
-        return new ActionResult(true, Message: "Translating...");
+        return new ActionResult(true);
     }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct POINT { public int X, Y; }
-    [DllImport("user32.dll")]
-    private static extern bool GetCursorPos(out POINT pt);
 }

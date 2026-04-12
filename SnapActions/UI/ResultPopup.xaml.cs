@@ -1,5 +1,7 @@
 using System.Net.Http;
+using System.Text;
 using System.Windows;
+using SnapActions.Helpers;
 
 namespace SnapActions.UI;
 
@@ -10,6 +12,7 @@ public partial class ResultPopup : Window
 
     private bool _loaded;
     private bool _closed;
+    private double _dpi = 1.0;
     private readonly System.Windows.Threading.DispatcherTimer _checkTimer;
 
     public ResultPopup()
@@ -17,26 +20,17 @@ public partial class ResultPopup : Window
         InitializeComponent();
         Deactivated += (_, _) => SafeClose();
 
-        // Poll every 500ms: if mouse is outside and result is loaded, close
         _checkTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
         _checkTimer.Tick += (_, _) =>
         {
             if (!_loaded || _closed) return;
-            GetCursorPos(out var pt);
-            double x = pt.X, y = pt.Y;
-            // Check if cursor is outside window bounds (in physical pixels)
-            var src = PresentationSource.FromVisual(this);
-            double dpi = src?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
-            double l = Left * dpi, t = Top * dpi, r = l + ActualWidth * dpi, b = t + ActualHeight * dpi;
-            if (x < l || x > r || y < t || y > b)
+            NativeMethods.GetCursorPos(out var pt);
+            double l = Left * _dpi, t = Top * _dpi;
+            double r = l + ActualWidth * _dpi, b = t + ActualHeight * _dpi;
+            if (pt.X < l || pt.X > r || pt.Y < t || pt.Y > b)
                 SafeClose();
         };
     }
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct POINT { public int X, Y; }
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool GetCursorPos(out POINT pt);
 
     private void SafeClose()
     {
@@ -46,6 +40,14 @@ public partial class ResultPopup : Window
         try { Close(); } catch { }
     }
 
+    /// <summary>Static helper: creates popup, positions near cursor, fetches result.</summary>
+    public static void ShowNearCursor(string title, Func<HttpClient, Task<string>> fetchResult)
+    {
+        var popup = new ResultPopup();
+        NativeMethods.GetCursorPos(out var pt);
+        popup.ShowAt(pt.X, pt.Y, title, fetchResult);
+    }
+
     public async void ShowAt(double screenX, double screenY, string title, Func<HttpClient, Task<string>> fetchResult)
     {
         TitleText.Text = title;
@@ -53,18 +55,12 @@ public partial class ResultPopup : Window
         ResultText.Visibility = Visibility.Collapsed;
         CopyButton.Visibility = Visibility.Collapsed;
 
-        // Position near cursor using raw screen pixels / 96 DPI as baseline
-        // (WPF handles DPI scaling for us when we set Left/Top)
-        // Show first, then position (need PresentationSource for DPI)
         Show();
-
-        double dpi = 1.0;
         var source = PresentationSource.FromVisual(this);
-        if (source?.CompositionTarget != null)
-            dpi = source.CompositionTarget.TransformToDevice.M11;
+        _dpi = source?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
 
-        Left = (screenX / dpi) - 100;
-        Top = (screenY / dpi) - 80;
+        Left = (screenX / _dpi) - 100;
+        Top = (screenY / _dpi) - 80;
         Topmost = true;
         Activate();
         _checkTimer.Start();
@@ -91,12 +87,12 @@ public partial class ResultPopup : Window
     {
         if (!string.IsNullOrEmpty(_resultText))
             Clipboard.SetText(_resultText);
-        Close();
+        SafeClose();
     }
 
-    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+    private void Close_Click(object sender, RoutedEventArgs e) => SafeClose();
 
-    // Static helpers for fetching results
+    // ── API fetch helpers ────────────────────────────────────────
 
     public static async Task<string> FetchTranslation(HttpClient http, string text, string targetLang)
     {
@@ -104,7 +100,6 @@ public partial class ResultPopup : Window
         var url = $"https://api.mymemory.translated.net/get?q={Uri.EscapeDataString(text)}&langpair=autodetect|{to}";
         var json = await http.GetStringAsync(url);
 
-        // Parse with System.Text.Json to properly decode Unicode escapes
         try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(json);
@@ -114,10 +109,7 @@ public partial class ResultPopup : Window
                 .GetString();
             return System.Net.WebUtility.HtmlDecode(translated ?? "Translation not available");
         }
-        catch
-        {
-            return "Translation not available";
-        }
+        catch { return "Translation not available"; }
     }
 
     public static async Task<string> FetchDefinition(HttpClient http, string word)
@@ -129,33 +121,27 @@ public partial class ResultPopup : Window
         {
             using var doc = System.Text.Json.JsonDocument.Parse(json);
             var entry = doc.RootElement[0];
-            var result = "";
+            var sb = new StringBuilder();
 
             if (entry.TryGetProperty("phonetic", out var phonetic))
-                result += phonetic.GetString() + "\n\n";
+                sb.AppendLine(phonetic.GetString()).AppendLine();
 
-            var meanings = entry.GetProperty("meanings");
-            foreach (var meaning in meanings.EnumerateArray())
+            foreach (var meaning in entry.GetProperty("meanings").EnumerateArray())
             {
-                var pos = meaning.GetProperty("partOfSpeech").GetString();
-                result += $"{pos}\n";
-                var defs = meaning.GetProperty("definitions");
+                sb.AppendLine(meaning.GetProperty("partOfSpeech").GetString());
                 int count = 0;
-                foreach (var def in defs.EnumerateArray())
+                foreach (var def in meaning.GetProperty("definitions").EnumerateArray())
                 {
-                    if (count >= 2) break;
-                    result += $"  {def.GetProperty("definition").GetString()}\n";
-                    count++;
+                    if (count++ >= 2) break;
+                    sb.Append("  ").AppendLine(def.GetProperty("definition").GetString());
                 }
-                result += "\n";
+                sb.AppendLine();
             }
 
-            return string.IsNullOrWhiteSpace(result) ? "No definition found" : result.TrimEnd();
+            var result = sb.ToString().TrimEnd();
+            return string.IsNullOrWhiteSpace(result) ? "No definition found" : result;
         }
-        catch
-        {
-            return "No definition found";
-        }
+        catch { return "No definition found"; }
     }
 
     private static readonly Dictionary<string, string[]> CurrencySymbols = new()
@@ -174,7 +160,6 @@ public partial class ResultPopup : Window
         if (!numMatch.Success) return "No amount found";
         var amount = numMatch.Value.Replace(",", "");
 
-        // Detect source currency
         var src = "USD";
         var upper = text.ToUpperInvariant();
         foreach (var (code, symbols) in CurrencySymbols)
@@ -183,7 +168,6 @@ public partial class ResultPopup : Window
             { src = code; break; }
         }
 
-        // open.er-api.com: free, no key, supports all currencies including SAR/AED/KWD
         var url = $"https://open.er-api.com/v6/latest/{src}";
         var json = await http.GetStringAsync(url);
 
@@ -196,13 +180,8 @@ public partial class ResultPopup : Window
             if (!rates.TryGetProperty(targetCurrency, out var rateVal))
                 return $"Cannot convert {src} to {targetCurrency}";
 
-            var converted = amt * rateVal.GetDouble();
-            var result = $"{amount} {src} = {converted:N2} {targetCurrency}";
-            return result.TrimEnd();
+            return $"{amount} {src} = {amt * rateVal.GetDouble():N2} {targetCurrency}";
         }
-        catch
-        {
-            return "Conversion failed";
-        }
+        catch { return "Conversion failed"; }
     }
 }

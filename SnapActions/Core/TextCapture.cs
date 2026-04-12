@@ -15,6 +15,7 @@ public static class TextCapture
 
     private static readonly IntPtr SNAPACTIONS_MARKER = new(0x534E4150);
 
+    private static readonly INPUT[] CtrlInsertInputs = BuildKeyCombo(VK_CONTROL, VK_INSERT);
     private static readonly INPUT[] CtrlVInputs = BuildKeyCombo(VK_CONTROL, VK_V);
     private static readonly int InputSize = Marshal.SizeOf<INPUT>();
 
@@ -99,8 +100,7 @@ public static class TextCapture
     {
         // Use Ctrl+Insert instead of Ctrl+C.
         // Browser extensions (like h5player) hook letter keys but not Insert.
-        var inputs = BuildKeyCombo(VK_CONTROL, VK_INSERT);
-        SendInput((uint)inputs.Length, inputs, InputSize);
+        SendInput((uint)CtrlInsertInputs.Length, CtrlInsertInputs, InputSize);
     }
 
     public static void SimulateCtrlV()

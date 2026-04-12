@@ -10,6 +10,7 @@ using System.Windows.Threading;
 using SnapActions.Actions;
 using SnapActions.Core;
 using SnapActions.Detection;
+using SnapActions.Helpers;
 using ContextMenu = System.Windows.Controls.ContextMenu;
 using MenuItem = System.Windows.Controls.MenuItem;
 using Separator = System.Windows.Controls.Separator;
@@ -166,7 +167,7 @@ public partial class ToolbarWindow : Window
 
     private void OnDismissTimerTick(object? sender, EventArgs e)
     {
-        GetCursorPos(out var pt);
+        NativeMethods.GetCursorPos(out var pt);
         if (IsPointInside(pt.X, pt.Y)) { StartDismissTimer(); return; }
         HideToolbar();
     }
@@ -186,6 +187,7 @@ public partial class ToolbarWindow : Window
         SubMenuPopup.IsOpen = false;
         var fadeOut = (Storyboard)FindResource("FadeOut");
         fadeOut.Stop(this);
+        fadeOut.Completed -= FadeOut_Completed;
         fadeOut.Completed += FadeOut_Completed;
         fadeOut.Begin(this);
     }
@@ -736,15 +738,6 @@ public partial class ToolbarWindow : Window
         ShowSubMenu("Encode", ActionCategory.Encode, (FrameworkElement)sender);
     private void SearchButton_Click(object sender, RoutedEventArgs e) =>
         ShowSubMenu("Search", ActionCategory.Search, (FrameworkElement)sender);
-
-    // ── P/Invoke ─────────────────────────────────────────────────
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct POINT { public int X, Y; }
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetCursorPos(out POINT pt);
 
     [DllImport("user32.dll")]
     private static extern int GetWindowLong(IntPtr hWnd, int nIndex);

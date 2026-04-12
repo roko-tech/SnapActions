@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using SnapActions.Detection;
 using SnapActions.UI;
 
@@ -21,16 +20,9 @@ public class DictionaryAction : IAction
 
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
-        var popup = new ResultPopup();
         var word = text.Trim();
-        GetCursorPos(out var pt);
-        popup.ShowAt(pt.X, pt.Y, $"Define: {word}",
+        ResultPopup.ShowNearCursor($"Define: {word}",
             async http => await ResultPopup.FetchDefinition(http, word));
-        return new ActionResult(true, Message: "Looking up...");
+        return new ActionResult(true);
     }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct POINT { public int X, Y; }
-    [DllImport("user32.dll")]
-    private static extern bool GetCursorPos(out POINT pt);
 }
