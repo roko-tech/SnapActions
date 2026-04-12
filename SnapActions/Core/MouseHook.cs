@@ -16,18 +16,22 @@ public class MouseHook : IDisposable
     private readonly LowLevelMouseProc _hookProc;
     private IntPtr _hookId = IntPtr.Zero;
     private POINT _mouseDownPoint;
-    private DateTime _mouseDownTime;
+    private long _mouseDownTicks;
     private bool _isTracking;
 
-    private readonly DispatcherTimer _longPressTimer;
+    // Long-press: fires on dedicated dispatcher, not UI thread
+    private Dispatcher? _hookDispatcher;
+    private DispatcherTimer? _longPressTimer;
     private bool _longPressFired;
 
-    // Multi-click tracking (double/triple click)
-    private DateTime _lastClickTime = DateTime.MinValue;
+    // Multi-click
+    private long _lastClickTicks;
     private POINT _lastClickPoint;
     private int _clickCount;
-    private readonly DispatcherTimer _multiClickTimer;
-    private POINT _pendingClickPoint;
+    private DispatcherTimer? _multiClickTimer;
+
+    // Hook thread
+    private Thread? _hookThread;
 
     public event Action<POINT>? SelectionLikely;
     public event Action<POINT>? LongPress;
@@ -36,72 +40,88 @@ public class MouseHook : IDisposable
     public MouseHook()
     {
         _hookProc = HookCallback;
-        _longPressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
-        _longPressTimer.Tick += OnLongPressTimer;
-        _multiClickTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
-        _multiClickTimer.Tick += OnMultiClickTimer;
     }
 
     public void Install()
     {
         if (_hookId != IntPtr.Zero) return;
-        _hookId = SetWindowsHookEx(WH_MOUSE_LL, _hookProc, GetModuleHandle(null), 0);
-        Trace.WriteLine(_hookId == IntPtr.Zero
-            ? $"[SnapActions] Hook failed: {Marshal.GetLastWin32Error()}"
-            : $"[SnapActions] Hook installed: {_hookId}");
+
+        // Run the hook on a dedicated thread with its own message pump.
+        // This prevents UI thread work (WPF layout, GC) from delaying hook callbacks.
+        _hookThread = new Thread(() =>
+        {
+            _hookId = SetWindowsHookEx(WH_MOUSE_LL, _hookProc, GetModuleHandle(null), 0);
+            Trace.WriteLine(_hookId == IntPtr.Zero
+                ? $"[SnapActions] Hook failed: {Marshal.GetLastWin32Error()}"
+                : $"[SnapActions] Hook installed on dedicated thread: {_hookId}");
+
+            _hookDispatcher = Dispatcher.CurrentDispatcher;
+
+            _longPressTimer = new DispatcherTimer(DispatcherPriority.Normal, _hookDispatcher)
+                { Interval = TimeSpan.FromMilliseconds(500) };
+            _longPressTimer.Tick += OnLongPressTimer;
+
+            _multiClickTimer = new DispatcherTimer(DispatcherPriority.Normal, _hookDispatcher)
+                { Interval = TimeSpan.FromMilliseconds(200) };
+            _multiClickTimer.Tick += OnMultiClickTimer;
+
+            // Run message pump so the hook receives callbacks
+            Dispatcher.Run();
+        });
+        _hookThread.IsBackground = true;
+        _hookThread.SetApartmentState(ApartmentState.STA);
+        _hookThread.Start();
     }
 
     public void Uninstall()
     {
-        _longPressTimer.Stop();
-        _multiClickTimer.Stop();
-        if (_hookId != IntPtr.Zero)
+        _hookDispatcher?.InvokeAsync(() =>
         {
-            UnhookWindowsHookEx(_hookId);
-            _hookId = IntPtr.Zero;
-        }
+            _longPressTimer?.Stop();
+            _multiClickTimer?.Stop();
+            if (_hookId != IntPtr.Zero)
+            {
+                UnhookWindowsHookEx(_hookId);
+                _hookId = IntPtr.Zero;
+            }
+            _hookDispatcher?.InvokeShutdown();
+        });
+        _hookThread?.Join(2000);
     }
 
     public void CancelTracking()
     {
-        _longPressTimer.Stop();
-        _multiClickTimer.Stop();
+        _longPressTimer?.Stop();
+        _multiClickTimer?.Stop();
         _isTracking = false;
     }
 
     private void OnMultiClickTimer(object? sender, EventArgs e)
     {
-        _multiClickTimer.Stop();
+        _multiClickTimer?.Stop();
         if (_clickCount >= 2)
         {
-            Trace.WriteLine($"[SnapActions] {(_clickCount >= 3 ? "Triple" : "Double")}-click select");
-            try { SelectionLikely?.Invoke(_pendingClickPoint); } catch { }
+            try { SelectionLikely?.Invoke(_lastClickPoint); } catch { }
         }
         _clickCount = 0;
     }
 
     private void OnLongPressTimer(object? sender, EventArgs e)
     {
-        _longPressTimer.Stop();
+        _longPressTimer?.Stop();
         if (!_isTracking) return;
         _longPressFired = true;
-        try { LongPress?.Invoke(_mouseDownPoint); }
-        catch (Exception ex) { Trace.WriteLine($"[SnapActions] LongPress handler error: {ex.Message}"); }
+        try { LongPress?.Invoke(_mouseDownPoint); } catch { }
     }
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
-        // CRITICAL: entire callback wrapped in try-catch.
-        // If an exception escapes, Windows silently removes the hook permanently.
         try
         {
             if (nCode >= 0)
                 ProcessMouseEvent(wParam.ToInt32(), lParam);
         }
-        catch (Exception ex)
-        {
-            Trace.WriteLine($"[SnapActions] Hook callback error: {ex.Message}");
-        }
+        catch { }
         return CallNextHookEx(_hookId, nCode, wParam, lParam);
     }
 
@@ -109,70 +129,71 @@ public class MouseHook : IDisposable
     {
         if (msg == WM_LBUTTONDOWN)
         {
-            var hs = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
-            try { MouseDown?.Invoke(hs.pt); } catch { }
-            _mouseDownPoint = hs.pt;
-            _mouseDownTime = DateTime.UtcNow;
+            var pt = ReadPoint(lParam);
+            try { MouseDown?.Invoke(pt); } catch { }
+            _mouseDownPoint = pt;
+            _mouseDownTicks = Environment.TickCount64;
             _isTracking = true;
             _longPressFired = false;
-            _longPressTimer.Stop();
-            _longPressTimer.Start();
+            _longPressTimer?.Stop();
+            _longPressTimer?.Start();
         }
         else if (msg == WM_MOUSEMOVE && _isTracking && !_longPressFired)
         {
-            // Read only the POINT (first 8 bytes) instead of marshaling the full struct
             int mx = Marshal.ReadInt32(lParam, 0);
             int my = Marshal.ReadInt32(lParam, 4);
             double dx = mx - _mouseDownPoint.X;
             double dy = my - _mouseDownPoint.Y;
             if (dx * dx + dy * dy > 64)
-                _longPressTimer.Stop();
+                _longPressTimer?.Stop();
         }
         else if (msg == WM_LBUTTONUP && _isTracking)
         {
-            _longPressTimer.Stop();
+            _longPressTimer?.Stop();
             _isTracking = false;
 
             if (_longPressFired) { _longPressFired = false; return; }
 
-            var hs = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
-            var up = hs.pt;
-            var now = DateTime.UtcNow;
+            var up = ReadPoint(lParam);
+            long dur = Environment.TickCount64 - _mouseDownTicks;
             double dx = up.X - _mouseDownPoint.X;
             double dy = up.Y - _mouseDownPoint.Y;
             double distSq = dx * dx + dy * dy;
-            double dur = (now - _mouseDownTime).TotalMilliseconds;
 
             if (distSq >= 100 && dur >= 80)
             {
-                Trace.WriteLine($"[SnapActions] Drag select");
                 try { SelectionLikely?.Invoke(up); } catch { }
                 _clickCount = 0;
-                _lastClickTime = DateTime.MinValue;
+                _lastClickTicks = 0;
             }
             else if (distSq < 64)
             {
+                long now = Environment.TickCount64;
                 double cdx = up.X - _lastClickPoint.X;
                 double cdy = up.Y - _lastClickPoint.Y;
-                double since = (now - _lastClickTime).TotalMilliseconds;
+                long since = now - _lastClickTicks;
 
                 if (since < 500 && cdx * cdx + cdy * cdy < 64)
                 {
                     _clickCount++;
-                    _pendingClickPoint = up;
-                    // Restart timer - wait to see if more clicks follow
-                    _multiClickTimer.Stop();
-                    _multiClickTimer.Start();
+                    _multiClickTimer?.Stop();
+                    _multiClickTimer?.Start();
                 }
                 else
                 {
                     _clickCount = 1;
                 }
-                _lastClickTime = now;
+                _lastClickTicks = now;
                 _lastClickPoint = up;
             }
         }
     }
+
+    private static POINT ReadPoint(IntPtr lParam) => new()
+    {
+        X = Marshal.ReadInt32(lParam, 0),
+        Y = Marshal.ReadInt32(lParam, 4)
+    };
 
     public void Dispose()
     {
@@ -182,14 +203,6 @@ public class MouseHook : IDisposable
 
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT { public int X, Y; }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MSLLHOOKSTRUCT
-    {
-        public POINT pt;
-        public uint mouseData, flags, time;
-        public IntPtr dwExtraInfo;
-    }
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);

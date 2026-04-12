@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Threading;
 using SnapActions.Actions;
@@ -16,6 +17,7 @@ public class SelectionTracker
     private ToolbarWindow? _toolbar;
     private DateTime _lastShowTime = DateTime.MinValue;
     private const int DebounceMs = 250;
+    private static readonly uint OwnPid = (uint)Environment.ProcessId;
 
     public SelectionTracker()
     {
@@ -44,31 +46,22 @@ public class SelectionTracker
         _mouseHook.Dispose();
     }
 
-    private bool IsClickOnToolbar(MouseHook.POINT pt) =>
-        _toolbar is { IsVisible: true } && _toolbar.IsPointInside(pt.X, pt.Y);
-
-    private static readonly uint _ownPid = (uint)Environment.ProcessId;
-
-    /// <summary>Cheap check: is the foreground window our own process? No Process object allocation.</summary>
+    // Cheap PID check — no Process allocation, no string comparison
     private static bool IsSelfFocused()
     {
         IntPtr hwnd = GetForegroundWindow();
         if (hwnd == IntPtr.Zero) return false;
         GetWindowThreadProcessId(hwnd, out uint pid);
-        return pid == _ownPid;
+        return pid == OwnPid;
     }
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    // These handlers fire on the HOOK THREAD, not the UI thread.
+    // Keep them minimal — just check and dispatch.
 
     private void OnMouseDown(MouseHook.POINT pt)
     {
-        if (IsClickOnToolbar(pt)) { _mouseHook.CancelTracking(); return; }
+        // Quick checks only — no WPF access from hook thread
         if (IsSelfFocused()) { _mouseHook.CancelTracking(); return; }
-
-        if (_toolbar is not { IsVisible: true }) return;
 
         Application.Current.Dispatcher.InvokeAsync(() =>
         {
@@ -79,19 +72,18 @@ public class SelectionTracker
 
     private void OnSelectionLikely(MouseHook.POINT cursorPos)
     {
-        if (IsClickOnToolbar(cursorPos)) return;
-        // Fast exit: skip everything if our own app is focused (settings window, etc.)
         if (IsSelfFocused()) return;
 
         var now = DateTime.UtcNow;
         if ((now - _lastShowTime).TotalMilliseconds < DebounceMs) return;
         _lastShowTime = now;
 
-        _ = Application.Current.Dispatcher.InvokeAsync(async () =>
+        Application.Current.Dispatcher.InvokeAsync(async () =>
         {
             try
             {
                 if (!SettingsManager.Current.Enabled) return;
+                if (_toolbar is { IsVisible: true } && _toolbar.IsPointInside(cursorPos.X, cursorPos.Y)) return;
                 if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps)) return;
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
@@ -122,10 +114,9 @@ public class SelectionTracker
 
     private void OnLongPress(MouseHook.POINT cursorPos)
     {
-        if (IsClickOnToolbar(cursorPos)) return;
         if (IsSelfFocused()) return;
 
-        _ = Application.Current.Dispatcher.InvokeAsync(async () =>
+        Application.Current.Dispatcher.InvokeAsync(async () =>
         {
             try
             {
@@ -147,4 +138,9 @@ public class SelectionTracker
             }
         });
     }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 }
