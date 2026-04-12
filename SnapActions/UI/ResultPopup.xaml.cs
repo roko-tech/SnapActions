@@ -10,18 +10,39 @@ public partial class ResultPopup : Window
 
     private bool _loaded;
     private bool _closed;
+    private readonly System.Windows.Threading.DispatcherTimer _checkTimer;
 
     public ResultPopup()
     {
         InitializeComponent();
         Deactivated += (_, _) => SafeClose();
-        MouseLeave += (_, _) => { if (_loaded) SafeClose(); };
+
+        // Poll every 500ms: if mouse is outside and result is loaded, close
+        _checkTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+        _checkTimer.Tick += (_, _) =>
+        {
+            if (!_loaded || _closed) return;
+            GetCursorPos(out var pt);
+            double x = pt.X, y = pt.Y;
+            // Check if cursor is outside window bounds (in physical pixels)
+            var src = PresentationSource.FromVisual(this);
+            double dpi = src?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
+            double l = Left * dpi, t = Top * dpi, r = l + ActualWidth * dpi, b = t + ActualHeight * dpi;
+            if (x < l || x > r || y < t || y > b)
+                SafeClose();
+        };
     }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT pt);
 
     private void SafeClose()
     {
         if (_closed) return;
         _closed = true;
+        _checkTimer.Stop();
         try { Close(); } catch { }
     }
 
@@ -46,6 +67,7 @@ public partial class ResultPopup : Window
         Top = (screenY / dpi) - 80;
         Topmost = true;
         Activate();
+        _checkTimer.Start();
 
         try
         {
@@ -161,20 +183,25 @@ public partial class ResultPopup : Window
             { src = code; break; }
         }
 
-        // Build target list: always include the user's target + a few common ones
-        var targets = new HashSet<string> { targetCurrency, "USD", "EUR", "GBP", "SAR" };
-        targets.Remove(src); // don't convert to self
-        var targetStr = string.Join(",", targets.Take(5));
-        var url = $"https://api.frankfurter.app/latest?amount={amount}&from={src}&to={targets}";
+        // open.er-api.com: free, no key, supports all currencies including SAR/AED/KWD
+        var url = $"https://open.er-api.com/v6/latest/{src}";
         var json = await http.GetStringAsync(url);
 
         try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(json);
             var rates = doc.RootElement.GetProperty("rates");
+            var amt = double.Parse(amount, System.Globalization.CultureInfo.InvariantCulture);
+
+            var targets = new[] { targetCurrency, "USD", "EUR", "GBP", "SAR", "AED", "JPY" }
+                .Where(c => c != src).Distinct().Take(5);
+
             var result = $"{amount} {src} =\n";
-            foreach (var rate in rates.EnumerateObject())
-                result += $"  {rate.Value} {rate.Name}\n";
+            foreach (var t in targets)
+            {
+                if (rates.TryGetProperty(t, out var rateVal))
+                    result += $"  {amt * rateVal.GetDouble():N2} {t}\n";
+            }
             return result.TrimEnd();
         }
         catch
