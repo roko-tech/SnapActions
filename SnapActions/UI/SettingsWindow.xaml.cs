@@ -71,11 +71,23 @@ public partial class SettingsWindow : Window
             var cb = new CheckBox
             {
                 Content = engine.Name, IsChecked = engine.Enabled,
-                Foreground = _textBrush, Width = 150, Tag = engine.Id
+                Foreground = _textBrush, Width = 130, Tag = engine.Id
             };
             cb.Checked += EngineToggle_Changed;
             cb.Unchecked += EngineToggle_Changed;
             row.Children.Add(cb);
+
+            // "lang" checkbox: apply global language filter to this engine
+            var langCb = new CheckBox
+            {
+                Content = "lang", IsChecked = engine.UseLanguageFilter,
+                Foreground = _secondaryBrush, FontSize = 10, Tag = engine.Id,
+                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0),
+                ToolTip = "Apply the selected Search Language to this engine"
+            };
+            langCb.Checked += LangToggle_Changed;
+            langCb.Unchecked += LangToggle_Changed;
+            row.Children.Add(langCb);
 
             if (!engine.IsBuiltIn)
             {
@@ -163,6 +175,13 @@ public partial class SettingsWindow : Window
         if (_loading || sender is not CheckBox { Tag: string id }) return;
         var engine = SettingsManager.Current.SearchEngines.FirstOrDefault(en => en.Id == id);
         if (engine != null) engine.Enabled = ((CheckBox)sender).IsChecked == true;
+    }
+
+    private void LangToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || sender is not CheckBox { Tag: string id }) return;
+        var engine = SettingsManager.Current.SearchEngines.FirstOrDefault(en => en.Id == id);
+        if (engine != null) engine.UseLanguageFilter = ((CheckBox)sender).IsChecked == true;
     }
 
     private void DeleteEngine_Click(object sender, RoutedEventArgs e)

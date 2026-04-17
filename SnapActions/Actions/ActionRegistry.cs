@@ -108,7 +108,8 @@ public class ActionRegistry
             var searchActions = s.SearchEngines
                 .Where(e => e.Enabled)
                 .Select(e => (IAction)new SearchActions.WebSearchAction(
-                    e.Id, e.Name, "IconSearch", e.UrlTemplate, lang, e.LangMode))
+                    e.Id, e.Name, "IconSearch", e.UrlTemplate,
+                    e.UseLanguageFilter ? lang : "", e.LangMode))
                 .ToList();
             if (searchActions.Count > 0)
                 groups.Add(new ActionGroup("Search", "IconSearch", searchActions));
@@ -125,7 +126,9 @@ public class ActionRegistry
             // Search actions are built from settings, not from _allActions
             var lang = Config.SettingsManager.Current.SearchLanguage ?? "";
             return Config.SettingsManager.Current.SearchEngines
-                .Select(e => (IAction)new SearchActions.WebSearchAction(e.Id, e.Name, "IconSearch", e.UrlTemplate, lang, e.LangMode))
+                .Select(e => (IAction)new SearchActions.WebSearchAction(
+                    e.Id, e.Name, "IconSearch", e.UrlTemplate,
+                    e.UseLanguageFilter ? lang : "", e.LangMode))
                 .ToList();
         }
         return _allActions.Where(a => a.Category == category).ToList();

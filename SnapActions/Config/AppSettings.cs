@@ -13,6 +13,8 @@ public class SearchEngine
     public bool IsBuiltIn { get; set; }
     /// <summary>"url" = {1} in URL, "query" = append lang:xx to search text, "" = no lang support</summary>
     public string LangMode { get; set; } = "url";
+    /// <summary>Whether to apply the global SearchLanguage filter to this engine.</summary>
+    public bool UseLanguageFilter { get; set; } = true;
 }
 
 public class AppSettings
@@ -52,26 +54,26 @@ public class AppSettings
         new() { Id = "bing", Name = "Bing", IsBuiltIn = true,
             UrlTemplate = "https://www.bing.com/search?q={0}&setlang={1}" },
         new() { Id = "duckduckgo", Name = "DuckDuckGo", IsBuiltIn = true,
-            UrlTemplate = "https://duckduckgo.com/?q={0}", LangMode = "" },
+            UrlTemplate = "https://duckduckgo.com/?q={0}", LangMode = "", UseLanguageFilter = false },
         new() { Id = "youtube", Name = "YouTube", IsBuiltIn = true,
             UrlTemplate = "https://www.youtube.com/results?search_query={0}&hl={1}" },
         new() { Id = "twitter", Name = "Twitter/X", IsBuiltIn = true,
             UrlTemplate = "https://x.com/search?q={0}&f=top", LangMode = "query" },
         new() { Id = "reddit", Name = "Reddit", IsBuiltIn = true,
-            UrlTemplate = "https://www.reddit.com/search/?q={0}", LangMode = "" },
+            UrlTemplate = "https://www.reddit.com/search/?q={0}", LangMode = "", UseLanguageFilter = false },
         new() { Id = "github", Name = "GitHub", IsBuiltIn = true,
-            UrlTemplate = "https://github.com/search?q={0}&type=code", LangMode = "" },
+            UrlTemplate = "https://github.com/search?q={0}&type=code", LangMode = "", UseLanguageFilter = false },
         new() { Id = "stackoverflow", Name = "StackOverflow", IsBuiltIn = true,
-            UrlTemplate = "https://stackoverflow.com/search?q={0}", LangMode = "" },
+            UrlTemplate = "https://stackoverflow.com/search?q={0}", LangMode = "", UseLanguageFilter = false },
         new() { Id = "wikipedia", Name = "Wikipedia", IsBuiltIn = true,
             UrlTemplate = "https://{1}.wikipedia.org/w/index.php?search={0}" },
         new() { Id = "amazon", Name = "Amazon", IsBuiltIn = true, Enabled = false,
-            UrlTemplate = "https://www.amazon.com/s?k={0}" },
+            UrlTemplate = "https://www.amazon.com/s?k={0}", UseLanguageFilter = false },
         new() { Id = "imdb", Name = "IMDb", IsBuiltIn = true, Enabled = false,
-            UrlTemplate = "https://www.imdb.com/find/?q={0}" },
+            UrlTemplate = "https://www.imdb.com/find/?q={0}", UseLanguageFilter = false },
         new() { Id = "npm", Name = "npm", IsBuiltIn = true, Enabled = false,
-            UrlTemplate = "https://www.npmjs.com/search?q={0}" },
+            UrlTemplate = "https://www.npmjs.com/search?q={0}", UseLanguageFilter = false },
         new() { Id = "nuget", Name = "NuGet", IsBuiltIn = true, Enabled = false,
-            UrlTemplate = "https://www.nuget.org/packages?q={0}" },
+            UrlTemplate = "https://www.nuget.org/packages?q={0}", UseLanguageFilter = false },
     ];
 }
