@@ -9,6 +9,7 @@ namespace SnapActions;
 public partial class App : Application
 {
     private static Mutex? _mutex;
+    private static bool _ownsMutex;
     private TrayIconManager? _trayIcon;
     private SelectionTracker? _tracker;
 
@@ -16,6 +17,7 @@ public partial class App : Application
     {
         const string mutexName = "SnapActions_SingleInstance_Mutex";
         _mutex = new Mutex(true, mutexName, out bool createdNew);
+        _ownsMutex = createdNew;
 
         if (!createdNew)
         {
@@ -40,7 +42,10 @@ public partial class App : Application
     {
         _tracker?.Stop();
         _trayIcon?.Dispose();
-        _mutex?.ReleaseMutex();
+        if (_ownsMutex)
+        {
+            try { _mutex?.ReleaseMutex(); } catch { /* not owned */ }
+        }
         _mutex?.Dispose();
         base.OnExit(e);
     }

@@ -30,7 +30,20 @@ public static class SettingsManager
 
         // Migrate: update built-in search engines to latest defaults
         MigrateSearchEngines();
+        MigrateActionIds();
     }
+
+    private static void MigrateActionIds()
+    {
+        // wrap_wrap_X -> wrap_X (B10 fix in WrapAction.Id)
+        for (int i = 0; i < Current.PinnedActionIds.Count; i++)
+            Current.PinnedActionIds[i] = MigrateId(Current.PinnedActionIds[i]);
+        for (int i = 0; i < Current.DisabledActionIds.Count; i++)
+            Current.DisabledActionIds[i] = MigrateId(Current.DisabledActionIds[i]);
+    }
+
+    private static string MigrateId(string id) =>
+        id.StartsWith("wrap_wrap_", StringComparison.Ordinal) ? id["wrap_".Length..] : id;
 
     private static void MigrateSearchEngines()
     {
@@ -61,7 +74,10 @@ public static class SettingsManager
         {
             Directory.CreateDirectory(SettingsDir);
             var json = JsonSerializer.Serialize(Current, JsonOptions);
-            File.WriteAllText(SettingsFile, json);
+            // Atomic write: temp file + replace, so a crash mid-write can't blank settings.json
+            var tmp = SettingsFile + ".tmp";
+            File.WriteAllText(tmp, json);
+            File.Move(tmp, SettingsFile, overwrite: true);
         }
         catch { }
     }

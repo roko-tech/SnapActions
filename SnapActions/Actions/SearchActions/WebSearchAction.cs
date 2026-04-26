@@ -15,6 +15,9 @@ public partial class WebSearchAction(string id, string name, string iconKey, str
     [GeneratedRegex(@"[&?][a-z_]+=(?=&|$)")]
     private static partial Regex EmptyParamRegex();
 
+    [GeneratedRegex(@"://\{1\}\.")]
+    private static partial Regex HostPlaceholderRegex();
+
     public bool CanExecute(string text, TextAnalysis analysis) => !string.IsNullOrEmpty(text.Trim());
 
     public ActionResult Execute(string text, TextAnalysis analysis)
@@ -34,6 +37,9 @@ public partial class WebSearchAction(string id, string name, string iconKey, str
         }
         else
         {
+            // Fallback for host-position substitutions like https://{1}.wikipedia.org/...
+            // Empty {1} would yield https://.wikipedia.org/...
+            url = HostPlaceholderRegex().Replace(url, "://en.");
             url = url.Replace("{1}", "");
             url = EmptyParamRegex().Replace(url, "");
             url = url.TrimEnd('&', '?');

@@ -1,14 +1,18 @@
 namespace SnapActions.Helpers;
 
 /// <summary>
-/// Simple recursive descent math expression parser.
-/// Supports: +, -, *, /, %, ^, parentheses, unary minus.
+/// Recursive-descent math expression parser.
+/// Operators: + - * / % ^ and parentheses, unary +/-.
+/// Functions: sqrt, sin, cos, tan, log (natural), log10, abs, round, floor, ceil, exp.
+/// Constants: pi, e.
+/// Commas are stripped (so "1,000+200" works).
 /// </summary>
 public static class MathEvaluator
 {
     public static double Evaluate(string expression)
     {
-        var parser = new Parser(expression.Replace(" ", ""));
+        var cleaned = expression.Replace(" ", "").Replace(",", "");
+        var parser = new Parser(cleaned);
         var result = parser.ParseExpression();
         if (parser.Position < parser.Input.Length)
             throw new FormatException($"Unexpected character: {parser.Input[parser.Position]}");
@@ -80,22 +84,67 @@ public static class MathEvaluator
         {
             if (Position < Input.Length && Input[Position] == '(')
             {
-                Position++; // skip '('
+                Position++;
                 var result = ParseExpression();
                 if (Position < Input.Length && Input[Position] == ')')
-                    Position++; // skip ')'
+                    Position++;
                 return result;
             }
 
-            // Parse number
-            int start = Position;
+            // Identifier (function or constant)
+            if (Position < Input.Length && IsLetter(Input[Position]))
+            {
+                int start = Position;
+                while (Position < Input.Length && IsLetter(Input[Position])) Position++;
+                var name = Input[start..Position].ToLowerInvariant();
+
+                if (Position < Input.Length && Input[Position] == '(')
+                {
+                    Position++;
+                    var arg = ParseExpression();
+                    if (Position < Input.Length && Input[Position] == ')') Position++;
+                    return ApplyFunction(name, arg);
+                }
+                return ApplyConstant(name);
+            }
+
+            // Number
+            int numStart = Position;
             while (Position < Input.Length && (char.IsDigit(Input[Position]) || Input[Position] == '.'))
                 Position++;
 
-            if (start == Position)
+            if (numStart == Position)
                 throw new FormatException($"Expected number at position {Position}");
 
-            return double.Parse(Input[start..Position], System.Globalization.CultureInfo.InvariantCulture);
+            return double.Parse(Input[numStart..Position], System.Globalization.CultureInfo.InvariantCulture);
         }
+
+        private static bool IsLetter(char c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+
+        private static double ApplyFunction(string name, double arg) => name switch
+        {
+            "sqrt" => Math.Sqrt(arg),
+            "sin" => Math.Sin(arg),
+            "cos" => Math.Cos(arg),
+            "tan" => Math.Tan(arg),
+            "log" => Math.Log(arg),
+            "ln" => Math.Log(arg),
+            "log10" => Math.Log10(arg),
+            "log2" => Math.Log2(arg),
+            "abs" => Math.Abs(arg),
+            "round" => Math.Round(arg),
+            "floor" => Math.Floor(arg),
+            "ceil" => Math.Ceiling(arg),
+            "exp" => Math.Exp(arg),
+            _ => throw new FormatException($"Unknown function: {name}")
+        };
+
+        private static double ApplyConstant(string name) => name switch
+        {
+            "pi" => Math.PI,
+            "e" => Math.E,
+            "tau" => Math.Tau,
+            _ => throw new FormatException($"Unknown identifier: {name}")
+        };
     }
 }

@@ -24,7 +24,6 @@ public partial class ToolbarWindow : Window
     private List<ActionGroup> _actionGroups = [];
     private readonly DispatcherTimer _dismissTimer;
     private double _dpiX = 1.0, _dpiY = 1.0;
-    private bool _dpiCached;
     private bool _isEditable;
     private bool _isPasteMode;
 
@@ -52,7 +51,23 @@ public partial class ToolbarWindow : Window
             var style = GetWindowLong(hwnd, GWL_EXSTYLE);
             SetWindowLong(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
         };
+
+        // Esc dismisses the toolbar even when it doesn't have keyboard focus
+        _escListener = new System.Windows.Threading.DispatcherTimer
+            { Interval = TimeSpan.FromMilliseconds(120) };
+        _escListener.Tick += (_, _) =>
+        {
+            if (!IsVisible) return;
+            // GetAsyncKeyState returns high bit set when key is currently down
+            if ((GetAsyncKeyState(0x1B) & 0x8000) != 0) HideToolbar();
+        };
+        IsVisibleChanged += (_, _) =>
+        {
+            if (IsVisible) _escListener.Start(); else _escListener.Stop();
+        };
     }
+
+    private readonly System.Windows.Threading.DispatcherTimer _escListener;
 
     // ── Show ─────────────────────────────────────────────────────
 
@@ -133,7 +148,7 @@ public partial class ToolbarWindow : Window
         Opacity = 0;
 
         Show();
-        CacheDpi();
+        ReadDpi();
         UpdateLayout();
 
         double tw = ActualWidth > 10 ? ActualWidth : 100;
@@ -202,7 +217,7 @@ public partial class ToolbarWindow : Window
     public bool IsPointInside(int screenX, int screenY)
     {
         if (!IsVisible) return false;
-        CacheDpi();
+        ReadDpi();
         double x = screenX / _dpiX, y = screenY / _dpiY;
 
         if (x >= Left && x <= Left + ActualWidth && y >= Top && y <= Top + ActualHeight)
@@ -222,16 +237,14 @@ public partial class ToolbarWindow : Window
         return false;
     }
 
-    private void CacheDpi()
+    private void ReadDpi()
     {
-        if (_dpiCached) return;
         var source = PresentationSource.FromVisual(this);
         if (source?.CompositionTarget != null)
         {
             _dpiX = source.CompositionTarget.TransformToDevice.M11;
             _dpiY = source.CompositionTarget.TransformToDevice.M22;
         }
-        _dpiCached = true;
     }
 
     // ── Type badge ───────────────────────────────────────────────
@@ -243,13 +256,13 @@ public partial class ToolbarWindow : Window
             TypeBadge.Visibility = Visibility.Visible;
             TypeLabel.Text = _analysis.Type switch
             {
-                TextType.Url => "URL", TextType.Email => "EMAIL", TextType.Phone => "PHONE",
+                TextType.Url => "URL", TextType.Email => "EMAIL",
                 TextType.FilePath => "FILE PATH", TextType.Json => "JSON",
                 TextType.ColorCode => $"COLOR {_analysis.Metadata?.GetValueOrDefault("format", "")?.ToUpper()}",
                 TextType.XmlHtml => _analysis.Metadata?.GetValueOrDefault("subtype", "xml")?.ToUpper() ?? "XML",
                 TextType.MathExpression => "MATH",
                 TextType.IpAddress => _analysis.Metadata?.GetValueOrDefault("version", "IP") ?? "IP",
-                TextType.Uuid => "UUID", TextType.Base64 => "BASE64",
+                TextType.Uuid => "UUID", TextType.Base64 => "BASE64", TextType.Jwt => "JWT",
                 TextType.DateTime => "DATE/TIME", TextType.CodeSnippet => "CODE", _ => ""
             };
         }
@@ -265,7 +278,8 @@ public partial class ToolbarWindow : Window
         if (cg is { Actions.Count: > 0 })
         {
             ContextSeparator.Visibility = Visibility.Visible;
-            foreach (var a in cg.Actions.Take(4))
+            int max = Math.Max(1, Config.SettingsManager.Current.MaxInlineContextActions);
+            foreach (var a in cg.Actions.Take(max))
                 ContextActionsPanel.Children.Add(CreateActionButton(a));
         }
         else ContextSeparator.Visibility = Visibility.Collapsed;
@@ -743,4 +757,6 @@ public partial class ToolbarWindow : Window
     private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll")]
     private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
 }

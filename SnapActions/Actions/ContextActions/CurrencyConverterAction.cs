@@ -25,7 +25,7 @@ public partial class CurrencyConverterAction : IAction
         var trimmed = text.Trim();
         var target = Config.SettingsManager.Current.TargetCurrency;
         ResultPopup.ShowNearCursor($"Convert to {target}",
-            async http => await ResultPopup.FetchCurrencyConversion(http, trimmed, target));
+            (http, ct) => ResultPopup.FetchCurrencyConversion(http, trimmed, target, ct));
         return new ActionResult(true);
     }
 }

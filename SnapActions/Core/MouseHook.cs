@@ -61,9 +61,8 @@ public class MouseHook : IDisposable
                 { Interval = TimeSpan.FromMilliseconds(500) };
             _longPressTimer.Tick += OnLongPressTimer;
 
-            var multiClickMs = Config.SettingsManager.Current.MultiClickDelay;
             _multiClickTimer = new DispatcherTimer(DispatcherPriority.Normal, _hookDispatcher)
-                { Interval = TimeSpan.FromMilliseconds(multiClickMs > 0 ? multiClickMs : 1) };
+                { Interval = TimeSpan.FromMilliseconds(1) };
             _multiClickTimer.Tick += OnMultiClickTimer;
 
             // Run message pump so the hook receives callbacks
@@ -187,8 +186,14 @@ public class MouseHook : IDisposable
                     }
                     else
                     {
-                        _multiClickTimer?.Stop();
-                        _multiClickTimer?.Start();
+                        // Re-read setting each fire so changes take effect without restart
+                        var delay = Config.SettingsManager.Current.MultiClickDelay;
+                        if (_multiClickTimer != null)
+                        {
+                            _multiClickTimer.Stop();
+                            _multiClickTimer.Interval = TimeSpan.FromMilliseconds(delay);
+                            _multiClickTimer.Start();
+                        }
                     }
                 }
                 else

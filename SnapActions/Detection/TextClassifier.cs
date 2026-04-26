@@ -17,12 +17,12 @@ public class TextClassifier
             new JsonDetector(),
             new XmlHtmlDetector(),
             new UuidDetector(),
+            new JwtDetector(),
             new IpAddressDetector(),
             new ColorCodeDetector(),
-            new PhoneDetector(),
             new Base64Detector(),
-            new MathExprDetector(),
             new DateTimeDetector(),
+            new MathExprDetector(),
             new CodeSnippetDetector()
         ];
     }

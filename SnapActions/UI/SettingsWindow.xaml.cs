@@ -200,9 +200,10 @@ public partial class SettingsWindow : Window
         if (!url.Contains("{0}"))
             url += (url.Contains('?') ? "&" : "?") + "q={0}";
 
-        var id = "custom_" + name.ToLowerInvariant().Replace(' ', '_');
+        var baseId = "custom_" + name.ToLowerInvariant().Replace(' ', '_');
+        var id = baseId;
         if (SettingsManager.Current.SearchEngines.Any(en => en.Id == id))
-            id += "_" + DateTime.Now.Ticks % 10000;
+            id = baseId + "_" + Guid.NewGuid().ToString("N")[..8];
 
         SettingsManager.Current.SearchEngines.Add(new SearchEngine
         {
@@ -223,12 +224,9 @@ public partial class SettingsWindow : Window
             .Select(a => a.Trim()).Where(a => a.Length > 0).ToList();
     }
 
+    // Settings auto-save on every change; this button just gives explicit confirmation.
     private void Save_Click(object sender, RoutedEventArgs e) =>
         Task.Run(() => SettingsManager.Save());
 
-    private void Close_Click(object sender, RoutedEventArgs e)
-    {
-        Task.Run(() => SettingsManager.Save());
-        Close();
-    }
+    private void Close_Click(object sender, RoutedEventArgs e) => Close();
 }

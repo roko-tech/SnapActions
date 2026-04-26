@@ -21,8 +21,10 @@ public class DictionaryAction : IAction
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
         var word = text.Trim();
+        var lang = Config.SettingsManager.Current.SearchLanguage;
+        if (string.IsNullOrEmpty(lang)) lang = "en";
         ResultPopup.ShowNearCursor($"Define: {word}",
-            async http => await ResultPopup.FetchDefinition(http, word));
+            (http, ct) => ResultPopup.FetchDefinition(http, word, lang, ct));
         return new ActionResult(true);
     }
 }

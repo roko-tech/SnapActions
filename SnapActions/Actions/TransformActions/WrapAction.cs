@@ -4,7 +4,7 @@ namespace SnapActions.Actions.TransformActions;
 
 public class WrapAction(string id, string name, string prefix, string suffix) : IAction
 {
-    public string Id => $"wrap_{id}";
+    public string Id => id;
     public string Name => name;
     public string IconKey => "IconWrap";
     public ActionCategory Category => ActionCategory.Transform;

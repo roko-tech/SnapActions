@@ -26,6 +26,8 @@ public class ActionRegistry
             new CalculateAction(),
             new IpLookupAction(),
             new DecodeBase64Action(),
+            new DecodeJwtAction(),
+            new GenerateQrAction(),
             new GenerateUuidAction(),
             new ConvertTimezoneAction(),
             new TranslateAction(),
@@ -42,15 +44,13 @@ public class ActionRegistry
             new CaseTransformAction("snake", "snake_case", "IconSnakeCase", ToSnakeCase),
             new CaseTransformAction("kebab", "kebab-case", "IconKebabCase", ToKebabCase),
             new CaseTransformAction("pascal", "PascalCase", "IconPascalCase", ToPascalCase),
-            new CaseTransformAction("reverse", "Reverse", "IconReverse", text => new string(text.Reverse().ToArray())),
+            new CaseTransformAction("reverse", "Reverse", "IconReverse", ReverseGraphemes),
 
             new WhitespaceAction("trim", "Trim", text => text.Trim()),
             new WhitespaceAction("remove_extra_spaces", "Remove Extra Spaces",
                 text => System.Text.RegularExpressions.Regex.Replace(text, @" {2,}", " ")),
-            new WhitespaceAction("sort_lines", "Sort Lines",
-                text => string.Join("\n", text.Split('\n').Order())),
-            new WhitespaceAction("dedup_lines", "Remove Duplicates",
-                text => string.Join("\n", text.Split('\n').Distinct())),
+            new WhitespaceAction("sort_lines", "Sort Lines", text => SortLines(text, distinct: false)),
+            new WhitespaceAction("dedup_lines", "Remove Duplicates", text => SortLines(text, distinct: true)),
             new WhitespaceAction("remove_linebreaks", "Remove Line Breaks",
                 text => System.Text.RegularExpressions.Regex.Replace(text, @"[\r\n]+", " ").Trim()),
 
@@ -75,6 +75,12 @@ public class ActionRegistry
             new WrapAction("wrap_brackets", "Wrap [brackets]", "[", "]"),
             new WrapAction("wrap_braces", "Wrap {braces}", "{", "}"),
             new WrapAction("wrap_backticks", "Wrap `backticks`", "`", "`"),
+
+            // Hash actions
+            new EncodingAction("md5", "MD5", "IconHash", text => Hash(System.Security.Cryptography.MD5.HashData, text)),
+            new EncodingAction("sha1", "SHA-1", "IconHash", text => Hash(System.Security.Cryptography.SHA1.HashData, text)),
+            new EncodingAction("sha256", "SHA-256", "IconHash", text => Hash(System.Security.Cryptography.SHA256.HashData, text)),
+            new EncodingAction("sha512", "SHA-512", "IconHash", text => Hash(System.Security.Cryptography.SHA512.HashData, text)),
 
         ];
     }
@@ -157,6 +163,32 @@ public class ActionRegistry
 
     private static string ToKebabCase(string text) =>
         string.Join('-', SplitWords(text).Select(w => w.ToLower()));
+
+    private static string ReverseGraphemes(string text)
+    {
+        // Iterate Unicode text elements so emoji and combining marks survive
+        var enumerator = System.Globalization.StringInfo.GetTextElementEnumerator(text);
+        var stack = new Stack<string>();
+        while (enumerator.MoveNext())
+            stack.Push((string)enumerator.Current);
+        return string.Concat(stack);
+    }
+
+    private static string Hash(Func<byte[], byte[]> hashFn, string text)
+    {
+        var bytes = hashFn(System.Text.Encoding.UTF8.GetBytes(text));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    private static string SortLines(string text, bool distinct)
+    {
+        // Detect line ending: keep \r\n if input uses it, else \n
+        var nl = text.Contains("\r\n") ? "\r\n" : "\n";
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        IEnumerable<string> seq = lines.OrderBy(l => l, StringComparer.OrdinalIgnoreCase);
+        if (distinct) seq = seq.Distinct();
+        return string.Join(nl, seq);
+    }
 
     private static string[] SplitWords(string text)
     {

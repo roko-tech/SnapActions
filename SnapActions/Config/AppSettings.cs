@@ -19,7 +19,6 @@ public class SearchEngine
 
 public class AppSettings
 {
-    public string Theme { get; set; } = "Dark";
     public bool AutoStart { get; set; } = false;
     public bool Enabled { get; set; } = true;
     public int ToolbarDismissTimeout { get; set; } = 8000;
@@ -46,6 +45,9 @@ public class AppSettings
 
     /// <summary>Action IDs pinned to the main toolbar bar.</summary>
     public List<string> PinnedActionIds { get; set; } = [];
+
+    /// <summary>How many context-action buttons to show inline on the toolbar (the rest stay in the dropdown).</summary>
+    public int MaxInlineContextActions { get; set; } = 4;
 
     public static List<SearchEngine> GetDefaultEngines() =>
     [

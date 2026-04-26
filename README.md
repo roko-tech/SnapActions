@@ -35,6 +35,7 @@ Automatically detects what you selected and shows relevant actions:
 | Base64 | `SGVsbG8gV29ybGQ=` | Decode |
 | Date/Time | `2026-04-11T12:00` | Convert timezone, Unix timestamp |
 | Currency | `$33`, `100 SAR` | Convert to target currency |
+| JWT | `eyJhbGciOi...` | Decode header / payload |
 
 ### Inline Popups (no browser needed)
 - **Translate** — translates selected text using MyMemory API, shows result in popup
@@ -48,6 +49,9 @@ UPPERCASE, lowercase, Title Case, camelCase, PascalCase, snake_case, kebab-case,
 - **Delete** — remove selected text in editable fields
 - **Paste Plain Text** — strip formatting and paste as plain Unicode text
 - **Encode/Decode** — URL, Base64, HTML encode and decode
+- **Hash** — MD5, SHA-1, SHA-256, SHA-512 (under Encode)
+- **JWT decode** — split header/payload/signature for `eyJ…` tokens
+- **QR code** — open a QR PNG for any selected URL
 
 ### Search Engines
 13 built-in engines: Google, Bing, DuckDuckGo, YouTube, Twitter/X, Reddit, GitHub, StackOverflow, Wikipedia, Amazon, IMDb, npm, NuGet
@@ -75,6 +79,7 @@ Double-click the system tray icon to open Settings:
 | Setting | Options | Default |
 |---------|---------|---------|
 | Show delay | Instant, 100ms, 200ms, 300ms, 500ms, 1s | Instant |
+| Multi-click delay | Instant, 100ms, 200ms, 300ms, 400ms | 200ms |
 | Auto-dismiss | 3s, 5s, 8s, 15s, 30s, Never | 8 seconds |
 | Replace on transform | On/Off | On |
 | Search language | 13+ languages or no filter | No filter |

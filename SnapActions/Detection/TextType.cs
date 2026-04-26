@@ -5,7 +5,6 @@ public enum TextType
     PlainText,
     Url,
     Email,
-    Phone,
     FilePath,
     ColorCode,
     Json,
@@ -15,5 +14,6 @@ public enum TextType
     CodeSnippet,
     DateTime,
     Uuid,
-    Base64
+    Base64,
+    Jwt
 }

@@ -19,7 +19,7 @@ public class TranslateAction : IAction
         var trimmed = text.Trim();
         ResultPopup.ShowNearCursor(
             $"Translate to {(string.IsNullOrEmpty(lang) ? "English" : lang.ToUpper())}",
-            async http => await ResultPopup.FetchTranslation(http, trimmed, lang));
+            (http, ct) => ResultPopup.FetchTranslation(http, trimmed, lang, ct));
         return new ActionResult(true);
     }
 }
