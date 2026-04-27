@@ -80,10 +80,14 @@ public static class SettingsManager
             var saved = existing.FirstOrDefault(e => e.Id == def.Id);
             if (saved != null)
             {
-                // Update URL template and LangMode from defaults (user keeps Enabled state)
-                saved.UrlTemplate = def.UrlTemplate;
-                saved.LangMode = def.LangMode;
                 saved.IsBuiltIn = true;
+                // Don't overwrite user-edited template/mode. Without this, every Load reverts
+                // any local tweak a user made to a built-in engine's URL or LangMode.
+                if (!saved.UserModified)
+                {
+                    saved.UrlTemplate = def.UrlTemplate;
+                    saved.LangMode = def.LangMode;
+                }
             }
             else
             {

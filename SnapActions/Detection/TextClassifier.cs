@@ -28,6 +28,7 @@ public class TextClassifier
             new ColorCodeDetector(),
             new Base64Detector(),
             new DateTimeDetector(),
+            new UnitDetector(),
             new MathExprDetector(),
             new CodeSnippetDetector()
         ];

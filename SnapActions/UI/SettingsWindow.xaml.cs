@@ -72,6 +72,7 @@ public partial class SettingsWindow : Window
         SelectComboByTag(ShowDelayCombo, s.ToolbarShowDelay.ToString(), 0);
         SelectComboByTag(MultiClickCombo, s.MultiClickDelay.ToString(), 2);
         SelectComboByTag(LongPressCombo, s.LongPressDuration.ToString(), 1);
+        SelectComboByTag(MaxInlineCombo, s.MaxInlineContextActions.ToString(), 3);
         SelectComboByTag(LanguageCombo, s.SearchLanguage, 0);
         SelectComboByTag(CurrencyCombo, s.TargetCurrency, 0);
 
@@ -191,6 +192,15 @@ public partial class SettingsWindow : Window
         QueueSave();
     }
 
+    private void MaxInline_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        if (MaxInlineCombo.SelectedItem is ComboBoxItem item &&
+            int.TryParse(item.Tag?.ToString(), out int n))
+            SettingsManager.Current.MaxInlineContextActions = n;
+        QueueSave();
+    }
+
     private void DismissTime_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_loading) return;
@@ -293,11 +303,12 @@ public partial class SettingsWindow : Window
     }
 
     // Settings auto-save on every change; this button is now an explicit "save now" if the user
-    // wants to force-flush before any debounce timer fires.
+    // wants to force-flush before any debounce timer fires. Synchronous so the user can be sure
+    // it's persisted by the time the click handler returns.
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         _saveDebounce.Stop();
-        Task.Run(() => SettingsManager.Save());
+        SettingsManager.Save();
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();

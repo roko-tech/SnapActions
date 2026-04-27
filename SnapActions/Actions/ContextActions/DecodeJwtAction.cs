@@ -6,6 +6,8 @@ namespace SnapActions.Actions.ContextActions;
 
 public class DecodeJwtAction : IAction
 {
+    private static readonly JsonSerializerOptions IndentedJson = new() { WriteIndented = true };
+
     public string Id => "decode_jwt";
     public string Name => "Decode JWT";
     public string IconKey => "IconDecode";
@@ -43,7 +45,7 @@ public class DecodeJwtAction : IAction
         try
         {
             using var doc = JsonDocument.Parse(json);
-            return JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
+            return JsonSerializer.Serialize(doc, IndentedJson);
         }
         catch { return json; }
     }

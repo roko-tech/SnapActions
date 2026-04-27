@@ -247,6 +247,7 @@ public class MouseHook : IDisposable
     public void Dispose()
     {
         Uninstall();
+        _hookReady.Dispose();
         GC.SuppressFinalize(this);
     }
 

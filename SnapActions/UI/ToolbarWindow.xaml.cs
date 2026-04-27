@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -268,7 +267,9 @@ public partial class ToolbarWindow : Window
                 TextType.MathExpression => "MATH",
                 TextType.IpAddress => _analysis.Metadata?.GetValueOrDefault("version", "IP") ?? "IP",
                 TextType.Uuid => "UUID", TextType.Base64 => "BASE64", TextType.Jwt => "JWT",
-                TextType.DateTime => "DATE/TIME", TextType.CodeSnippet => "CODE", _ => ""
+                TextType.DateTime => "DATE/TIME", TextType.CodeSnippet => "CODE",
+                TextType.Unit => $"UNIT {_analysis.Metadata?.GetValueOrDefault("symbol", "")}".TrimEnd(),
+                _ => ""
             };
         }
         else TypeBadge.Visibility = Visibility.Collapsed;
@@ -329,14 +330,18 @@ public partial class ToolbarWindow : Window
         return btn;
     }
 
+    private const string PinnedDragFormat = "SnapActions.PinnedActionId";
+
     private Button CreatePinnedButton(IAction action)
     {
         var geo = TryFindResource(action.IconKey) as Geometry;
         var btn = new Button
         {
             Style = (Style)FindResource("ActionButtonStyle"),
-            ToolTip = action.Name, Tag = action,
-            Width = double.NaN, Padding = new Thickness(6, 4, 6, 4)
+            ToolTip = action.Name + "  (drag to reorder)",
+            Tag = action,
+            Width = double.NaN, Padding = new Thickness(6, 4, 6, 4),
+            AllowDrop = true,
         };
         var sp = new StackPanel { Orientation = Orientation.Horizontal };
         if (geo != null)
@@ -351,7 +356,57 @@ public partial class ToolbarWindow : Window
         btn.Content = sp;
         btn.Click += ActionButton_Click;
 
-        // Right-click context menu for reordering pinned actions
+        // Drag-to-reorder. We track the press point so a small click doesn't initiate drag.
+        Point pressPoint = default;
+        bool pressed = false;
+        btn.PreviewMouseLeftButtonDown += (_, args) =>
+        {
+            pressPoint = args.GetPosition(btn);
+            pressed = true;
+        };
+        btn.PreviewMouseMove += (_, args) =>
+        {
+            if (!pressed || args.LeftButton != System.Windows.Input.MouseButtonState.Pressed) return;
+            var pt = args.GetPosition(btn);
+            if (Math.Abs(pt.X - pressPoint.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(pt.Y - pressPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
+                return;
+            pressed = false;
+            // Suppress the dismiss timer while dragging — popping the toolbar mid-drag is jarring.
+            _dismissTimer.Stop();
+            DragDrop.DoDragDrop(btn, new DataObject(PinnedDragFormat, action.Id), DragDropEffects.Move);
+            // Restart dismiss timer once drag completes (DoDragDrop is synchronous).
+            StartDismissTimer();
+        };
+        btn.PreviewMouseLeftButtonUp += (_, _) => pressed = false;
+
+        btn.DragOver += (_, args) =>
+        {
+            args.Effects = args.Data.GetDataPresent(PinnedDragFormat)
+                ? DragDropEffects.Move
+                : DragDropEffects.None;
+            args.Handled = true;
+        };
+        btn.Drop += (_, args) =>
+        {
+            args.Handled = true;
+            if (!args.Data.GetDataPresent(PinnedDragFormat)) return;
+            var draggedId = args.Data.GetData(PinnedDragFormat) as string;
+            if (string.IsNullOrEmpty(draggedId) || draggedId == action.Id) return;
+
+            var pinned = Config.SettingsManager.Current.PinnedActionIds;
+            int from = pinned.IndexOf(draggedId);
+            int to = pinned.IndexOf(action.Id);
+            if (from < 0 || to < 0) return;
+            pinned.RemoveAt(from);
+            // Adjust target index if removal shifted positions.
+            if (from < to) to--;
+            pinned.Insert(to, draggedId);
+            Config.SettingsManager.Save();
+            BuildPinnedActions();
+        };
+
+        // Right-click context menu remains for reorder by 1 + unpin (keyboardless users).
         var menu = new ContextMenu();
         var moveLeft = new MenuItem { Header = "Move Left", Tag = action };
         moveLeft.Click += (s, _) => MovePinned(((MenuItem)s!).Tag as IAction, -1);
@@ -487,13 +542,19 @@ public partial class ToolbarWindow : Window
 
     // ── Preview on hover ─────────────────────────────────────────
 
+    // Hover-preview executes synchronously on the UI thread. Don't run heavyweight parsers
+    // (XDocument/JsonDocument) on huge selections — full Execute on click is fine.
+    private const int MaxPreviewExecuteChars = 64 * 1024;
+
     private void SubMenuButton_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
     {
         if (sender is not Button { Tag: IAction action }) return;
         string preview;
 
         // Preview is opt-in via IAction.IsPreviewSafe — only pure transforms run on hover.
-        if (action.IsPreviewSafe && !string.IsNullOrEmpty(_selectedText))
+        if (action.IsPreviewSafe
+            && !string.IsNullOrEmpty(_selectedText)
+            && _selectedText.Length <= MaxPreviewExecuteChars)
         {
             try
             {
@@ -560,10 +621,21 @@ public partial class ToolbarWindow : Window
 
     // ── Action execution ─────────────────────────────────────────
 
-    private void ActionButton_Click(object sender, RoutedEventArgs e)
+    private async void ActionButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: IAction action }) return;
-        var result = action.Execute(_selectedText, _analysis);
+        ActionResult result;
+        try { result = action.Execute(_selectedText, _analysis); }
+        catch (Exception ex) { result = new ActionResult(false, Message: $"Error: {ex.Message}"); }
+
+        if (!result.Success && !string.IsNullOrEmpty(result.Message))
+        {
+            // Surface the failure in the same band that hover preview uses, then dismiss.
+            // Without this, click-on-failed-action just made the toolbar disappear — silent failure.
+            await ShowFailureAndHide(result.Message);
+            return;
+        }
+
         if (result.ResultText != null)
         {
             Clipboard.SetText(result.ResultText);
@@ -572,10 +644,26 @@ public partial class ToolbarWindow : Window
                                 && action.Category == ActionCategory.Transform))
             {
                 HideToolbar();
-                Dispatcher.InvokeAsync(() => TextCapture.SimulateCtrlV(), DispatcherPriority.Background);
+                _ = Dispatcher.InvokeAsync(() => TextCapture.SimulatePaste(), DispatcherPriority.Background);
                 return;
             }
         }
+        HideToolbar();
+    }
+
+    private async Task ShowFailureAndHide(string message)
+    {
+        // Make sure the popup is open so PreviewText is visible.
+        if (!SubMenuPopup.IsOpen)
+        {
+            SubMenuPanel.Children.Clear();
+            SubMenuTitle.Text = "Error";
+            SubMenuPopup.IsOpen = true;
+        }
+        PreviewText.Text = message;
+        PreviewText.Opacity = 1;
+        // Short visible window — long enough to read, short enough not to feel sticky.
+        await Task.Delay(1500);
         HideToolbar();
     }
 
@@ -705,7 +793,7 @@ public partial class ToolbarWindow : Window
     private void PasteButton_Click(object sender, RoutedEventArgs e)
     {
         HideToolbar();
-        Dispatcher.InvokeAsync(() => TextCapture.SimulateCtrlV(), DispatcherPriority.Background);
+        Dispatcher.InvokeAsync(() => TextCapture.SimulatePaste(), DispatcherPriority.Background);
     }
 
     private void TransformButton_Click(object sender, RoutedEventArgs e) =>

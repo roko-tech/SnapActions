@@ -5,6 +5,8 @@ namespace SnapActions.Actions.ContextActions;
 
 public class FormatJsonAction : IAction
 {
+    private static readonly JsonSerializerOptions IndentedJson = new() { WriteIndented = true };
+
     public string Id => "format_json";
     public string Name => "Format JSON";
     public string IconKey => "IconFormatJson";
@@ -18,7 +20,7 @@ public class FormatJsonAction : IAction
         try
         {
             using var doc = JsonDocument.Parse(text.Trim());
-            var formatted = JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
+            var formatted = JsonSerializer.Serialize(doc, IndentedJson);
             return new ActionResult(true, formatted, "JSON formatted");
         }
         catch

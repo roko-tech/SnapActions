@@ -6,7 +6,7 @@ A free, open-source alternative to [SnipDo](https://snipdo-app.com/). Select tex
 
 ## Download
 
-**[Download SnapActions.exe](https://github.com/roko-tech/SnapActions/releases/latest)** — single file (~71MB), no installation needed.
+**[Download SnapActions.exe](https://github.com/roko-tech/SnapActions/releases/latest)** — single file (~74MB), no installation needed.
 
 > Requires Windows 10 version 19041 or higher.
 
@@ -36,6 +36,7 @@ Automatically detects what you selected and shows relevant actions:
 | Date/Time | `2026-04-11T12:00` | Convert timezone, Unix timestamp |
 | Currency | `$33`, `100 SAR` | Convert to target currency |
 | JWT | `eyJhbGciOi...` | Decode header / payload |
+| Unit | `5 ft`, `100 km/h`, `20°C` | Convert to common units |
 
 ### Inline Popups (no browser needed)
 - **Translate** — translates selected text using MyMemory API, shows result in popup
@@ -72,7 +73,7 @@ UPPERCASE, lowercase, Title Case, camelCase, PascalCase, snake_case, kebab-case,
 - **Left-click** an action to show/hide it
 - **Right-click** an action to pin it to the main toolbar
 - **Arrow buttons** to reorder actions
-- **Right-click** pinned toolbar buttons to rearrange or unpin
+- **Drag** pinned toolbar buttons to reorder them, or **right-click** to rearrange / unpin
 
 ### Settings
 Double-click the system tray icon to open Settings:
@@ -127,7 +128,7 @@ cd SnapActions/SnapActions
 build.bat
 ```
 
-Produces a single compressed `SnapActions.exe` in `bin\publish\` (~71MB, includes .NET runtime).
+Produces a single compressed `SnapActions.exe` in `bin\publish\` (~74MB, includes .NET runtime).
 
 ## Architecture
 
@@ -135,7 +136,7 @@ Produces a single compressed `SnapActions.exe` in `bin\publish\` (~71MB, include
 SnapActions/
   Core/           Mouse hook (dedicated thread), text capture (WM_COPY + Ctrl+Insert),
                   selection tracking, foreground app detection
-  Detection/      14 text type detectors + classifier pipeline
+  Detection/      13 text type detectors + classifier pipeline
   Actions/        Context actions, transforms, encode/decode, search, popups
   UI/             WPF floating toolbar, result popup, settings window, system tray
   Config/         JSON settings with migration for built-in search engines

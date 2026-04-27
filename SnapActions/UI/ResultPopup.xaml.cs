@@ -173,7 +173,8 @@ public partial class ResultPopup : Window
         System.Threading.CancellationToken ct = default)
     {
         var to = string.IsNullOrEmpty(targetLang) ? "en" : targetLang;
-        var cacheKey = $"{to}|{text}";
+        // Normalize whitespace so "Hello" and "Hello " don't create separate cache entries.
+        var cacheKey = $"{to}|{text.Trim()}";
 
         PruneTranslationCache();
 
@@ -198,7 +199,11 @@ public partial class ResultPopup : Window
             _translationCache[cacheKey] = (DateTime.UtcNow, result);
             return result;
         }
-        catch { return "Translation not available"; }
+        catch (Exception ex)
+        {
+            Log.Warn($"Translation parse failed: {ex.Message}");
+            return "Translation not available";
+        }
     }
 
     private static readonly HashSet<string> DictionarySupportedLanguages = new(StringComparer.OrdinalIgnoreCase)
@@ -240,7 +245,11 @@ public partial class ResultPopup : Window
             var result = sb.ToString().TrimEnd();
             return string.IsNullOrWhiteSpace(result) ? "No definition found" : result;
         }
-        catch { return "No definition found"; }
+        catch (Exception ex)
+        {
+            Log.Warn($"Dictionary parse failed: {ex.Message}");
+            return "No definition found";
+        }
     }
 
     private static readonly Dictionary<string, string[]> CurrencySymbols = new()
@@ -277,7 +286,11 @@ public partial class ResultPopup : Window
             return $"{amount} {src} = {amt * rate:N2} {targetCurrency}";
         }
         catch (OperationCanceledException) { throw; }
-        catch { return "Conversion failed"; }
+        catch (Exception ex)
+        {
+            Log.Warn($"Currency conversion failed: {ex.Message}");
+            return "Conversion failed";
+        }
     }
 
     /// <summary>

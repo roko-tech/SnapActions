@@ -96,6 +96,22 @@
                 <!-- Action Categories -->
                 <TextBlock Text="ACTIONS" FontSize="11" FontWeight="SemiBold"
                            Foreground="#FFA6ADC8" Margin="0,18,0,6"/>
+
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <TextBlock Text="Max inline context actions:" Foreground="#FFCDD6F4"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="MaxInlineCombo" Width="80"
+                              SelectionChanged="MaxInline_Changed"
+                              ToolTip="How many of the type-specific actions (Open URL, Format JSON, etc.) to show as buttons on the toolbar before the rest fall back to a dropdown.">
+                        <ComboBoxItem Content="1" Tag="1"/>
+                        <ComboBoxItem Content="2" Tag="2"/>
+                        <ComboBoxItem Content="3" Tag="3"/>
+                        <ComboBoxItem Content="4" Tag="4"/>
+                        <ComboBoxItem Content="6" Tag="6"/>
+                        <ComboBoxItem Content="8" Tag="8"/>
+                    </ComboBox>
+                </StackPanel>
+
                 <CheckBox x:Name="ShowTransformCheck" Content="Text Transforms"
                           Foreground="#FFCDD6F4" Margin="0,4"
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>

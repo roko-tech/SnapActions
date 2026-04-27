@@ -6,17 +6,17 @@ namespace SnapActions.Core;
 public static class TextCapture
 {
     private const int INPUT_KEYBOARD = 1;
+    private const ushort VK_SHIFT = 0x10;
     private const ushort VK_CONTROL = 0x11;
-    private const ushort VK_INSERT = 0x2D;  // Ctrl+Insert = Copy (avoids letter-key hooks)
-    private const ushort VK_V = 0x56;
+    private const ushort VK_INSERT = 0x2D;  // Ctrl+Insert = Copy / Shift+Insert = Paste
     private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint WM_COPY = 0x0301;
     private const uint SMTO_ABORTIFHUNG = 0x0002;
     private const uint WM_COPY_TIMEOUT_MS = 100;
 
-    private static readonly INPUT[] CtrlInsertInputs = BuildCtrlInsertCombo();
-    private static readonly INPUT[] CtrlVInputs = BuildKeyCombo(VK_CONTROL, VK_V);
+    private static readonly INPUT[] CtrlInsertInputs = BuildExtendedInsertCombo(VK_CONTROL);
+    private static readonly INPUT[] ShiftInsertInputs = BuildExtendedInsertCombo(VK_SHIFT);
     private static readonly int InputSize = Marshal.SizeOf<INPUT>();
 
     // Serialize captures so two rapid selections can't interleave snapshot/restore and corrupt the clipboard.
@@ -146,26 +146,22 @@ public static class TextCapture
         SendInput((uint)CtrlInsertInputs.Length, CtrlInsertInputs, InputSize);
     }
 
-    public static void SimulateCtrlV()
+    /// <summary>
+    /// Send Shift+Insert (canonical paste). We deliberately don't use Ctrl+V — browser extensions
+    /// like h5player hook letter keys, which is the same reason capture uses Ctrl+Insert.
+    /// </summary>
+    public static void SimulatePaste()
     {
-        SendInput((uint)CtrlVInputs.Length, CtrlVInputs, InputSize);
+        SendInput((uint)ShiftInsertInputs.Length, ShiftInsertInputs, InputSize);
     }
 
-    private static INPUT[] BuildKeyCombo(ushort modifier, ushort key) =>
+    // Insert is an extended key — without the flag some apps see numpad-0 instead.
+    private static INPUT[] BuildExtendedInsertCombo(ushort modifier) =>
     [
         MakeKeyInput(modifier, false, extended: false),
-        MakeKeyInput(key, false, extended: false),
-        MakeKeyInput(key, true, extended: false),
-        MakeKeyInput(modifier, true, extended: false),
-    ];
-
-    // Insert is an extended key — without the flag some apps see numpad-0 instead.
-    private static INPUT[] BuildCtrlInsertCombo() =>
-    [
-        MakeKeyInput(VK_CONTROL, false, extended: false),
         MakeKeyInput(VK_INSERT, false, extended: true),
         MakeKeyInput(VK_INSERT, true, extended: true),
-        MakeKeyInput(VK_CONTROL, true, extended: false),
+        MakeKeyInput(modifier, true, extended: false),
     ];
 
     private static INPUT MakeKeyInput(ushort vk, bool keyUp, bool extended)

@@ -15,5 +15,6 @@ public enum TextType
     DateTime,
     Uuid,
     Base64,
-    Jwt
+    Jwt,
+    Unit,
 }

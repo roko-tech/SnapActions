@@ -33,6 +33,12 @@ public class SearchEngine
 
     /// <summary>Whether to apply the global SearchLanguage filter to this engine.</summary>
     public bool UseLanguageFilter { get; set; } = true;
+
+    /// <summary>
+    /// True when the user has hand-edited UrlTemplate or LangMode for a built-in engine.
+    /// SettingsManager.MigrateSearchEngines uses this to skip the auto-overwrite from defaults.
+    /// </summary>
+    public bool UserModified { get; set; }
 }
 
 /// <summary>

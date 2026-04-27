@@ -6,7 +6,8 @@ public partial class ColorCodeDetector : ITextDetector
 {
     public TextType Type => TextType.ColorCode;
 
-    [GeneratedRegex(@"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")]
+    // CSS hex colors: 3 (#RGB), 4 (#RGBA), 6 (#RRGGBB), or 8 (#RRGGBBAA) hex digits.
+    [GeneratedRegex(@"^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")]
     private static partial Regex HexPattern();
 
     [GeneratedRegex(@"^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(\s*,\s*[\d.]+)?\s*\)$")]

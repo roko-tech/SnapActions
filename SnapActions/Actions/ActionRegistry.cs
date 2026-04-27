@@ -30,6 +30,7 @@ public class ActionRegistry
             new GenerateQrAction(),
             new GenerateUuidAction(),
             new ConvertTimezoneAction(),
+            new UnitConvertAction(),
             new TranslateAction(),
             new DictionaryAction(),
             new CurrencyConverterAction(),
@@ -119,7 +120,7 @@ public class ActionRegistry
             "preview_color", "convert_color",
             "format_json", "minify_json", "format_xml", "strip_tags",
             "calculate", "ip_lookup", "decode_base64", "decode_jwt",
-            "generate_qr", "generate_uuid", "convert_timezone",
+            "generate_qr", "generate_uuid", "convert_timezone", "unit_convert",
             "translate", "dictionary", "currency_convert",
             "delete_text", "paste_plain",
 
@@ -246,7 +247,8 @@ public class ActionRegistry
         var nl = text.Contains("\r\n") ? "\r\n" : "\n";
         var lines = text.Replace("\r\n", "\n").Split('\n');
         IEnumerable<string> seq = lines.OrderBy(l => l, StringComparer.OrdinalIgnoreCase);
-        if (distinct) seq = seq.Distinct();
+        // Match the sort comparer so "Hello" and "hello" dedupe to one entry.
+        if (distinct) seq = seq.Distinct(StringComparer.OrdinalIgnoreCase);
         return string.Join(nl, seq);
     }
 

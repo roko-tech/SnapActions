@@ -85,21 +85,48 @@ public static class ProcessHelper
     }
 
     /// <summary>
-    /// Opens Explorer at the given path, optionally selecting a specific file inside its containing folder.
-    /// Doesn't check the URI allow-list (that's for shell URLs); validates the path exists.
+    /// Opens Explorer at the given path. Selects the file if it exists; otherwise opens the
+    /// directory; otherwise opens the parent directory (so a missing-file path still does something).
+    /// Returns "Path not found" only when neither the path nor its parent exists.
+    /// Refuses UNC paths to a remote host — those can leak NTLM hashes via SMB auth.
     /// </summary>
     public static ActionResult RevealInExplorer(string path, string successMessage = "Folder opened")
     {
         if (string.IsNullOrWhiteSpace(path)) return new ActionResult(false, Message: "Empty path");
+
+        // \\server\share — defensive refusal. The user just selected this from somewhere; opening
+        // it triggers an SMB connection and may leak credentials to the named host.
+        if (path.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            var msg = $"Open this UNC path?\n\n{path}\n\nOpening will contact the remote server.";
+            var answer = System.Windows.MessageBox.Show(msg, "Open UNC path?",
+                System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning,
+                System.Windows.MessageBoxResult.No,
+                System.Windows.MessageBoxOptions.DefaultDesktopOnly);
+            if (answer != System.Windows.MessageBoxResult.Yes)
+                return new ActionResult(false, Message: "Cancelled");
+        }
+
         try
         {
             if (File.Exists(path))
+            {
                 Process.Start("explorer.exe", $"/select,\"{path}\"");
-            else if (Directory.Exists(path))
+                return new ActionResult(true, Message: successMessage);
+            }
+            if (Directory.Exists(path))
+            {
                 Process.Start("explorer.exe", $"\"{path}\"");
-            else
-                return new ActionResult(false, Message: "Path not found");
-            return new ActionResult(true, Message: successMessage);
+                return new ActionResult(true, Message: successMessage);
+            }
+            // Fall back to the parent directory (file was deleted but folder still exists).
+            var parent = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent))
+            {
+                Process.Start("explorer.exe", $"\"{parent}\"");
+                return new ActionResult(true, Message: "Parent folder opened (file missing)");
+            }
+            return new ActionResult(false, Message: "Path not found");
         }
         catch (Exception ex)
         {

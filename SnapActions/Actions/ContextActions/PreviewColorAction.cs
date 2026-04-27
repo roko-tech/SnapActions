@@ -67,7 +67,11 @@ public class ConvertColorAction : IAction
     {
         var hex = s.TrimStart('#');
         if (hex.Length == 3) hex = $"{hex[0]}{hex[0]}{hex[1]}{hex[1]}{hex[2]}{hex[2]}";
+        if (hex.Length == 4) // #RGBA — short form with alpha; CSS spec
+            hex = $"{hex[0]}{hex[0]}{hex[1]}{hex[1]}{hex[2]}{hex[2]}";
         if (hex.Length < 6) throw new FormatException("Invalid hex color");
+        // Both 6 (RRGGBB) and 8 (RRGGBBAA per CSS) take the first 6 chars as RGB.
+        // Alpha (positions 6-7 in 8-char form) is intentionally discarded.
         return (Convert.ToInt32(hex[..2], 16), Convert.ToInt32(hex[2..4], 16), Convert.ToInt32(hex[4..6], 16));
     }
 
