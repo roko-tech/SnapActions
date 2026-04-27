@@ -8,6 +8,7 @@ public class WhitespaceAction(string id, string name, Func<string, string> trans
     public string Name => name;
     public string IconKey => "IconWhitespace";
     public ActionCategory Category => ActionCategory.Transform;
+    public bool IsPreviewSafe => true;
 
     public bool CanExecute(string text, TextAnalysis analysis) => !string.IsNullOrEmpty(text);
 

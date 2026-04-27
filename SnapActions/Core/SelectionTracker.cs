@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Threading;
@@ -107,7 +106,7 @@ public class SelectionTracker
             }
             catch (Exception ex)
             {
-                Trace.WriteLine($"[SnapActions] ERROR: {ex.Message}");
+                SnapActions.Helpers.Log.Error("Selection-likely handler", ex);
             }
         });
     }
@@ -134,7 +133,7 @@ public class SelectionTracker
             }
             catch (Exception ex)
             {
-                Trace.WriteLine($"[SnapActions] Paste error: {ex.Message}");
+                SnapActions.Helpers.Log.Error("Paste-mode handler", ex);
             }
         });
     }

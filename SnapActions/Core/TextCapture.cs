@@ -20,8 +20,13 @@ public static class TextCapture
     private static readonly INPUT[] CtrlVInputs = BuildKeyCombo(VK_CONTROL, VK_V);
     private static readonly int InputSize = Marshal.SizeOf<INPUT>();
 
+    // Serialize captures so two rapid selections can't interleave snapshot/restore and corrupt the clipboard.
+    private static readonly System.Threading.SemaphoreSlim _captureLock = new(1, 1);
+
     public static async Task<string?> CaptureSelectedTextAsync()
     {
+        // Skip if a capture is already running — the caller will simply not show a toolbar this round.
+        if (!await _captureLock.WaitAsync(0)) return null;
         try
         {
             // Snapshot ALL clipboard formats so images/files/RTF survive
@@ -56,8 +61,12 @@ public static class TextCapture
         }
         catch (Exception ex)
         {
-            Trace.WriteLine($"[SnapActions] Capture error: {ex.Message}");
+            SnapActions.Helpers.Log.Error("Capture error", ex);
             return null;
+        }
+        finally
+        {
+            _captureLock.Release();
         }
     }
 

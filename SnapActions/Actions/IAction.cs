@@ -12,4 +12,10 @@ public interface IAction
     ActionCategory Category { get; }
     bool CanExecute(string text, TextAnalysis analysis);
     ActionResult Execute(string text, TextAnalysis analysis);
+
+    /// <summary>
+    /// True if Execute() is pure (no I/O, no clipboard write, no key/mouse input, no process launch).
+    /// Hover preview only runs Execute() for actions where this is true. Default: false.
+    /// </summary>
+    bool IsPreviewSafe => false;
 }

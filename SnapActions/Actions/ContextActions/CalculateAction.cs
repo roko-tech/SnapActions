@@ -17,7 +17,15 @@ public class CalculateAction : IAction
         try
         {
             var result = MathEvaluator.Evaluate(text.Trim());
-            var formatted = result % 1 == 0 ? ((long)result).ToString() : result.ToString("G15");
+            string formatted;
+            if (double.IsNaN(result) || double.IsInfinity(result))
+                return new ActionResult(false, Message: "Result is not a finite number");
+
+            if (result % 1 == 0 && result >= long.MinValue && result <= long.MaxValue)
+                formatted = ((long)result).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            else
+                formatted = result.ToString("G15", System.Globalization.CultureInfo.InvariantCulture);
+
             return new ActionResult(true, formatted, $"= {formatted}");
         }
         catch (Exception ex)

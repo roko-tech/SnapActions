@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 using SnapActions.Config;
 using CheckBox = System.Windows.Controls.CheckBox;
 using ComboBox = System.Windows.Controls.ComboBox;
@@ -12,6 +13,7 @@ public partial class SettingsWindow : Window
     private bool _loading = true;
     private Brush? _textBrush;
     private Brush? _secondaryBrush;
+    private readonly DispatcherTimer _saveDebounce;
 
     public SettingsWindow()
     {
@@ -20,6 +22,24 @@ public partial class SettingsWindow : Window
         _secondaryBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xA6, 0xAD, 0xC8));
         _textBrush.Freeze();
         _secondaryBrush.Freeze();
+
+        // Debounce auto-save so a fast typer in the excluded-apps box doesn't trigger 30 disk writes.
+        _saveDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _saveDebounce.Tick += (_, _) =>
+        {
+            _saveDebounce.Stop();
+            Task.Run(() => SettingsManager.Save());
+        };
+
+        // Flush any pending change immediately on close so users don't lose edits.
+        Closing += (_, _) =>
+        {
+            if (_saveDebounce.IsEnabled)
+            {
+                _saveDebounce.Stop();
+                Task.Run(() => SettingsManager.Save());
+            }
+        };
 
         // Defer heavy loading to after render, use dispatcher idle priority
         ContentRendered += (_, _) =>
@@ -32,6 +52,13 @@ public partial class SettingsWindow : Window
         };
     }
 
+    private void QueueSave()
+    {
+        if (_loading) return;
+        _saveDebounce.Stop();
+        _saveDebounce.Start();
+    }
+
     private void LoadSettings()
     {
         var s = SettingsManager.Current;
@@ -42,6 +69,7 @@ public partial class SettingsWindow : Window
         SelectComboByTag(DismissTimeCombo, s.ToolbarDismissTimeout.ToString(), 2);
         SelectComboByTag(ShowDelayCombo, s.ToolbarShowDelay.ToString(), 0);
         SelectComboByTag(MultiClickCombo, s.MultiClickDelay.ToString(), 2);
+        SelectComboByTag(LongPressCombo, s.LongPressDuration.ToString(), 1);
         SelectComboByTag(LanguageCombo, s.SearchLanguage, 0);
         SelectComboByTag(CurrencyCombo, s.TargetCurrency, 0);
 
@@ -123,12 +151,14 @@ public partial class SettingsWindow : Window
         s.ShowTransformActions = ShowTransformCheck.IsChecked == true;
         s.ShowEncodeActions = ShowEncodeCheck.IsChecked == true;
         s.ShowSearchActions = ShowSearchCheck.IsChecked == true;
+        QueueSave();
     }
 
     private void AutoStart_Changed(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
         var enable = AutoStartCheck.IsChecked == true;
+        // SetAutoStart already calls Save internally.
         Task.Run(() => SettingsManager.SetAutoStart(enable));
     }
 
@@ -138,6 +168,7 @@ public partial class SettingsWindow : Window
         if (ShowDelayCombo.SelectedItem is ComboBoxItem item &&
             int.TryParse(item.Tag?.ToString(), out int ms))
             SettingsManager.Current.ToolbarShowDelay = ms;
+        QueueSave();
     }
 
     private void MultiClick_Changed(object sender, SelectionChangedEventArgs e)
@@ -146,6 +177,16 @@ public partial class SettingsWindow : Window
         if (MultiClickCombo.SelectedItem is ComboBoxItem item &&
             int.TryParse(item.Tag?.ToString(), out int ms))
             SettingsManager.Current.MultiClickDelay = ms;
+        QueueSave();
+    }
+
+    private void LongPress_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        if (LongPressCombo.SelectedItem is ComboBoxItem item &&
+            int.TryParse(item.Tag?.ToString(), out int ms))
+            SettingsManager.Current.LongPressDuration = ms;
+        QueueSave();
     }
 
     private void DismissTime_Changed(object sender, SelectionChangedEventArgs e)
@@ -154,6 +195,7 @@ public partial class SettingsWindow : Window
         if (DismissTimeCombo.SelectedItem is ComboBoxItem item &&
             int.TryParse(item.Tag?.ToString(), out int ms))
             SettingsManager.Current.ToolbarDismissTimeout = ms;
+        QueueSave();
     }
 
     private void Language_Changed(object sender, SelectionChangedEventArgs e)
@@ -161,6 +203,7 @@ public partial class SettingsWindow : Window
         if (_loading) return;
         if (LanguageCombo.SelectedItem is ComboBoxItem item)
             SettingsManager.Current.SearchLanguage = item.Tag?.ToString() ?? "";
+        QueueSave();
     }
 
     private void Currency_Changed(object sender, SelectionChangedEventArgs e)
@@ -168,6 +211,7 @@ public partial class SettingsWindow : Window
         if (_loading) return;
         if (CurrencyCombo.SelectedItem is ComboBoxItem item)
             SettingsManager.Current.TargetCurrency = item.Tag?.ToString() ?? "USD";
+        QueueSave();
     }
 
     private void EngineToggle_Changed(object sender, RoutedEventArgs e)
@@ -175,6 +219,7 @@ public partial class SettingsWindow : Window
         if (_loading || sender is not CheckBox { Tag: string id }) return;
         var engine = SettingsManager.Current.SearchEngines.FirstOrDefault(en => en.Id == id);
         if (engine != null) engine.Enabled = ((CheckBox)sender).IsChecked == true;
+        QueueSave();
     }
 
     private void LangToggle_Changed(object sender, RoutedEventArgs e)
@@ -182,6 +227,7 @@ public partial class SettingsWindow : Window
         if (_loading || sender is not CheckBox { Tag: string id }) return;
         var engine = SettingsManager.Current.SearchEngines.FirstOrDefault(en => en.Id == id);
         if (engine != null) engine.UseLanguageFilter = ((CheckBox)sender).IsChecked == true;
+        QueueSave();
     }
 
     private void DeleteEngine_Click(object sender, RoutedEventArgs e)
@@ -189,6 +235,7 @@ public partial class SettingsWindow : Window
         if (sender is not FrameworkElement { Tag: string id }) return;
         SettingsManager.Current.SearchEngines.RemoveAll(en => en.Id == id);
         BuildSearchEnginesList();
+        QueueSave();
     }
 
     private void AddCustomEngine_Click(object sender, RoutedEventArgs e)
@@ -196,6 +243,23 @@ public partial class SettingsWindow : Window
         var name = CustomNameBox.Text.Trim();
         var url = CustomUrlBox.Text.Trim();
         if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(url)) return;
+
+        // Validate URL — only http/https allowed, must be a parseable absolute URL.
+        if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show("Custom search engine URLs must start with http:// or https://",
+                "Invalid URL", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        // {0} placeholder is the URL-encoded query — accept it as a placeholder during validation.
+        var probeUrl = url.Replace("{0}", "test").Replace("{1}", "en");
+        if (!Uri.TryCreate(probeUrl, UriKind.Absolute, out _))
+        {
+            MessageBox.Show("Custom search engine URL is not valid.",
+                "Invalid URL", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
 
         if (!url.Contains("{0}"))
             url += (url.Contains('?') ? "&" : "?") + "q={0}";
@@ -214,6 +278,7 @@ public partial class SettingsWindow : Window
         CustomNameBox.Text = "";
         CustomUrlBox.Text = "";
         BuildSearchEnginesList();
+        QueueSave();
     }
 
     private void ExcludedApps_Changed(object sender, TextChangedEventArgs e)
@@ -222,11 +287,16 @@ public partial class SettingsWindow : Window
         SettingsManager.Current.ExcludedApps = ExcludedAppsBox.Text
             .Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(a => a.Trim()).Where(a => a.Length > 0).ToList();
+        QueueSave();
     }
 
-    // Settings auto-save on every change; this button just gives explicit confirmation.
-    private void Save_Click(object sender, RoutedEventArgs e) =>
+    // Settings auto-save on every change; this button is now an explicit "save now" if the user
+    // wants to force-flush before any debounce timer fires.
+    private void Save_Click(object sender, RoutedEventArgs e)
+    {
+        _saveDebounce.Stop();
         Task.Run(() => SettingsManager.Save());
+    }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 }

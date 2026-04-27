@@ -11,6 +11,16 @@ public class MouseHook : IDisposable
     private const int WM_LBUTTONUP = 0x0202;
     private const int WM_MOUSEMOVE = 0x0200;
 
+    // Tuning constants (squared distances in pixels, time in ms).
+    // 8px² = 64 — radius below which we still consider the cursor "stationary" during a hold.
+    private const int LongPressMoveCancelDistSq = 64;
+    // 10px² = 100 — minimum drag distance to count as a selection.
+    private const int MinDragSelectDistSq = 100;
+    // 8px² = 64 — clicks within this radius of the previous one form a multi-click cluster.
+    private const int MultiClickRadiusSq = 64;
+    private const int MinClickDurationMs = 80;
+    private const int MultiClickWindowMs = 500;
+
     private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
 
     private readonly LowLevelMouseProc _hookProc;
@@ -58,11 +68,11 @@ public class MouseHook : IDisposable
             _hookDispatcher = Dispatcher.CurrentDispatcher;
 
             _longPressTimer = new DispatcherTimer(DispatcherPriority.Normal, _hookDispatcher)
-                { Interval = TimeSpan.FromMilliseconds(500) };
+                { Interval = TimeSpan.FromMilliseconds(Config.SettingsManager.Current.LongPressDuration) };
             _longPressTimer.Tick += OnLongPressTimer;
 
             _multiClickTimer = new DispatcherTimer(DispatcherPriority.Normal, _hookDispatcher)
-                { Interval = TimeSpan.FromMilliseconds(1) };
+                { Interval = TimeSpan.FromMilliseconds(200) };
             _multiClickTimer.Tick += OnMultiClickTimer;
 
             // Run message pump so the hook receives callbacks
@@ -91,8 +101,14 @@ public class MouseHook : IDisposable
 
     public void CancelTracking()
     {
-        _longPressTimer?.Stop();
-        _multiClickTimer?.Stop();
+        // Always route timer Stop calls through the hook dispatcher — DispatcherTimer requires it.
+        // (Today this is invoked from the hook thread, which is the same dispatcher, so the
+        // InvokeAsync is a no-op queue-up. But this keeps the contract explicit.)
+        _hookDispatcher?.InvokeAsync(() =>
+        {
+            _longPressTimer?.Stop();
+            _multiClickTimer?.Stop();
+        });
         _isTracking = false;
     }
 
@@ -135,8 +151,14 @@ public class MouseHook : IDisposable
             _mouseDownTicks = Environment.TickCount64;
             _isTracking = true;
             _longPressFired = false;
-            _longPressTimer?.Stop();
-            _longPressTimer?.Start();
+            if (_longPressTimer != null)
+            {
+                _longPressTimer.Stop();
+                // Re-read each press so settings changes apply without restart.
+                _longPressTimer.Interval = TimeSpan.FromMilliseconds(
+                    Config.SettingsManager.Current.LongPressDuration);
+                _longPressTimer.Start();
+            }
         }
         else if (msg == WM_MOUSEMOVE && _isTracking && !_longPressFired)
         {
@@ -144,7 +166,7 @@ public class MouseHook : IDisposable
             int my = Marshal.ReadInt32(lParam, 4);
             double dx = mx - _mouseDownPoint.X;
             double dy = my - _mouseDownPoint.Y;
-            if (dx * dx + dy * dy > 64)
+            if (dx * dx + dy * dy > LongPressMoveCancelDistSq)
                 _longPressTimer?.Stop();
         }
         else if (msg == WM_LBUTTONUP && _isTracking)
@@ -160,26 +182,28 @@ public class MouseHook : IDisposable
             double dy = up.Y - _mouseDownPoint.Y;
             double distSq = dx * dx + dy * dy;
 
-            if (distSq >= 100 && dur >= 80)
+            if (distSq >= MinDragSelectDistSq && dur >= MinClickDurationMs)
             {
                 try { SelectionLikely?.Invoke(up); } catch { }
                 _clickCount = 0;
                 _lastClickTicks = 0;
             }
-            else if (distSq < 64)
+            else if (distSq < MultiClickRadiusSq)
             {
                 long now = Environment.TickCount64;
                 double cdx = up.X - _lastClickPoint.X;
                 double cdy = up.Y - _lastClickPoint.Y;
                 long since = now - _lastClickTicks;
 
-                if (since < 500 && cdx * cdx + cdy * cdy < 64)
+                if (since < MultiClickWindowMs && cdx * cdx + cdy * cdy < MultiClickRadiusSq)
                 {
                     _clickCount++;
                     if (Config.SettingsManager.Current.MultiClickDelay == 0)
                     {
-                        // Instant: fire immediately on every multi-click
-                        if (_clickCount >= 2)
+                        // Instant: fire once on the first multi-click in the cluster.
+                        // Subsequent clicks within the 500ms window are ignored so a triple-click
+                        // doesn't fire SelectionLikely twice.
+                        if (_clickCount == 2)
                         {
                             try { SelectionLikely?.Invoke(up); } catch { }
                         }

@@ -4,6 +4,12 @@ namespace SnapActions.Detection;
 
 public class TextClassifier
 {
+    /// <summary>
+    /// Detectors that allocate-and-parse the whole input (JsonDocument.Parse, XDocument.Parse) are skipped
+    /// when text exceeds this cap. Treat everything beyond as plain text.
+    /// </summary>
+    public const int MaxClassifyChars = 256 * 1024;
+
     private readonly ITextDetector[] _detectors;
 
     public TextClassifier()
@@ -33,6 +39,10 @@ public class TextClassifier
             return TextAnalysis.PlainText;
 
         var trimmed = text.Trim();
+        // Don't run heavy parsers on huge selections.
+        if (trimmed.Length > MaxClassifyChars)
+            return TextAnalysis.PlainText;
+
         foreach (var detector in _detectors)
         {
             if (detector.TryDetect(trimmed, out var analysis) && analysis.Confidence >= 0.7)

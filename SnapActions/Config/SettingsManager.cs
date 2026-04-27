@@ -23,14 +23,50 @@ public static class SettingsManager
                 Current = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new();
             }
         }
-        catch
+        catch (Exception ex)
         {
+            // Don't silently overwrite a corrupted settings file — back it up so the user can recover.
+            try
+            {
+                if (File.Exists(SettingsFile))
+                {
+                    var stamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+                    var backup = SettingsFile + $".broken-{stamp}";
+                    File.Copy(SettingsFile, backup, overwrite: true);
+                    SnapActions.Helpers.Log.Error($"Settings load failed; backed up to {backup}", ex);
+                }
+            }
+            catch { /* best effort */ }
             Current = new AppSettings();
         }
 
         // Migrate: update built-in search engines to latest defaults
         MigrateSearchEngines();
         MigrateActionIds();
+        PruneStaleActionIds();
+    }
+
+    /// <summary>
+    /// Drops Pinned/Disabled IDs that no longer correspond to any action. Avoids unbounded growth
+    /// when users delete custom search engines or after action renames in future versions.
+    /// </summary>
+    private static void PruneStaleActionIds()
+    {
+        var validIds = new HashSet<string>(StringComparer.Ordinal);
+        // Search engine IDs are derived as "search_<engine.Id>".
+        foreach (var e in Current.SearchEngines) validIds.Add($"search_{e.Id}");
+        // Hard-coded built-in action IDs (mirrors ActionRegistry constructor). Worst case if a name
+        // changes: an extra round of pruning. Better to be conservative and keep IDs we don't know about.
+        var knownPrefixes = new[] { "open_", "send_email", "preview_color", "convert_color",
+            "format_json", "minify_json", "format_xml", "strip_tags", "calculate", "ip_lookup",
+            "decode_base64", "decode_jwt", "generate_qr", "generate_uuid", "convert_timezone",
+            "translate", "dictionary", "currency_convert", "delete_text", "paste_plain",
+            "case_", "ws_", "enc_", "wrap_", "md5", "sha", "search_" };
+        bool MatchesKnown(string id) =>
+            validIds.Contains(id) || knownPrefixes.Any(p => id.StartsWith(p, StringComparison.Ordinal));
+
+        Current.PinnedActionIds.RemoveAll(id => !MatchesKnown(id));
+        Current.DisabledActionIds.RemoveAll(id => !MatchesKnown(id));
     }
 
     private static void MigrateActionIds()

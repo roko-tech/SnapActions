@@ -86,8 +86,9 @@ public static class MathEvaluator
             {
                 Position++;
                 var result = ParseExpression();
-                if (Position < Input.Length && Input[Position] == ')')
-                    Position++;
+                if (Position >= Input.Length || Input[Position] != ')')
+                    throw new FormatException($"Missing ')' at position {Position}");
+                Position++;
                 return result;
             }
 
@@ -102,7 +103,9 @@ public static class MathEvaluator
                 {
                     Position++;
                     var arg = ParseExpression();
-                    if (Position < Input.Length && Input[Position] == ')') Position++;
+                    if (Position >= Input.Length || Input[Position] != ')')
+                        throw new FormatException($"Missing ')' for {name}() at position {Position}");
+                    Position++;
                     return ApplyFunction(name, arg);
                 }
                 return ApplyConstant(name);
@@ -132,7 +135,7 @@ public static class MathEvaluator
             "log10" => Math.Log10(arg),
             "log2" => Math.Log2(arg),
             "abs" => Math.Abs(arg),
-            "round" => Math.Round(arg),
+            "round" => Math.Round(arg, MidpointRounding.AwayFromZero),
             "floor" => Math.Floor(arg),
             "ceil" => Math.Ceiling(arg),
             "exp" => Math.Exp(arg),

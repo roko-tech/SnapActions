@@ -8,6 +8,7 @@ public class WrapAction(string id, string name, string prefix, string suffix) : 
     public string Name => name;
     public string IconKey => "IconWrap";
     public ActionCategory Category => ActionCategory.Transform;
+    public bool IsPreviewSafe => true;
 
     public bool CanExecute(string text, TextAnalysis analysis) => !string.IsNullOrEmpty(text);
 

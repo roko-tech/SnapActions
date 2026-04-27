@@ -76,6 +76,13 @@ public class ActionRegistry
             new WrapAction("wrap_braces", "Wrap {braces}", "{", "}"),
             new WrapAction("wrap_backticks", "Wrap `backticks`", "`", "`"),
 
+            // Hex / ROT13
+            new EncodingAction("hex_encode", "Hex Encode", "IconEncode",
+                text => Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(text)).ToLowerInvariant()),
+            new EncodingAction("hex_decode", "Hex Decode", "IconDecode",
+                text => { try { return System.Text.Encoding.UTF8.GetString(Convert.FromHexString(text.Trim())); } catch { return "[Invalid hex]"; } }),
+            new EncodingAction("rot13", "ROT13", "IconEncode", Rot13),
+
             // Hash actions
             new EncodingAction("md5", "MD5", "IconHash", text => Hash(System.Security.Cryptography.MD5.HashData, text)),
             new EncodingAction("sha1", "SHA-1", "IconHash", text => Hash(System.Security.Cryptography.SHA1.HashData, text)),
@@ -83,6 +90,18 @@ public class ActionRegistry
             new EncodingAction("sha512", "SHA-512", "IconHash", text => Hash(System.Security.Cryptography.SHA512.HashData, text)),
 
         ];
+    }
+
+    private static string Rot13(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (var c in text)
+        {
+            if (c is >= 'a' and <= 'z') sb.Append((char)('a' + (c - 'a' + 13) % 26));
+            else if (c is >= 'A' and <= 'Z') sb.Append((char)('A' + (c - 'A' + 13) % 26));
+            else sb.Append(c);
+        }
+        return sb.ToString();
     }
 
     public List<ActionGroup> GetActions(string text, TextAnalysis analysis)

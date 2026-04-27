@@ -8,6 +8,7 @@ public class EncodingAction(string id, string name, string iconKey, Func<string,
     public string Name => name;
     public string IconKey => iconKey;
     public ActionCategory Category => ActionCategory.Encode;
+    public bool IsPreviewSafe => true;
 
     public bool CanExecute(string text, TextAnalysis analysis) => !string.IsNullOrEmpty(text);
 

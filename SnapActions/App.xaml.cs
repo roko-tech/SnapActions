@@ -1,7 +1,9 @@
 using System.Threading;
 using System.Windows;
+using System.Windows.Threading;
 using SnapActions.Config;
 using SnapActions.Core;
+using SnapActions.Helpers;
 using SnapActions.UI;
 
 namespace SnapActions;
@@ -29,6 +31,23 @@ public partial class App : Application
 
         base.OnStartup(e);
 
+        // Log unhandled exceptions on both UI and background threads — easier diagnosis
+        // than the silent swallows we used to have everywhere.
+        DispatcherUnhandledException += (_, args) =>
+        {
+            Log.Error("Unhandled UI exception", args.Exception);
+            args.Handled = true; // keep app alive
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            Log.Error("Unhandled background exception", args.ExceptionObject as Exception);
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            Log.Error("Unobserved task exception", args.Exception);
+            args.SetObserved();
+        };
+
+        Log.Info($"SnapActions starting (PID {Environment.ProcessId}, .NET {Environment.Version})");
+
         SettingsManager.Load();
 
         _trayIcon = new TrayIconManager();
@@ -40,6 +59,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        Log.Info("SnapActions shutting down");
         _tracker?.Stop();
         _trayIcon?.Dispose();
         if (_ownsMutex)

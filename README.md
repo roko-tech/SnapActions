@@ -48,13 +48,14 @@ UPPERCASE, lowercase, Title Case, camelCase, PascalCase, snake_case, kebab-case,
 ### Additional Actions
 - **Delete** — remove selected text in editable fields
 - **Paste Plain Text** — strip formatting and paste as plain Unicode text
-- **Encode/Decode** — URL, Base64, HTML encode and decode
-- **Hash** — MD5, SHA-1, SHA-256, SHA-512 (under Encode)
+- **Encode/Decode** — URL, Base64, HTML, Hex, ROT13
+- **Hash** — MD5, SHA-1, SHA-256, SHA-512 (under Encode; MD5/SHA-1 are for checksums only, not security)
 - **JWT decode** — split header/payload/signature for `eyJ…` tokens
 - **QR code** — open a QR PNG for any selected URL
+- **Color convert** — cycle a color between hex / rgb() / hsl() representations
 
 ### Search Engines
-13 built-in engines: Google, Bing, DuckDuckGo, YouTube, Twitter/X, Reddit, GitHub, StackOverflow, Wikipedia, Amazon, IMDb, npm, NuGet
+13 built-in engines — 9 enabled by default (Google, Bing, DuckDuckGo, YouTube, Twitter/X, Reddit, GitHub, StackOverflow, Wikipedia) and 4 opt-in (Amazon, IMDb, npm, NuGet — toggle in Settings).
 
 - **Language filtering** — filter results by language (13+ languages supported)
 - **Twitter/X** uses `lang:xx` in the search query so it works across Top/Latest tabs
@@ -80,14 +81,17 @@ Double-click the system tray icon to open Settings:
 |---------|---------|---------|
 | Show delay | Instant, 100ms, 200ms, 300ms, 500ms, 1s | Instant |
 | Multi-click delay | Instant, 100ms, 200ms, 300ms, 400ms | 200ms |
+| Long-press duration | 300ms, 500ms, 750ms, 1s | 500ms |
 | Auto-dismiss | 3s, 5s, 8s, 15s, 30s, Never | 8 seconds |
 | Replace on transform | On/Off | On |
 | Search language | 13+ languages or no filter | No filter |
 | Target currency | 15 currencies (USD, EUR, SAR, etc.) | USD |
 | Action categories | Toggle Transform, Encode, Search | All on |
-| Excluded apps | Process names to ignore | KeePass, 1Password, Bitwarden |
+| Excluded apps | Process names to ignore | KeePass(XC), 1Password, Bitwarden, Dashlane, Enpass, LastPass, RoboForm, NordPass, ProtonPass, Keeper |
 
-Settings stored in `%AppData%\SnapActions\settings.json`.
+Settings auto-save on every change. Stored in `%AppData%\SnapActions\settings.json`. If the file gets corrupted, it's renamed to `settings.json.broken-<timestamp>` and defaults are loaded — never silent data loss.
+
+Logs (errors and lifecycle events) are written to `%AppData%\SnapActions\logs\YYYY-MM-DD.log` and rotated after 7 days.
 
 ## How It Works
 

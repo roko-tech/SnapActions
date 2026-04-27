@@ -124,7 +124,8 @@ public partial class ToolbarWindow : Window
         bool hasTransform = _isEditable && s.ShowTransformActions && _actionGroups.Any(g => g.Name == "Transform");
         bool hasEncode = _isEditable && s.ShowEncodeActions && _actionGroups.Any(g => g.Name == "Encode");
         bool hasSearch = s.ShowSearchActions && _actionGroups.Any(g => g.Name == "Search");
-        TransformSeparator.Visibility = hasTransform ? Visibility.Visible : Visibility.Collapsed;
+        // The separator before Transform also serves the encode-only case.
+        TransformSeparator.Visibility = (hasTransform || hasEncode) ? Visibility.Visible : Visibility.Collapsed;
         TransformButton.Visibility = hasTransform ? Visibility.Visible : Visibility.Collapsed;
         EncodeButton.Visibility = hasEncode ? Visibility.Visible : Visibility.Collapsed;
         SearchSeparator.Visibility = hasSearch ? Visibility.Visible : Visibility.Collapsed;
@@ -147,8 +148,13 @@ public partial class ToolbarWindow : Window
         SizeToContent = SizeToContent.WidthAndHeight;
         Opacity = 0;
 
+        // Use the DPI of the monitor *under the cursor* — not the window's current monitor.
+        // Without this, mixed-DPI setups place the toolbar at the wrong physical position.
+        var monitorDpi = Helpers.ScreenHelper.GetDpiForPoint(new Point(cursorX, cursorY));
+        _dpiX = monitorDpi.X > 0 ? monitorDpi.X : 1.0;
+        _dpiY = monitorDpi.Y > 0 ? monitorDpi.Y : 1.0;
+
         Show();
-        ReadDpi();
         UpdateLayout();
 
         double tw = ActualWidth > 10 ? ActualWidth : 100;
@@ -482,31 +488,20 @@ public partial class ToolbarWindow : Window
 
     // ── Preview on hover ─────────────────────────────────────────
 
-    // Actions that have side effects and must NOT be executed during preview
-    private static readonly HashSet<string> _noPreviewIds =
-        ["delete_text", "paste_plain", "translate", "dictionary", "currency_convert"];
-
     private void SubMenuButton_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
     {
         if (sender is not Button { Tag: IAction action }) return;
         string preview;
 
-        if (_noPreviewIds.Contains(action.Id))
+        // Preview is opt-in via IAction.IsPreviewSafe — only pure transforms run on hover.
+        if (action.IsPreviewSafe && !string.IsNullOrEmpty(_selectedText))
         {
-            preview = action.Name;
-        }
-        else if (action.Category == ActionCategory.Transform || action.Category == ActionCategory.Encode)
-        {
-            if (!string.IsNullOrEmpty(_selectedText))
+            try
             {
-                try
-                {
-                    var r = action.Execute(_selectedText, _analysis);
-                    preview = r.ResultText != null ? Truncate(r.ResultText, 120) : action.Name;
-                }
-                catch { preview = action.Name; }
+                var r = action.Execute(_selectedText, _analysis);
+                preview = r.ResultText != null ? Truncate(r.ResultText, 120) : action.Name;
             }
-            else preview = action.Name;
+            catch { preview = action.Name; }
         }
         else if (action.Category == ActionCategory.Search)
             preview = $"Search {action.Name} for: \"{Truncate(_selectedText, 50)}\"";

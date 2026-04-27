@@ -23,6 +23,8 @@ public class TrayIconManager : IDisposable
         };
         enableItem.CheckedChanged += (_, _) =>
         {
+            // Avoid recursion: only act when the user changed it (not the Opening sync below).
+            if (SettingsManager.Current.Enabled == enableItem.Checked) return;
             SettingsManager.Current.Enabled = enableItem.Checked;
             SettingsManager.Save();
         };
@@ -37,7 +39,16 @@ public class TrayIconManager : IDisposable
         };
         autoStartItem.CheckedChanged += (_, _) =>
         {
+            if (SettingsManager.Current.AutoStart == autoStartItem.Checked) return;
             SettingsManager.SetAutoStart(autoStartItem.Checked);
+        };
+
+        // Refresh check states from settings every time the tray menu opens so changes
+        // made via the Settings window don't leave the tray showing stale state.
+        _contextMenu.Opening += (_, _) =>
+        {
+            enableItem.Checked = SettingsManager.Current.Enabled;
+            autoStartItem.Checked = SettingsManager.Current.AutoStart;
         };
 
         var exitItem = new ToolStripMenuItem("Exit");
@@ -76,15 +87,29 @@ public class TrayIconManager : IDisposable
 
     private static Icon CreateDefaultIcon()
     {
-        // Try loading from app.ico first
-        var exeDir = AppContext.BaseDirectory;
-        var icoPath = System.IO.Path.Combine(exeDir, "app.ico");
-        if (System.IO.File.Exists(icoPath))
+        // Try the embedded resource (survives single-file publish)
+        try
         {
-            try { return new Icon(icoPath, 16, 16); } catch { }
+            var uri = new Uri("pack://application:,,,/app.ico", UriKind.Absolute);
+            var sri = System.Windows.Application.GetResourceStream(uri);
+            if (sri != null)
+            {
+                using var s = sri.Stream;
+                return new Icon(s, 16, 16);
+            }
         }
+        catch { }
 
-        // Fallback: generate programmatically
+        // Fallback to a side-by-side file (dev runs / framework-dependent publish)
+        try
+        {
+            var icoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "app.ico");
+            if (System.IO.File.Exists(icoPath))
+                return new Icon(icoPath, 16, 16);
+        }
+        catch { }
+
+        // Last resort: generate programmatically
         using var bmp = new Bitmap(16, 16);
         using var g = Graphics.FromImage(bmp);
         using var accent = new SolidBrush(Color.FromArgb(137, 180, 250));

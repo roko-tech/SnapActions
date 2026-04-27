@@ -9,18 +9,26 @@ public partial class Base64Detector : ITextDetector
     [GeneratedRegex(@"^[A-Za-z0-9+/]{4,}={0,2}$")]
     private static partial Regex Base64Pattern();
 
+    [GeneratedRegex(@"^[0-9a-fA-F]+$")]
+    private static partial Regex HexPattern();
+
     public bool TryDetect(string text, out TextAnalysis result)
     {
         result = default!;
         var trimmed = text.Trim();
         if (trimmed.Contains(' ') || trimmed.Contains('\n')) return false;
         if (trimmed.Length % 4 != 0) return false;
-
-        // Must be long enough AND contain non-alpha characters (+, /, =, digits)
-        // to avoid matching normal words like "selected", "function", etc.
-        bool hasNonAlpha = trimmed.Any(c => c == '+' || c == '/' || c == '=' || char.IsDigit(c));
-        if (!hasNonAlpha && trimmed.Length < 32) return false;
         if (trimmed.Length < 12) return false;
+
+        // Pure-hex strings (likely hashes / hex IDs) shouldn't be reported as Base64 —
+        // Convert.FromBase64String accepts them but the "decode" is meaningless garbage.
+        if (HexPattern().IsMatch(trimmed)) return false;
+
+        // Must contain at least one digit, +, /, = OR have one mixed-case alpha hint.
+        // This rejects "Application1"-style false positives without symbols.
+        bool hasSymbol = trimmed.Any(c => c == '+' || c == '/' || c == '=' || char.IsDigit(c));
+        bool hasMixedCase = trimmed.Any(char.IsUpper) && trimmed.Any(char.IsLower);
+        if (!hasSymbol && (!hasMixedCase || trimmed.Length < 32)) return false;
 
         if (!Base64Pattern().IsMatch(trimmed)) return false;
 

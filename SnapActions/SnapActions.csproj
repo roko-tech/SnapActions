@@ -8,9 +8,18 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>SnapActions</AssemblyName>
     <RootNamespace>SnapActions</RootNamespace>
+    <Version>1.0.0</Version>
+    <!-- We're WPF-primary (WinForms is only NotifyIcon). The manifest's PerMonitorV2 declaration
+         is what the OS reads at process startup. WinForms' WFO0003 wants its own DPI hook. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Embed the icon so single-file publish can load it from the assembly -->
+    <Resource Include="app.ico"/>
+  </ItemGroup>
 
 </Project>

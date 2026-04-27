@@ -67,6 +67,19 @@
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Long-press duration:" Foreground="#FFCDD6F4"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="LongPressCombo" Width="120"
+                              SelectionChanged="LongPress_Changed"
+                              ToolTip="How long to hold the mouse button to open paste mode">
+                        <ComboBoxItem Content="300 ms" Tag="300"/>
+                        <ComboBoxItem Content="500 ms" Tag="500"/>
+                        <ComboBoxItem Content="750 ms" Tag="750"/>
+                        <ComboBoxItem Content="1 second" Tag="1000"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                     <TextBlock Text="Auto-dismiss after:" Foreground="#FFCDD6F4"
                                VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <ComboBox x:Name="DismissTimeCombo" Width="120"

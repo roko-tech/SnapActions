@@ -26,7 +26,12 @@ public class AppSettings
     public int ToolbarShowDelay { get; set; } = 0;
     /// <summary>Delay in ms after double/triple click before firing (allows next click). 0 = instant.</summary>
     public int MultiClickDelay { get; set; } = 200;
-    public List<string> ExcludedApps { get; set; } = ["KeePass", "1Password", "Bitwarden"];
+    /// <summary>How long the user must hold the left button (ms) before paste mode appears.</summary>
+    public int LongPressDuration { get; set; } = 500;
+    public List<string> ExcludedApps { get; set; } = [
+        "KeePass", "KeePassXC", "1Password", "Bitwarden", "Dashlane", "Enpass", "LastPass",
+        "RoboForm", "NordPass", "ProtonPass", "KeeperPasswordManager"
+    ];
     public bool ReplaceSelectionOnTransform { get; set; } = true;
 
     public bool ShowTransformActions { get; set; } = true;

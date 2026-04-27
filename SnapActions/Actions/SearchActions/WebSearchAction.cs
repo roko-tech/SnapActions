@@ -12,11 +12,16 @@ public partial class WebSearchAction(string id, string name, string iconKey, str
     public string IconKey => iconKey;
     public ActionCategory Category => ActionCategory.Search;
 
-    [GeneratedRegex(@"[&?][a-z_]+=(?=&|$)")]
-    private static partial Regex EmptyParamRegex();
-
     [GeneratedRegex(@"://\{1\}\.")]
     private static partial Regex HostPlaceholderRegex();
+
+    // Matches a query param whose value still contains {1} (drops the whole param when lang is empty).
+    [GeneratedRegex(@"[&?][^&=]+=[^&]*\{1\}[^&]*")]
+    private static partial Regex ParamWithLangPlaceholderRegex();
+
+    // Matches an empty-valued param (e.g. "&hl=" at end or before another &).
+    [GeneratedRegex(@"[&?][a-z_]+=(?=&|$)")]
+    private static partial Regex EmptyParamRegex();
 
     public bool CanExecute(string text, TextAnalysis analysis) => !string.IsNullOrEmpty(text.Trim());
 
@@ -40,7 +45,11 @@ public partial class WebSearchAction(string id, string name, string iconKey, str
             // Fallback for host-position substitutions like https://{1}.wikipedia.org/...
             // Empty {1} would yield https://.wikipedia.org/...
             url = HostPlaceholderRegex().Replace(url, "://en.");
+            // Drop entire query params that still contain {1} (e.g. &lr=lang_{1}).
+            url = ParamWithLangPlaceholderRegex().Replace(url, "");
+            // Any stray {1} elsewhere just becomes empty.
             url = url.Replace("{1}", "");
+            // Trailing empty-valued params get cleaned up too.
             url = EmptyParamRegex().Replace(url, "");
             url = url.TrimEnd('&', '?');
         }

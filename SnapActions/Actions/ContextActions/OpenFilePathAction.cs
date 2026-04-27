@@ -16,7 +16,7 @@ public class OpenFilePathAction : IAction
         analysis.Type == TextType.FilePath && Path.Exists(CleanPath(text));
 
     public ActionResult Execute(string text, TextAnalysis analysis) =>
-        ProcessHelper.TryShellOpen(CleanPath(text));
+        ProcessHelper.TryOpenLocalPath(CleanPath(text));
 
     internal static string CleanPath(string text) => text.Trim().Replace("\"", "");
 }
@@ -28,7 +28,14 @@ public class OpenContainingFolderAction : IAction
     public string IconKey => "IconFolder";
     public ActionCategory Category => ActionCategory.Context;
 
-    public bool CanExecute(string text, TextAnalysis analysis) => analysis.Type == TextType.FilePath;
+    public bool CanExecute(string text, TextAnalysis analysis)
+    {
+        if (analysis.Type != TextType.FilePath) return false;
+        var path = OpenFilePathAction.CleanPath(text);
+        // File exists, dir exists, OR parent dir exists (so we can reveal a missing file's folder).
+        return File.Exists(path) || Directory.Exists(path) ||
+               Directory.Exists(System.IO.Path.GetDirectoryName(path));
+    }
 
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
