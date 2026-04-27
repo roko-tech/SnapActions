@@ -10,6 +10,7 @@ public class DecodeJwtAction : IAction
     public string Name => "Decode JWT";
     public string IconKey => "IconDecode";
     public ActionCategory Category => ActionCategory.Context;
+    public bool IsPreviewSafe => true;
 
     public bool CanExecute(string text, TextAnalysis analysis) => analysis.Type == TextType.Jwt;
 

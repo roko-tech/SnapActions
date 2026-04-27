@@ -97,8 +97,9 @@ public class TrayIconManager : IDisposable
                 using var s = sri.Stream;
                 return new Icon(s, 16, 16);
             }
+            SnapActions.Helpers.Log.Warn("Tray icon: pack:// resource not found; falling back to file");
         }
-        catch { }
+        catch (Exception ex) { SnapActions.Helpers.Log.Warn($"Tray icon: pack:// load failed ({ex.Message}); falling back to file"); }
 
         // Fallback to a side-by-side file (dev runs / framework-dependent publish)
         try
@@ -106,8 +107,9 @@ public class TrayIconManager : IDisposable
             var icoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "app.ico");
             if (System.IO.File.Exists(icoPath))
                 return new Icon(icoPath, 16, 16);
+            SnapActions.Helpers.Log.Warn($"Tray icon: app.ico not found at {icoPath}; using generated icon");
         }
-        catch { }
+        catch (Exception ex) { SnapActions.Helpers.Log.Warn($"Tray icon: file load failed ({ex.Message}); using generated icon"); }
 
         // Last resort: generate programmatically
         using var bmp = new Bitmap(16, 16);

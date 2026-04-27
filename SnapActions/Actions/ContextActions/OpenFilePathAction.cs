@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using SnapActions.Detection;
 using SnapActions.Helpers;
@@ -37,22 +36,6 @@ public class OpenContainingFolderAction : IAction
                Directory.Exists(System.IO.Path.GetDirectoryName(path));
     }
 
-    public ActionResult Execute(string text, TextAnalysis analysis)
-    {
-        var path = OpenFilePathAction.CleanPath(text);
-        try
-        {
-            if (File.Exists(path))
-                Process.Start("explorer.exe", $"/select,\"{path}\"");
-            else if (Directory.Exists(path))
-                Process.Start("explorer.exe", $"\"{path}\"");
-            else
-                return new ActionResult(false, Message: "Path not found");
-            return new ActionResult(true, Message: "Folder opened");
-        }
-        catch (Exception ex)
-        {
-            return new ActionResult(false, Message: ex.Message);
-        }
-    }
+    public ActionResult Execute(string text, TextAnalysis analysis) =>
+        ProcessHelper.RevealInExplorer(OpenFilePathAction.CleanPath(text));
 }

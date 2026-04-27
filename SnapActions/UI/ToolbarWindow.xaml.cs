@@ -121,9 +121,13 @@ public partial class ToolbarWindow : Window
     {
         var s = Config.SettingsManager.Current;
 
-        bool hasTransform = _isEditable && s.ShowTransformActions && _actionGroups.Any(g => g.Name == "Transform");
-        bool hasEncode = _isEditable && s.ShowEncodeActions && _actionGroups.Any(g => g.Name == "Encode");
-        bool hasSearch = s.ShowSearchActions && _actionGroups.Any(g => g.Name == "Search");
+        // Single pass to avoid repeated O(n) scans.
+        var groupNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var g in _actionGroups) groupNames.Add(g.Name);
+
+        bool hasTransform = _isEditable && s.ShowTransformActions && groupNames.Contains("Transform");
+        bool hasEncode = _isEditable && s.ShowEncodeActions && groupNames.Contains("Encode");
+        bool hasSearch = s.ShowSearchActions && groupNames.Contains("Search");
         // The separator before Transform also serves the encode-only case.
         TransformSeparator.Visibility = (hasTransform || hasEncode) ? Visibility.Visible : Visibility.Collapsed;
         TransformButton.Visibility = hasTransform ? Visibility.Visible : Visibility.Collapsed;
@@ -223,8 +227,13 @@ public partial class ToolbarWindow : Window
     public bool IsPointInside(int screenX, int screenY)
     {
         if (!IsVisible) return false;
-        ReadDpi();
-        double x = screenX / _dpiX, y = screenY / _dpiY;
+
+        // Use the cursor monitor's DPI directly — don't share state with PositionAndShow's
+        // _dpiX/_dpiY, which were set at show time and may diverge if the cursor crossed monitors.
+        var dpi = Helpers.ScreenHelper.GetDpiForPoint(new Point(screenX, screenY));
+        double dpiX = dpi.X > 0 ? dpi.X : 1.0;
+        double dpiY = dpi.Y > 0 ? dpi.Y : 1.0;
+        double x = screenX / dpiX, y = screenY / dpiY;
 
         if (x >= Left && x <= Left + ActualWidth && y >= Top && y <= Top + ActualHeight)
             return true;
@@ -234,23 +243,13 @@ public partial class ToolbarWindow : Window
             try
             {
                 var pt = child.PointToScreen(new Point(0, 0));
-                double px = pt.X / _dpiX, py = pt.Y / _dpiY;
+                double px = pt.X / dpiX, py = pt.Y / dpiY;
                 if (x >= px && x <= px + child.ActualWidth && y >= py && y <= py + child.ActualHeight)
                     return true;
             }
             catch { }
         }
         return false;
-    }
-
-    private void ReadDpi()
-    {
-        var source = PresentationSource.FromVisual(this);
-        if (source?.CompositionTarget != null)
-        {
-            _dpiX = source.CompositionTarget.TransformToDevice.M11;
-            _dpiY = source.CompositionTarget.TransformToDevice.M22;
-        }
     }
 
     // ── Type badge ───────────────────────────────────────────────
@@ -653,38 +652,6 @@ public partial class ToolbarWindow : Window
         }
 
         // Position popup just below the toolbar, aligned left
-        SubMenuPopup.IsOpen = true;
-        StartDismissTimer();
-    }
-
-    private void ShowMultiGroupSubMenu(string[] names, ActionCategory[] categories, FrameworkElement target)
-    {
-        var key = string.Join("+", names);
-        if (SubMenuPopup.IsOpen && _currentSubMenuGroup == key)
-        { SubMenuPopup.IsOpen = false; _editMode = false; PreviewBorder.Visibility = Visibility.Collapsed; return; }
-
-        _currentSubMenuGroup = key;
-        _currentSubMenuCategory = null;
-        _currentSubMenuTarget = target;
-        _editMode = false;
-
-        SubMenuPanel.Children.Clear();
-        ResetPreview();
-        SubMenuTitle.Text = string.Join(" / ", names);
-
-        foreach (var name in names)
-        {
-            var g = _actionGroups.FirstOrDefault(g => g.Name == name);
-            if (g == null) continue;
-            SubMenuPanel.Children.Add(new TextBlock
-            {
-                Text = g.Name, FontSize = 10, FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)FindResource("AccentBrush"),
-                Margin = new Thickness(8, 6, 8, 2), Width = 380
-            });
-            foreach (var a in g.Actions) SubMenuPanel.Children.Add(CreateSubMenuButton(a, false));
-        }
-
         SubMenuPopup.IsOpen = true;
         StartDismissTimer();
     }

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 
@@ -26,7 +25,11 @@ public static class TextCapture
     public static async Task<string?> CaptureSelectedTextAsync()
     {
         // Skip if a capture is already running — the caller will simply not show a toolbar this round.
-        if (!await _captureLock.WaitAsync(0)) return null;
+        if (!await _captureLock.WaitAsync(0))
+        {
+            SnapActions.Helpers.Log.Warn("Capture skipped — another capture is already in progress");
+            return null;
+        }
         try
         {
             // Snapshot ALL clipboard formats so images/files/RTF survive

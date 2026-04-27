@@ -44,6 +44,10 @@ public partial class ResultPopup : Window
             double r = l + ActualWidth * _dpi, b = t + ActualHeight * _dpi;
             if (pt.X < l || pt.X > r || pt.Y < t || pt.Y > b)
                 SafeClose();
+
+            // Esc closes — poll because the no-activate window never gets keyboard focus.
+            if ((GetAsyncKeyState(0x1B) & 0x8000) != 0)
+                SafeClose();
         };
     }
 
@@ -51,6 +55,8 @@ public partial class ResultPopup : Window
     private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll")]
     private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
 
     private void SafeClose()
     {
@@ -58,6 +64,7 @@ public partial class ResultPopup : Window
         _closed = true;
         _checkTimer.Stop();
         try { _cts.Cancel(); } catch { }
+        try { _cts.Dispose(); } catch { }
         try { Close(); } catch { }
     }
 
@@ -100,8 +107,7 @@ public partial class ResultPopup : Window
 
         Left = left;
         Top = top;
-        Topmost = true;
-        // Intentionally NOT calling Activate() — would steal focus from the user's app.
+        // Topmost is already declared in XAML; no Activate() call so the user's app keeps focus.
         _checkTimer.Start();
 
         try
@@ -137,12 +143,39 @@ public partial class ResultPopup : Window
     // Cache translations for ~30 minutes — MyMemory free tier is 5k chars/day per IP.
     private static readonly ConcurrentDictionary<string, (DateTime fetched, string text)> _translationCache = new();
     private static readonly TimeSpan TranslationCacheTtl = TimeSpan.FromMinutes(30);
+    private const int MaxCacheEntries = 500;
+
+    private static void PruneTranslationCache()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var kv in _translationCache)
+            if (now - kv.Value.fetched >= TranslationCacheTtl)
+                _translationCache.TryRemove(kv.Key, out _);
+
+        if (_translationCache.Count > MaxCacheEntries)
+        {
+            var toDrop = _translationCache.Count - MaxCacheEntries;
+            foreach (var kv in _translationCache.OrderBy(p => p.Value.fetched).Take(toDrop))
+                _translationCache.TryRemove(kv.Key, out _);
+        }
+    }
+
+    private static void PruneRateCache()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var kv in _rateCache)
+            if (now - kv.Value.fetched >= RateCacheTtl)
+                _rateCache.TryRemove(kv.Key, out _);
+        // Rate cache is naturally bounded by # of source currencies (~14), no size cap needed.
+    }
 
     public static async Task<string> FetchTranslation(HttpClient http, string text, string targetLang,
         System.Threading.CancellationToken ct = default)
     {
         var to = string.IsNullOrEmpty(targetLang) ? "en" : targetLang;
         var cacheKey = $"{to}|{text}";
+
+        PruneTranslationCache();
 
         if (_translationCache.TryGetValue(cacheKey, out var cached) &&
             DateTime.UtcNow - cached.fetched < TranslationCacheTtl)
@@ -279,6 +312,8 @@ public partial class ResultPopup : Window
     private static async Task<Dictionary<string, double>?> GetRates(HttpClient http, string src,
         System.Threading.CancellationToken ct)
     {
+        PruneRateCache();
+
         if (_rateCache.TryGetValue(src, out var cached) && DateTime.UtcNow - cached.fetched < RateCacheTtl)
             return cached.rates;
 

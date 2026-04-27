@@ -1,6 +1,7 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Threading;
+using SnapActions.Helpers;
 
 namespace SnapActions.Core;
 
@@ -42,6 +43,8 @@ public class MouseHook : IDisposable
 
     // Hook thread
     private Thread? _hookThread;
+    // Signaled once the hook thread has set _hookId and _hookDispatcher; lets Uninstall wait safely.
+    private readonly ManualResetEventSlim _hookReady = new(false);
 
     public event Action<POINT>? SelectionLikely;
     public event Action<POINT>? LongPress;
@@ -61,9 +64,10 @@ public class MouseHook : IDisposable
         _hookThread = new Thread(() =>
         {
             _hookId = SetWindowsHookEx(WH_MOUSE_LL, _hookProc, GetModuleHandle(null), 0);
-            Trace.WriteLine(_hookId == IntPtr.Zero
-                ? $"[SnapActions] Hook failed: {Marshal.GetLastWin32Error()}"
-                : $"[SnapActions] Hook installed on dedicated thread: {_hookId}");
+            if (_hookId == IntPtr.Zero)
+                Log.Error($"Hook install failed: Win32 error {Marshal.GetLastWin32Error()}");
+            else
+                Log.Info($"Mouse hook installed on dedicated thread (id={_hookId})");
 
             _hookDispatcher = Dispatcher.CurrentDispatcher;
 
@@ -75,6 +79,9 @@ public class MouseHook : IDisposable
                 { Interval = TimeSpan.FromMilliseconds(200) };
             _multiClickTimer.Tick += OnMultiClickTimer;
 
+            // Tell Install/Uninstall the hook is ready to be controlled.
+            _hookReady.Set();
+
             // Run message pump so the hook receives callbacks
             Dispatcher.Run();
         });
@@ -85,6 +92,11 @@ public class MouseHook : IDisposable
 
     public void Uninstall()
     {
+        // Wait for the hook thread to finish initializing before tearing it down — otherwise
+        // we may try to call InvokeAsync on a null dispatcher and leak the hook.
+        if (!_hookReady.Wait(2000))
+            Log.Warn("Hook didn't become ready within 2s; tearing down anyway");
+
         _hookDispatcher?.InvokeAsync(() =>
         {
             _longPressTimer?.Stop();
@@ -101,15 +113,11 @@ public class MouseHook : IDisposable
 
     public void CancelTracking()
     {
-        // Always route timer Stop calls through the hook dispatcher — DispatcherTimer requires it.
-        // (Today this is invoked from the hook thread, which is the same dispatcher, so the
-        // InvokeAsync is a no-op queue-up. But this keeps the contract explicit.)
-        _hookDispatcher?.InvokeAsync(() =>
-        {
-            _longPressTimer?.Stop();
-            _multiClickTimer?.Stop();
-        });
+        // CancelTracking is always called from the hook thread (from MouseHook events fired
+        // synchronously inside ProcessMouseEvent), so DispatcherTimer.Stop is safe to call directly.
         _isTracking = false;
+        _longPressTimer?.Stop();
+        _multiClickTimer?.Stop();
     }
 
     private void OnMultiClickTimer(object? sender, EventArgs e)

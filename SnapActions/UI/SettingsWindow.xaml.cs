@@ -32,12 +32,14 @@ public partial class SettingsWindow : Window
         };
 
         // Flush any pending change immediately on close so users don't lose edits.
+        // Save synchronously so it can't lose the race against process exit if the user
+        // closes Settings and then immediately Exits from the tray menu.
         Closing += (_, _) =>
         {
             if (_saveDebounce.IsEnabled)
             {
                 _saveDebounce.Stop();
-                Task.Run(() => SettingsManager.Save());
+                SettingsManager.Save();
             }
         };
 

@@ -10,6 +10,7 @@ public partial class FormatXmlAction : IAction
     public string Name => "Format XML";
     public string IconKey => "IconFormatXml";
     public ActionCategory Category => ActionCategory.Context;
+    public bool IsPreviewSafe => true;
 
     public bool CanExecute(string text, TextAnalysis analysis) => analysis.Type == TextType.XmlHtml;
 
@@ -33,6 +34,7 @@ public partial class StripTagsAction : IAction
     public string Name => "Strip Tags";
     public string IconKey => "IconFormatXml";
     public ActionCategory Category => ActionCategory.Context;
+    public bool IsPreviewSafe => true;
 
     public bool CanExecute(string text, TextAnalysis analysis) => analysis.Type == TextType.XmlHtml;
 

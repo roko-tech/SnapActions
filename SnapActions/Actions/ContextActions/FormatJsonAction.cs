@@ -9,6 +9,7 @@ public class FormatJsonAction : IAction
     public string Name => "Format JSON";
     public string IconKey => "IconFormatJson";
     public ActionCategory Category => ActionCategory.Context;
+    public bool IsPreviewSafe => true;
 
     public bool CanExecute(string text, TextAnalysis analysis) => analysis.Type == TextType.Json;
 
@@ -33,6 +34,7 @@ public class MinifyJsonAction : IAction
     public string Name => "Minify JSON";
     public string IconKey => "IconMinify";
     public ActionCategory Category => ActionCategory.Context;
+    public bool IsPreviewSafe => true;
 
     public bool CanExecute(string text, TextAnalysis analysis) => analysis.Type == TextType.Json;
 

@@ -9,6 +9,7 @@ public class CalculateAction : IAction
     public string Name => "Calculate";
     public string IconKey => "IconCalculate";
     public ActionCategory Category => ActionCategory.Context;
+    public bool IsPreviewSafe => true;
 
     public bool CanExecute(string text, TextAnalysis analysis) => analysis.Type == TextType.MathExpression;
 

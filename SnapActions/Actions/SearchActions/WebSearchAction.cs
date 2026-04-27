@@ -1,11 +1,12 @@
 using System.Text.RegularExpressions;
+using SnapActions.Config;
 using SnapActions.Detection;
 using SnapActions.Helpers;
 
 namespace SnapActions.Actions.SearchActions;
 
 public partial class WebSearchAction(string id, string name, string iconKey, string urlTemplate,
-    string lang = "", string langMode = "url") : IAction
+    string lang = "", LangMode langMode = LangMode.Url) : IAction
 {
     public string Id => $"search_{id}";
     public string Name => name;
@@ -30,13 +31,13 @@ public partial class WebSearchAction(string id, string name, string iconKey, str
         var query = text.Trim();
         var langCode = lang ?? "";
 
-        if (langMode == "query" && !string.IsNullOrEmpty(langCode))
+        if (langMode == LangMode.Query && !string.IsNullOrEmpty(langCode))
             query += $" lang:{langCode}";
 
         var encoded = Uri.EscapeDataString(query);
         var url = urlTemplate.Replace("{0}", encoded);
 
-        if (langMode == "url" && !string.IsNullOrEmpty(langCode))
+        if (langMode == LangMode.Url && !string.IsNullOrEmpty(langCode))
         {
             url = url.Replace("{1}", Uri.EscapeDataString(langCode));
         }

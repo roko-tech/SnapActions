@@ -54,9 +54,13 @@ public static class ProcessHelper
             if (RiskyExtensions.Contains(ext))
             {
                 var msg = $"This will execute:\n\n{path}\n\nAre you sure?";
+                // DefaultDesktopOnly forces the dialog onto the active desktop and brings it to
+                // the front — important because our toolbar is a no-activate window with no focus
+                // to inherit, so the dialog could otherwise appear behind other windows.
                 var answer = System.Windows.MessageBox.Show(msg, "Run executable?",
                     System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning,
-                    System.Windows.MessageBoxResult.No);
+                    System.Windows.MessageBoxResult.No,
+                    System.Windows.MessageBoxOptions.DefaultDesktopOnly);
                 if (answer != System.Windows.MessageBoxResult.Yes)
                     return new ActionResult(false, Message: "Cancelled");
             }
@@ -76,9 +80,30 @@ public static class ProcessHelper
     private static bool IsAllowed(string uri)
     {
         if (string.IsNullOrWhiteSpace(uri)) return false;
-        // Some callers pass bare hostnames like "www.example.com" — treat them as http(s).
-        if (Uri.TryCreate(uri, UriKind.Absolute, out var parsed))
-            return AllowedSchemes.Contains(parsed.Scheme);
-        return false;
+        return Uri.TryCreate(uri, UriKind.Absolute, out var parsed) &&
+               AllowedSchemes.Contains(parsed.Scheme);
+    }
+
+    /// <summary>
+    /// Opens Explorer at the given path, optionally selecting a specific file inside its containing folder.
+    /// Doesn't check the URI allow-list (that's for shell URLs); validates the path exists.
+    /// </summary>
+    public static ActionResult RevealInExplorer(string path, string successMessage = "Folder opened")
+    {
+        if (string.IsNullOrWhiteSpace(path)) return new ActionResult(false, Message: "Empty path");
+        try
+        {
+            if (File.Exists(path))
+                Process.Start("explorer.exe", $"/select,\"{path}\"");
+            else if (Directory.Exists(path))
+                Process.Start("explorer.exe", $"\"{path}\"");
+            else
+                return new ActionResult(false, Message: "Path not found");
+            return new ActionResult(true, Message: successMessage);
+        }
+        catch (Exception ex)
+        {
+            return new ActionResult(false, Message: ex.Message);
+        }
     }
 }

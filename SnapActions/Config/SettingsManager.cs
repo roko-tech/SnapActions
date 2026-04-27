@@ -52,21 +52,10 @@ public static class SettingsManager
     /// </summary>
     private static void PruneStaleActionIds()
     {
-        var validIds = new HashSet<string>(StringComparer.Ordinal);
-        // Search engine IDs are derived as "search_<engine.Id>".
-        foreach (var e in Current.SearchEngines) validIds.Add($"search_{e.Id}");
-        // Hard-coded built-in action IDs (mirrors ActionRegistry constructor). Worst case if a name
-        // changes: an extra round of pruning. Better to be conservative and keep IDs we don't know about.
-        var knownPrefixes = new[] { "open_", "send_email", "preview_color", "convert_color",
-            "format_json", "minify_json", "format_xml", "strip_tags", "calculate", "ip_lookup",
-            "decode_base64", "decode_jwt", "generate_qr", "generate_uuid", "convert_timezone",
-            "translate", "dictionary", "currency_convert", "delete_text", "paste_plain",
-            "case_", "ws_", "enc_", "wrap_", "md5", "sha", "search_" };
-        bool MatchesKnown(string id) =>
-            validIds.Contains(id) || knownPrefixes.Any(p => id.StartsWith(p, StringComparison.Ordinal));
-
-        Current.PinnedActionIds.RemoveAll(id => !MatchesKnown(id));
-        Current.DisabledActionIds.RemoveAll(id => !MatchesKnown(id));
+        // Single source of truth: ask the registry for the full ID list.
+        var validIds = SnapActions.Actions.ActionRegistry.GetAllKnownActionIds(Current.SearchEngines);
+        Current.PinnedActionIds.RemoveAll(id => !validIds.Contains(id));
+        Current.DisabledActionIds.RemoveAll(id => !validIds.Contains(id));
     }
 
     private static void MigrateActionIds()
@@ -104,18 +93,28 @@ public static class SettingsManager
         }
     }
 
+    // Save can be invoked from multiple threads (auto-save Task.Run, in-toolbar edits, tray menu).
+    // The temp-file + Move dance isn't safe under concurrent writers — both could clobber the .tmp.
+    private static readonly object _saveLock = new();
+
     public static void Save()
     {
-        try
+        lock (_saveLock)
         {
-            Directory.CreateDirectory(SettingsDir);
-            var json = JsonSerializer.Serialize(Current, JsonOptions);
-            // Atomic write: temp file + replace, so a crash mid-write can't blank settings.json
-            var tmp = SettingsFile + ".tmp";
-            File.WriteAllText(tmp, json);
-            File.Move(tmp, SettingsFile, overwrite: true);
+            try
+            {
+                Directory.CreateDirectory(SettingsDir);
+                var json = JsonSerializer.Serialize(Current, JsonOptions);
+                // Atomic write: temp file + replace, so a crash mid-write can't blank settings.json
+                var tmp = SettingsFile + ".tmp";
+                File.WriteAllText(tmp, json);
+                File.Move(tmp, SettingsFile, overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                SnapActions.Helpers.Log.Error("Failed to save settings", ex);
+            }
         }
-        catch { }
     }
 
     public static void SetAutoStart(bool enable)

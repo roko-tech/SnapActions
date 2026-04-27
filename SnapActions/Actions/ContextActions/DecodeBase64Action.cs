@@ -8,6 +8,7 @@ public class DecodeBase64Action : IAction
     public string Name => "Decode Base64";
     public string IconKey => "IconDecode";
     public ActionCategory Category => ActionCategory.Context;
+    public bool IsPreviewSafe => true;
 
     public bool CanExecute(string text, TextAnalysis analysis) => analysis.Type == TextType.Base64;
 

@@ -104,6 +104,47 @@ public class ActionRegistry
         return sb.ToString();
     }
 
+    /// <summary>
+    /// All action IDs known to the registry, including the generated `search_<engine.Id>` ones.
+    /// Used by SettingsManager.PruneStaleActionIds to drop orphan entries on Load.
+    /// </summary>
+    public static IReadOnlySet<string> GetAllKnownActionIds(IEnumerable<Config.SearchEngine> engines)
+    {
+        // Mirror the ActionRegistry constructor list. The registry instance isn't used because
+        // SettingsManager.Load runs before any registry exists.
+        var ids = new HashSet<string>(StringComparer.Ordinal)
+        {
+            // Context actions
+            "open_url", "send_email", "open_filepath", "open_folder",
+            "preview_color", "convert_color",
+            "format_json", "minify_json", "format_xml", "strip_tags",
+            "calculate", "ip_lookup", "decode_base64", "decode_jwt",
+            "generate_qr", "generate_uuid", "convert_timezone",
+            "translate", "dictionary", "currency_convert",
+            "delete_text", "paste_plain",
+
+            // Case transforms
+            "case_upper", "case_lower", "case_title", "case_camel",
+            "case_snake", "case_kebab", "case_pascal", "case_reverse",
+
+            // Whitespace
+            "ws_trim", "ws_remove_extra_spaces", "ws_sort_lines",
+            "ws_dedup_lines", "ws_remove_linebreaks",
+
+            // Encode
+            "enc_url_encode", "enc_url_decode", "enc_base64_encode", "enc_base64_decode",
+            "enc_html_encode", "enc_html_decode",
+            "enc_hex_encode", "enc_hex_decode", "enc_rot13",
+            "enc_md5", "enc_sha1", "enc_sha256", "enc_sha512",
+
+            // Wrap
+            "wrap_quotes", "wrap_single_quotes", "wrap_parens",
+            "wrap_brackets", "wrap_braces", "wrap_backticks",
+        };
+        foreach (var e in engines) ids.Add($"search_{e.Id}");
+        return ids;
+    }
+
     public List<ActionGroup> GetActions(string text, TextAnalysis analysis)
     {
         var s = Config.SettingsManager.Current;

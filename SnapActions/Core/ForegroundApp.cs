@@ -1,24 +1,53 @@
-using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Automation;
 
 namespace SnapActions.Core;
 
 public static class ForegroundApp
 {
+    private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
     public static string? GetActiveProcessName()
     {
+        // Avoid Process.GetProcessById here — it allocates a Process object and reads the full
+        // module path through a slower path. We do this on every selection; faster matters.
+        IntPtr handle = IntPtr.Zero;
         try
         {
             IntPtr hwnd = GetForegroundWindow();
             if (hwnd == IntPtr.Zero) return null;
             GetWindowThreadProcessId(hwnd, out uint pid);
             if (pid == 0) return null;
-            using var proc = Process.GetProcessById((int)pid);
-            return proc.ProcessName;
+
+            handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+            if (handle == IntPtr.Zero) return null;
+
+            var buffer = new StringBuilder(1024);
+            int size = buffer.Capacity;
+            if (!QueryFullProcessImageName(handle, 0, buffer, ref size))
+                return null;
+
+            return Path.GetFileNameWithoutExtension(buffer.ToString(0, size));
         }
         catch { return null; }
+        finally
+        {
+            if (handle != IntPtr.Zero) CloseHandle(handle);
+        }
     }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint dwDesiredAccess, [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryFullProcessImageName(IntPtr hProcess, int dwFlags, StringBuilder lpExeName, ref int lpdwSize);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr hObject);
 
     public static bool IsExcluded(IReadOnlyList<string> exclusionList)
     {

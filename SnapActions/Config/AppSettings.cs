@@ -1,5 +1,20 @@
 namespace SnapActions.Config;
 
+/// <summary>
+/// How a search engine consumes the language code.
+/// JSON values are kept as the lowercase short string ("url", "query", "none") so existing
+/// settings.json files remain readable.
+/// </summary>
+public enum LangMode
+{
+    /// <summary>Substitute {1} into the URL template (default).</summary>
+    Url,
+    /// <summary>Append `lang:xx` to the search text (Twitter/X uses this).</summary>
+    Query,
+    /// <summary>Engine doesn't accept a language hint.</summary>
+    None,
+}
+
 public class SearchEngine
 {
     public string Id { get; set; } = "";
@@ -11,10 +26,42 @@ public class SearchEngine
     public string UrlTemplate { get; set; } = "";
     public bool Enabled { get; set; } = true;
     public bool IsBuiltIn { get; set; }
-    /// <summary>"url" = {1} in URL, "query" = append lang:xx to search text, "" = no lang support</summary>
-    public string LangMode { get; set; } = "url";
+
+    /// <summary>How this engine consumes the language code.</summary>
+    [System.Text.Json.Serialization.JsonConverter(typeof(LangModeJsonConverter))]
+    public LangMode LangMode { get; set; } = LangMode.Url;
+
     /// <summary>Whether to apply the global SearchLanguage filter to this engine.</summary>
     public bool UseLanguageFilter { get; set; } = true;
+}
+
+/// <summary>
+/// Reads the legacy string values ("url"/"query"/""/"none") and writes the lowercase form.
+/// Keeps existing user settings.json files compatible across the enum migration.
+/// </summary>
+public class LangModeJsonConverter : System.Text.Json.Serialization.JsonConverter<LangMode>
+{
+    public override LangMode Read(ref System.Text.Json.Utf8JsonReader reader,
+        Type typeToConvert, System.Text.Json.JsonSerializerOptions options)
+    {
+        var s = reader.GetString() ?? "";
+        return s.ToLowerInvariant() switch
+        {
+            "url" => LangMode.Url,
+            "query" => LangMode.Query,
+            "" or "none" => LangMode.None,
+            _ => LangMode.Url, // unknown values fall back to default
+        };
+    }
+
+    public override void Write(System.Text.Json.Utf8JsonWriter writer, LangMode value,
+        System.Text.Json.JsonSerializerOptions options) =>
+        writer.WriteStringValue(value switch
+        {
+            LangMode.Url => "url",
+            LangMode.Query => "query",
+            _ => "none",
+        });
 }
 
 public class AppSettings
@@ -61,17 +108,17 @@ public class AppSettings
         new() { Id = "bing", Name = "Bing", IsBuiltIn = true,
             UrlTemplate = "https://www.bing.com/search?q={0}&setlang={1}" },
         new() { Id = "duckduckgo", Name = "DuckDuckGo", IsBuiltIn = true,
-            UrlTemplate = "https://duckduckgo.com/?q={0}", LangMode = "", UseLanguageFilter = false },
+            UrlTemplate = "https://duckduckgo.com/?q={0}", LangMode = LangMode.None, UseLanguageFilter = false },
         new() { Id = "youtube", Name = "YouTube", IsBuiltIn = true,
             UrlTemplate = "https://www.youtube.com/results?search_query={0}&hl={1}" },
         new() { Id = "twitter", Name = "Twitter/X", IsBuiltIn = true,
-            UrlTemplate = "https://x.com/search?q={0}&f=top", LangMode = "query" },
+            UrlTemplate = "https://x.com/search?q={0}&f=top", LangMode = LangMode.Query },
         new() { Id = "reddit", Name = "Reddit", IsBuiltIn = true,
-            UrlTemplate = "https://www.reddit.com/search/?q={0}", LangMode = "", UseLanguageFilter = false },
+            UrlTemplate = "https://www.reddit.com/search/?q={0}", LangMode = LangMode.None, UseLanguageFilter = false },
         new() { Id = "github", Name = "GitHub", IsBuiltIn = true,
-            UrlTemplate = "https://github.com/search?q={0}&type=code", LangMode = "", UseLanguageFilter = false },
+            UrlTemplate = "https://github.com/search?q={0}&type=code", LangMode = LangMode.None, UseLanguageFilter = false },
         new() { Id = "stackoverflow", Name = "StackOverflow", IsBuiltIn = true,
-            UrlTemplate = "https://stackoverflow.com/search?q={0}", LangMode = "", UseLanguageFilter = false },
+            UrlTemplate = "https://stackoverflow.com/search?q={0}", LangMode = LangMode.None, UseLanguageFilter = false },
         new() { Id = "wikipedia", Name = "Wikipedia", IsBuiltIn = true,
             UrlTemplate = "https://{1}.wikipedia.org/w/index.php?search={0}" },
         new() { Id = "amazon", Name = "Amazon", IsBuiltIn = true, Enabled = false,
