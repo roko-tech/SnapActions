@@ -35,7 +35,14 @@ public partial class Base64Detector : ITextDetector
         try
         {
             var bytes = Convert.FromBase64String(trimmed);
-            var decoded = System.Text.Encoding.UTF8.GetString(bytes);
+            // Require the decoded bytes to be valid UTF-8. Convert.FromBase64String on a long
+            // alpha-with-symbols string often "succeeds" but yields garbage bytes; insist on a
+            // clean decode so we only label genuinely-text-bearing base64 as decodable.
+            var encoding = new System.Text.UTF8Encoding(
+                encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+            string decoded;
+            try { decoded = encoding.GetString(bytes); }
+            catch (System.Text.DecoderFallbackException) { return false; }
             // Reject if decoded contains too many control characters
             int controlCount = decoded.Count(c => char.IsControl(c) && c != '\n' && c != '\r' && c != '\t');
             if (controlCount > decoded.Length / 4) return false;

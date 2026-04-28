@@ -24,11 +24,14 @@ public partial class SettingsWindow : Window
         _secondaryBrush.Freeze();
 
         // Debounce auto-save so a fast typer in the excluded-apps box doesn't trigger 30 disk writes.
+        // Save synchronously on the UI thread — settings are tiny (kilobytes) and the previous
+        // Task.Run could race with a UI mutation (List.Add etc.), throwing inside JsonSerializer
+        // and silently losing the save.
         _saveDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
         _saveDebounce.Tick += (_, _) =>
         {
             _saveDebounce.Stop();
-            Task.Run(() => SettingsManager.Save());
+            SettingsManager.Save();
         };
 
         // Flush any pending change immediately on close so users don't lose edits.

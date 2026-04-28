@@ -17,7 +17,10 @@ public static class Log
     private static readonly object _lock = new();
     private static readonly string LogDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SnapActions", "logs");
-    private static bool _retentionRunForSession;
+    // Prune old log files at most once every 24 hours of process uptime — keeps long-running
+    // sessions from filling the log dir without doing the work on every Write call.
+    private static DateTime _nextPruneUtc = DateTime.MinValue;
+    private static readonly TimeSpan PruneInterval = TimeSpan.FromHours(24);
 
     public static void Info(string msg) => Write("INFO", msg);
     public static void Warn(string msg) => Write("WARN", msg);
@@ -40,12 +43,13 @@ public static class Log
             lock (_lock)
             {
                 Directory.CreateDirectory(LogDir);
-                if (!_retentionRunForSession)
+                var now = DateTime.UtcNow;
+                if (now >= _nextPruneUtc)
                 {
                     PruneOldLogs();
-                    _retentionRunForSession = true;
+                    _nextPruneUtc = now + PruneInterval;
                 }
-                var file = Path.Combine(LogDir, $"{DateTime.UtcNow:yyyy-MM-dd}.log");
+                var file = Path.Combine(LogDir, $"{now:yyyy-MM-dd}.log");
                 RotateIfTooBig(file);
                 File.AppendAllText(file, line + Environment.NewLine);
             }

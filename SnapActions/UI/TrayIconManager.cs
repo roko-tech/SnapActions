@@ -130,11 +130,21 @@ public class TrayIconManager : IDisposable
         g.FillRectangle(greenBrush, 12, 11, 2, 2);
 
         IntPtr hIcon = bmp.GetHicon();
-        var icon = Icon.FromHandle(hIcon);
-        var clone = (Icon)icon.Clone();
-        icon.Dispose();
-        DestroyIcon(hIcon);
-        return clone;
+        Icon? icon = null;
+        try
+        {
+            icon = Icon.FromHandle(hIcon);
+            // Clone() copies the icon image into an independently-managed handle, so destroying
+            // hIcon below doesn't invalidate the returned Icon.
+            return (Icon)icon.Clone();
+        }
+        finally
+        {
+            // Run regardless of whether Icon.FromHandle/Clone threw — otherwise the GDI handle
+            // returned by GetHicon leaks for the lifetime of the process.
+            icon?.Dispose();
+            DestroyIcon(hIcon);
+        }
     }
 
     public void Dispose()

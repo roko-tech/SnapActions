@@ -10,11 +10,21 @@ public partial class ColorCodeDetector : ITextDetector
     [GeneratedRegex(@"^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")]
     private static partial Regex HexPattern();
 
-    [GeneratedRegex(@"^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(\s*,\s*[\d.]+)?\s*\)$")]
-    private static partial Regex RgbPattern();
+    // Comma form: rgb(r, g, b) / rgba(r, g, b, a)
+    [GeneratedRegex(@"^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(\s*,\s*[\d.]+%?)?\s*\)$")]
+    private static partial Regex RgbCommaPattern();
 
-    [GeneratedRegex(@"^hsla?\(\s*\d{1,3}\s*,\s*\d{1,3}%?\s*,\s*\d{1,3}%?(\s*,\s*[\d.]+)?\s*\)$")]
-    private static partial Regex HslPattern();
+    // CSS Color Module 4 space form: rgb(r g b) / rgb(r g b / a)
+    [GeneratedRegex(@"^rgba?\(\s*\d{1,3}\s+\d{1,3}\s+\d{1,3}(\s*\/\s*[\d.]+%?)?\s*\)$")]
+    private static partial Regex RgbSpacePattern();
+
+    // Comma form: hsl(h, s%, l%) / hsla(...)
+    [GeneratedRegex(@"^hsla?\(\s*\d{1,3}\s*,\s*\d{1,3}%?\s*,\s*\d{1,3}%?(\s*,\s*[\d.]+%?)?\s*\)$")]
+    private static partial Regex HslCommaPattern();
+
+    // CSS Color Module 4 space form: hsl(h s% l%) / hsl(h s% l% / a)
+    [GeneratedRegex(@"^hsla?\(\s*\d{1,3}\s+\d{1,3}%?\s+\d{1,3}%?(\s*\/\s*[\d.]+%?)?\s*\)$")]
+    private static partial Regex HslSpacePattern();
 
     public bool TryDetect(string text, out TextAnalysis result)
     {
@@ -23,8 +33,8 @@ public partial class ColorCodeDetector : ITextDetector
 
         string? format = null;
         if (HexPattern().IsMatch(trimmed)) format = "hex";
-        else if (RgbPattern().IsMatch(trimmed)) format = "rgb";
-        else if (HslPattern().IsMatch(trimmed)) format = "hsl";
+        else if (RgbCommaPattern().IsMatch(trimmed) || RgbSpacePattern().IsMatch(trimmed)) format = "rgb";
+        else if (HslCommaPattern().IsMatch(trimmed) || HslSpacePattern().IsMatch(trimmed)) format = "hsl";
 
         if (format != null)
         {

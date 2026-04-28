@@ -11,6 +11,9 @@ public static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetCursorPos(out POINT pt);
 
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
     public const int INPUT_KEYBOARD = 1;
     public const uint KEYEVENTF_KEYUP = 0x0002;
 

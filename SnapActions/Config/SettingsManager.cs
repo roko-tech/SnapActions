@@ -44,6 +44,30 @@ public static class SettingsManager
         MigrateSearchEngines();
         MigrateActionIds();
         PruneStaleActionIds();
+        PruneStaleBackups();
+    }
+
+    /// <summary>
+    /// Keep only the 5 most recent settings.json.broken-* backups. Without this, repeated load
+    /// failures (dying disk, AV scanner racing) accumulate junk in %AppData%\SnapActions forever.
+    /// </summary>
+    private static void PruneStaleBackups()
+    {
+        try
+        {
+            if (!Directory.Exists(SettingsDir)) return;
+            const int keep = 5;
+            var files = Directory.EnumerateFiles(SettingsDir, "settings.json.broken-*")
+                .Select(f => (path: f, time: File.GetLastWriteTimeUtc(f)))
+                .OrderByDescending(x => x.time)
+                .Skip(keep)
+                .ToList();
+            foreach (var (path, _) in files)
+            {
+                try { File.Delete(path); } catch { /* best effort */ }
+            }
+        }
+        catch { /* best effort */ }
     }
 
     /// <summary>
@@ -81,13 +105,11 @@ public static class SettingsManager
             if (saved != null)
             {
                 saved.IsBuiltIn = true;
-                // Don't overwrite user-edited template/mode. Without this, every Load reverts
-                // any local tweak a user made to a built-in engine's URL or LangMode.
-                if (!saved.UserModified)
-                {
-                    saved.UrlTemplate = def.UrlTemplate;
-                    saved.LangMode = def.LangMode;
-                }
+                // Refresh built-in templates so URL/LangMode bug fixes flow into existing installs.
+                // The Settings UI doesn't expose template editing for built-ins, so there are no
+                // user customizations on built-ins to preserve.
+                saved.UrlTemplate = def.UrlTemplate;
+                saved.LangMode = def.LangMode;
             }
             else
             {

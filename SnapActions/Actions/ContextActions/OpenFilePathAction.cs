@@ -12,7 +12,10 @@ public class OpenFilePathAction : IAction
     public ActionCategory Category => ActionCategory.Context;
 
     public bool CanExecute(string text, TextAnalysis analysis) =>
-        analysis.Type == TextType.FilePath && Path.Exists(CleanPath(text));
+        analysis.Type == TextType.FilePath
+        // The detector already performed the existence probe; reuse its verdict so we don't
+        // do another (potentially blocking) Path.Exists per selection.
+        && analysis.Metadata?.GetValueOrDefault("exists") == bool.TrueString;
 
     public ActionResult Execute(string text, TextAnalysis analysis) =>
         ProcessHelper.TryOpenLocalPath(CleanPath(text));
@@ -31,6 +34,12 @@ public class OpenContainingFolderAction : IAction
     {
         if (analysis.Type != TextType.FilePath) return false;
         var path = OpenFilePathAction.CleanPath(text);
+        // Require an absolute path before falling back to the parent directory — otherwise a
+        // selection like "..\foo" would walk up to wherever our process's working dir resolves.
+        if (!System.IO.Path.IsPathFullyQualified(path)) return false;
+        // For UNC paths skip the Exists probe (which would trigger SMB and could block the UI
+        // dispatcher). Show the action; let RevealInExplorer prompt the user before connecting.
+        if (path.StartsWith(@"\\", StringComparison.Ordinal)) return true;
         // File exists, dir exists, OR parent dir exists (so we can reveal a missing file's folder).
         return File.Exists(path) || Directory.Exists(path) ||
                Directory.Exists(System.IO.Path.GetDirectoryName(path));

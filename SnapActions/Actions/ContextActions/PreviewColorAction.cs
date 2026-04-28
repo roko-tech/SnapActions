@@ -40,20 +40,20 @@ public class ConvertColorAction : IAction
         var format = analysis.Metadata?.GetValueOrDefault("format") ?? "";
         try
         {
-            var (r, g, b) = format switch
+            var (r, g, b, a) = format switch
             {
-                "hex" => HexToRgb(trimmed),
-                "rgb" => ParseRgb(trimmed),
-                "hsl" => HslToRgb(trimmed),
+                "hex" => HexToRgba(trimmed),
+                "rgb" => ParseRgba(trimmed),
+                "hsl" => HslToRgba(trimmed),
                 _ => throw new FormatException("Unknown color format")
             };
 
-            // Cycle to the next representation.
+            // Cycle to the next representation, preserving alpha when present.
             var output = format switch
             {
-                "hex" => $"rgb({r}, {g}, {b})",
-                "rgb" => RgbToHsl(r, g, b),
-                _ => $"#{r:X2}{g:X2}{b:X2}"
+                "hex" => FormatRgb(r, g, b, a),
+                "rgb" => FormatHsl(r, g, b, a),
+                _ => FormatHex(r, g, b, a)
             };
             return new ActionResult(true, output, $"Converted: {output}");
         }
@@ -63,32 +63,82 @@ public class ConvertColorAction : IAction
         }
     }
 
-    private static (int r, int g, int b) HexToRgb(string s)
+    private static string FormatAlpha(double a) =>
+        a.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string FormatRgb(int r, int g, int b, double? a) =>
+        a.HasValue
+            ? $"rgba({r}, {g}, {b}, {FormatAlpha(a.Value)})"
+            : $"rgb({r}, {g}, {b})";
+
+    private static string FormatHex(int r, int g, int b, double? a)
+    {
+        var rgb = $"#{r:X2}{g:X2}{b:X2}";
+        if (!a.HasValue) return rgb;
+        int ai = (int)Math.Round(a.Value * 255, MidpointRounding.AwayFromZero);
+        ai = Math.Clamp(ai, 0, 255);
+        return $"{rgb}{ai:X2}";
+    }
+
+    private static (int r, int g, int b, double? a) HexToRgba(string s)
     {
         var hex = s.TrimStart('#');
-        if (hex.Length == 3) hex = $"{hex[0]}{hex[0]}{hex[1]}{hex[1]}{hex[2]}{hex[2]}";
-        if (hex.Length == 4) // #RGBA — short form with alpha; CSS spec
+        // Expand short forms. #RGB → #RRGGBB, #RGBA → #RRGGBBAA.
+        if (hex.Length == 3)
             hex = $"{hex[0]}{hex[0]}{hex[1]}{hex[1]}{hex[2]}{hex[2]}";
+        else if (hex.Length == 4)
+            hex = $"{hex[0]}{hex[0]}{hex[1]}{hex[1]}{hex[2]}{hex[2]}{hex[3]}{hex[3]}";
         if (hex.Length < 6) throw new FormatException("Invalid hex color");
-        // Both 6 (RRGGBB) and 8 (RRGGBBAA per CSS) take the first 6 chars as RGB.
-        // Alpha (positions 6-7 in 8-char form) is intentionally discarded.
-        return (Convert.ToInt32(hex[..2], 16), Convert.ToInt32(hex[2..4], 16), Convert.ToInt32(hex[4..6], 16));
+        int r = Convert.ToInt32(hex[..2], 16);
+        int g = Convert.ToInt32(hex[2..4], 16);
+        int b = Convert.ToInt32(hex[4..6], 16);
+        double? a = null;
+        if (hex.Length >= 8) a = Convert.ToInt32(hex[6..8], 16) / 255.0;
+        return (r, g, b, a);
     }
 
-    private static (int r, int g, int b) ParseRgb(string s)
+    private static (int r, int g, int b, double? a) ParseRgba(string s)
     {
-        var nums = System.Text.RegularExpressions.Regex.Matches(s, @"\d+");
+        // Match each numeric group together with its leading separator so we can tell whether the
+        // 4th number was the alpha (preceded by `,` or `/`) or just trailing junk we should ignore.
+        var nums = System.Text.RegularExpressions.Regex
+            .Matches(s, @"[\d.]+%?")
+            .Cast<System.Text.RegularExpressions.Match>()
+            .ToList();
         if (nums.Count < 3) throw new FormatException("Invalid rgb()");
-        return (int.Parse(nums[0].Value), int.Parse(nums[1].Value), int.Parse(nums[2].Value));
+        int r = int.Parse(nums[0].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture);
+        int g = int.Parse(nums[1].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture);
+        int b = int.Parse(nums[2].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture);
+        double? a = null;
+        if (nums.Count >= 4)
+        {
+            var raw = nums[3].Value;
+            double v = double.Parse(raw.TrimEnd('%'),
+                System.Globalization.CultureInfo.InvariantCulture);
+            // Percent form (50%) means 0.5; 0–1 numeric stays as is.
+            a = raw.EndsWith('%') ? v / 100.0 : v;
+        }
+        return (r, g, b, a);
     }
 
-    private static (int r, int g, int b) HslToRgb(string s)
+    private static (int r, int g, int b, double? a) HslToRgba(string s)
     {
-        var nums = System.Text.RegularExpressions.Regex.Matches(s, @"[\d.]+");
+        var nums = System.Text.RegularExpressions.Regex
+            .Matches(s, @"[\d.]+%?")
+            .Cast<System.Text.RegularExpressions.Match>()
+            .ToList();
         if (nums.Count < 3) throw new FormatException("Invalid hsl()");
-        double h = double.Parse(nums[0].Value, System.Globalization.CultureInfo.InvariantCulture);
-        double sat = double.Parse(nums[1].Value, System.Globalization.CultureInfo.InvariantCulture) / 100.0;
-        double l = double.Parse(nums[2].Value, System.Globalization.CultureInfo.InvariantCulture) / 100.0;
+        double h = double.Parse(nums[0].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture);
+        double sat = double.Parse(nums[1].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture) / 100.0;
+        double l = double.Parse(nums[2].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture) / 100.0;
+        double? a = null;
+        if (nums.Count >= 4)
+        {
+            var raw = nums[3].Value;
+            double v = double.Parse(raw.TrimEnd('%'),
+                System.Globalization.CultureInfo.InvariantCulture);
+            a = raw.EndsWith('%') ? v / 100.0 : v;
+        }
 
         double c = (1 - Math.Abs(2 * l - 1)) * sat;
         double x = c * (1 - Math.Abs(((h / 60.0) % 2) - 1));
@@ -105,10 +155,11 @@ public class ConvertColorAction : IAction
         return (
             (int)Math.Round((r1 + m) * 255, MidpointRounding.AwayFromZero),
             (int)Math.Round((g1 + m) * 255, MidpointRounding.AwayFromZero),
-            (int)Math.Round((b1 + m) * 255, MidpointRounding.AwayFromZero));
+            (int)Math.Round((b1 + m) * 255, MidpointRounding.AwayFromZero),
+            a);
     }
 
-    private static string RgbToHsl(int r, int g, int b)
+    private static string FormatHsl(int r, int g, int b, double? a)
     {
         double rd = r / 255.0, gd = g / 255.0, bd = b / 255.0;
         double max = Math.Max(rd, Math.Max(gd, bd));
@@ -124,6 +175,11 @@ public class ConvertColorAction : IAction
             else h = (rd - gd) / d + 4;
             h *= 60;
         }
-        return $"hsl({Math.Round(h, MidpointRounding.AwayFromZero):0}, {Math.Round(s * 100, MidpointRounding.AwayFromZero):0}%, {Math.Round(l * 100, MidpointRounding.AwayFromZero):0}%)";
+        var hVal = Math.Round(h, MidpointRounding.AwayFromZero);
+        var sPct = Math.Round(s * 100, MidpointRounding.AwayFromZero);
+        var lPct = Math.Round(l * 100, MidpointRounding.AwayFromZero);
+        return a.HasValue
+            ? $"hsla({hVal:0}, {sPct:0}%, {lPct:0}%, {FormatAlpha(a.Value)})"
+            : $"hsl({hVal:0}, {sPct:0}%, {lPct:0}%)";
     }
 }

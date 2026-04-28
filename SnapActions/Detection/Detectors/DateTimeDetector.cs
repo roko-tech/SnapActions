@@ -23,13 +23,16 @@ public partial class DateTimeDetector : ITextDetector
         var trimmed = text.Trim();
         if (trimmed.Length < 8 || trimmed.Length > 40) return false;
 
-        // Check ISO format first
+        // Check ISO format first. Use DateTimeOffset.TryParse so an explicit offset like
+        // "2024-01-15T10:00:00+05:00" round-trips through the metadata to ConvertTimezoneAction
+        // (DateTime.TryParse + ToString("O") would silently strip the offset and reinterpret as
+        // local time on the receiving side).
         if (IsoDatePattern().IsMatch(trimmed) &&
-            System.DateTime.TryParse(trimmed, CultureInfo.InvariantCulture,
-                DateTimeStyles.None, out var dt))
+            DateTimeOffset.TryParse(trimmed, CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var dto))
         {
             result = new TextAnalysis(TextType.DateTime, 0.9,
-                new() { ["parsed"] = dt.ToString("O"), ["format"] = "iso" });
+                new() { ["parsed"] = dto.ToString("O"), ["format"] = "iso" });
             return true;
         }
 
@@ -50,11 +53,11 @@ public partial class DateTimeDetector : ITextDetector
 
         // Common date formats
         if (CommonDatePattern().IsMatch(trimmed) &&
-            System.DateTime.TryParse(trimmed, CultureInfo.InvariantCulture,
-                DateTimeStyles.AllowWhiteSpaces, out var dt2))
+            DateTimeOffset.TryParse(trimmed, CultureInfo.InvariantCulture,
+                DateTimeStyles.AllowWhiteSpaces, out var dto2))
         {
             result = new TextAnalysis(TextType.DateTime, 0.75,
-                new() { ["parsed"] = dt2.ToString("O"), ["format"] = "common" });
+                new() { ["parsed"] = dto2.ToString("O"), ["format"] = "common" });
             return true;
         }
 

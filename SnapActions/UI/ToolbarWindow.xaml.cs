@@ -227,11 +227,12 @@ public partial class ToolbarWindow : Window
     {
         if (!IsVisible) return false;
 
-        // Use the cursor monitor's DPI directly — don't share state with PositionAndShow's
-        // _dpiX/_dpiY, which were set at show time and may diverge if the cursor crossed monitors.
-        var dpi = Helpers.ScreenHelper.GetDpiForPoint(new Point(screenX, screenY));
-        double dpiX = dpi.X > 0 ? dpi.X : 1.0;
-        double dpiY = dpi.Y > 0 ? dpi.Y : 1.0;
+        // The window's Left/Top are in DIPs of the monitor it was placed on. We must convert the
+        // cursor's physical pixels using *that* monitor's DPI, not whichever monitor the cursor
+        // is currently over — otherwise on mixed-DPI multi-monitor setups the toolbar gets
+        // dismissed prematurely (or held open spuriously) when the cursor crosses a boundary.
+        double dpiX = _dpiX > 0 ? _dpiX : 1.0;
+        double dpiY = _dpiY > 0 ? _dpiY : 1.0;
         double x = screenX / dpiX, y = screenY / dpiY;
 
         if (x >= Left && x <= Left + ActualWidth && y >= Top && y <= Top + ActualHeight)
@@ -505,7 +506,12 @@ public partial class ToolbarWindow : Window
             TextDecorations = isEditMode && isOff ? TextDecorations.Strikethrough : null
         });
 
-        if (isEditMode)
+        // Arrows only make sense for actions in an ordered list — search engines (ordered in
+        // SearchEngines) and pinned actions (ordered in PinnedActionIds). For an unpinned non-search
+        // action, MoveAction would silently no-op, leaving the user staring at buttons that do
+        // nothing.
+        bool canReorder = isEditMode && (action.Category == ActionCategory.Search || isPinned);
+        if (canReorder)
         {
             // Move up/down arrows for reordering
             var moveUp = new Button
@@ -643,8 +649,14 @@ public partial class ToolbarWindow : Window
             if (_isPasteMode || (_isEditable && Config.SettingsManager.Current.ReplaceSelectionOnTransform
                                 && action.Category == ActionCategory.Transform))
             {
+                // Snapshot the foreground window before we tear down our toolbar — if focus has
+                // moved (e.g. the user Alt-Tabbed in the few hundred ms since the click), abort
+                // rather than paste into the wrong app.
+                IntPtr expected = NativeMethods.GetForegroundWindow();
                 HideToolbar();
-                _ = Dispatcher.InvokeAsync(() => TextCapture.SimulatePaste(), DispatcherPriority.Background);
+                IntPtr current = NativeMethods.GetForegroundWindow();
+                if (current == expected || current == IntPtr.Zero)
+                    TextCapture.SimulatePaste();
                 return;
             }
         }

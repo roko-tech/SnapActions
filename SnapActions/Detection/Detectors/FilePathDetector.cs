@@ -18,7 +18,10 @@ public partial class FilePathDetector : ITextDetector
 
         if (PathPattern().IsMatch(trimmed))
         {
-            bool exists = Path.Exists(trimmed);
+            // Skip Path.Exists for UNC paths — probing \\unreachable\share triggers SMB which can
+            // block the UI dispatcher for tens of seconds. Treat UNC as "could exist" without proving it.
+            bool isUnc = trimmed.StartsWith(@"\\", StringComparison.Ordinal);
+            bool exists = !isUnc && Path.Exists(trimmed);
             result = new TextAnalysis(TextType.FilePath, exists ? 0.98 : 0.8,
                 new() { ["path"] = trimmed, ["exists"] = exists.ToString() });
             return true;

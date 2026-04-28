@@ -13,9 +13,23 @@ public class DictionaryAction : IAction
     public bool CanExecute(string text, TextAnalysis analysis)
     {
         var t = text.Trim();
-        return t.Length > 0 && t.Length <= 60 && !t.Contains('\n')
-            && t.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 3
-            && analysis.Type == TextType.PlainText;
+        if (t.Length == 0 || t.Length > 60 || t.Contains('\n')) return false;
+        if (analysis.Type != TextType.PlainText) return false;
+        // Only show for selections that look like real words. Without this every 1–3 word plain
+        // selection (names, code identifiers, slugs) offered Dictionary, cluttering the toolbar.
+        var words = t.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0 || words.Length > 3) return false;
+        foreach (var w in words)
+            if (!IsDictionaryWord(w)) return false;
+        return true;
+    }
+
+    private static bool IsDictionaryWord(string s)
+    {
+        if (s.Length < 2) return false;
+        foreach (var c in s)
+            if (!char.IsLetter(c) && c != '\'' && c != '-') return false;
+        return true;
     }
 
     public ActionResult Execute(string text, TextAnalysis analysis)
