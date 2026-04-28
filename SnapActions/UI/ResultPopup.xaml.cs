@@ -39,16 +39,25 @@ public partial class ResultPopup : Window
             SetWindowLong(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
         };
 
-        // Esc-only dismissal. The cursor-leave check this used to do was too eager — users
-        // naturally moved off the popup to read it and lost the result. Closing now requires an
-        // explicit Esc, the X button, the Copy button, or a new popup replacing this one.
+        // Dismissal: Esc, the X / Copy buttons, a new popup replacing this one, OR a click
+        // outside the popup bounds. We don't auto-close on cursor-leave (that fired before
+        // users could finish reading); we *do* close on click-outside because that's a clear
+        // user intent. WS_EX_NOACTIVATE means we never get focus events, so we poll instead.
         _checkTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
         _checkTimer.Tick += (_, _) =>
         {
             if (_closed) return;
-            // Esc closes — poll because the no-activate window never gets keyboard focus.
-            if ((GetAsyncKeyState(0x1B) & 0x8000) != 0)
-                SafeClose();
+            if ((GetAsyncKeyState(0x1B) & 0x8000) != 0) { SafeClose(); return; }
+            // Left mouse button currently down? If so, check whether the cursor is outside our
+            // bounds — if it is, the user is clicking somewhere else and we should dismiss.
+            if ((GetAsyncKeyState(0x01) & 0x8000) != 0)
+            {
+                NativeMethods.GetCursorPos(out var pt);
+                double l = Left * _dpi, t = Top * _dpi;
+                double r = l + ActualWidth * _dpi, b = t + ActualHeight * _dpi;
+                if (pt.X < l || pt.X > r || pt.Y < t || pt.Y > b)
+                    SafeClose();
+            }
         };
     }
 
