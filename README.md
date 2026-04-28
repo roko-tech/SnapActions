@@ -43,6 +43,8 @@ Automatically detects what you selected and shows relevant actions:
 - **Dictionary** — word definition lookup via dictionaryapi.dev (1-3 word selections)
 - **Currency Converter** — detects amounts with currency symbols/codes, converts using open.er-api.com with configurable target currency
 
+Popups stay open until you dismiss them — press **Esc**, click the **X**, click **Copy**, or click anywhere outside. A new lookup replaces the existing popup instead of stacking.
+
 ### Text Transforms (in editable fields)
 UPPERCASE, lowercase, Title Case, camelCase, PascalCase, snake_case, kebab-case, Reverse, Trim, Remove Extra Spaces, Remove Line Breaks, Sort Lines, Remove Duplicates, Wrap in quotes/brackets/braces/backticks
 
@@ -53,7 +55,7 @@ UPPERCASE, lowercase, Title Case, camelCase, PascalCase, snake_case, kebab-case,
 - **Hash** — MD5, SHA-1, SHA-256, SHA-512 (under Encode; MD5/SHA-1 are for checksums only, not security)
 - **JWT decode** — split header/payload/signature for `eyJ…` tokens
 - **QR code** — open a QR PNG for any selected URL
-- **Color convert** — cycle a color between hex / rgb() / hsl() representations
+- **Color convert** — cycle a color between hex / rgb / hsl representations, preserving alpha (`#RRGGBBAA`, `rgba()`, `hsla()`). Accepts CSS Color Module 4 syntax (`rgb(255 0 0 / 50%)`)
 
 ### Search Engines
 13 built-in engines — 9 enabled by default (Google, Bing, DuckDuckGo, YouTube, Twitter/X, Reddit, GitHub, StackOverflow, Wikipedia) and 4 opt-in (Amazon, IMDb, npm, NuGet — toggle in Settings).
