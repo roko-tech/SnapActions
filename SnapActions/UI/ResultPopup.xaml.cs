@@ -13,11 +13,15 @@ public partial class ResultPopup : Window
     private string _resultText = "";
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(8) };
 
-    private bool _loaded;
     private bool _closed;
     private double _dpi = 1.0;
     private readonly System.Windows.Threading.DispatcherTimer _checkTimer;
     private readonly System.Threading.CancellationTokenSource _cts = new();
+
+    // Track the currently-open popup so a new translation/dictionary lookup replaces the prior
+    // one instead of letting them stack on screen. Previously we relied on cursor-leave to
+    // dismiss the prior popup, but that closed it before the user finished reading.
+    private static ResultPopup? _current;
 
     private const int GWL_EXSTYLE = -20;
     private const int WS_EX_NOACTIVATE = 0x08000000;
@@ -35,16 +39,13 @@ public partial class ResultPopup : Window
             SetWindowLong(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
         };
 
-        _checkTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+        // Esc-only dismissal. The cursor-leave check this used to do was too eager — users
+        // naturally moved off the popup to read it and lost the result. Closing now requires an
+        // explicit Esc, the X button, the Copy button, or a new popup replacing this one.
+        _checkTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
         _checkTimer.Tick += (_, _) =>
         {
-            if (!_loaded || _closed) return;
-            NativeMethods.GetCursorPos(out var pt);
-            double l = Left * _dpi, t = Top * _dpi;
-            double r = l + ActualWidth * _dpi, b = t + ActualHeight * _dpi;
-            if (pt.X < l || pt.X > r || pt.Y < t || pt.Y > b)
-                SafeClose();
-
+            if (_closed) return;
             // Esc closes — poll because the no-activate window never gets keyboard focus.
             if ((GetAsyncKeyState(0x1B) & 0x8000) != 0)
                 SafeClose();
@@ -65,13 +66,17 @@ public partial class ResultPopup : Window
         _checkTimer.Stop();
         try { _cts.Cancel(); } catch { }
         try { _cts.Dispose(); } catch { }
+        if (ReferenceEquals(_current, this)) _current = null;
         try { Close(); } catch { }
     }
 
     /// <summary>Static helper: creates popup, positions near cursor, fetches result.</summary>
     public static void ShowNearCursor(string title, Func<HttpClient, System.Threading.CancellationToken, Task<string>> fetchResult)
     {
+        // Replace any existing popup so two back-to-back lookups don't stack on screen.
+        _current?.SafeClose();
         var popup = new ResultPopup();
+        _current = popup;
         NativeMethods.GetCursorPos(out var pt);
         popup.ShowAt(pt.X, pt.Y, title, fetchResult);
     }
@@ -114,7 +119,6 @@ public partial class ResultPopup : Window
         {
             _resultText = await fetchResult(Http, _cts.Token);
             if (_closed) return;
-            _loaded = true;
             ResultText.Text = _resultText;
             LoadingText.Visibility = Visibility.Collapsed;
             ResultText.Visibility = Visibility.Visible;
@@ -124,7 +128,6 @@ public partial class ResultPopup : Window
         catch (Exception ex)
         {
             if (_closed) return;
-            _loaded = true;
             LoadingText.Text = $"Error: {ex.Message}";
         }
     }
