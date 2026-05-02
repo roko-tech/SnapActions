@@ -26,7 +26,15 @@ public partial class WebSearchAction(string id, string name, string iconKey, str
 
     public bool CanExecute(string text, TextAnalysis analysis) => !string.IsNullOrEmpty(text.Trim());
 
-    public ActionResult Execute(string text, TextAnalysis analysis)
+    public ActionResult Execute(string text, TextAnalysis analysis) =>
+        ProcessHelper.TryShellOpen(BuildUrl(text), $"Searching {name}...");
+
+    /// <summary>
+    /// Build the final URL for a query without performing the side effect (no Process.Start).
+    /// Exposed as internal so tests can verify the substitution logic — Execute itself is hard
+    /// to test because it spawns a browser process.
+    /// </summary>
+    internal string BuildUrl(string text)
     {
         var query = text.Trim();
         var langCode = lang ?? "";
@@ -54,7 +62,6 @@ public partial class WebSearchAction(string id, string name, string iconKey, str
             url = EmptyParamRegex().Replace(url, "");
             url = url.TrimEnd('&', '?');
         }
-
-        return ProcessHelper.TryShellOpen(url, $"Searching {name}...");
+        return url;
     }
 }

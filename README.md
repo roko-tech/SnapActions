@@ -15,8 +15,10 @@ A free, open-source alternative to [SnipDo](https://snipdo-app.com/). Select tex
 ### Text Selection Toolbar
 - **Drag-select**, **double-click** (word), or **triple-click** (line) text anywhere
 - A floating toolbar appears above the selection with smart actions
-- Hover over actions to preview the result before applying
+- Hover over actions to preview the result before applying — color actions show a swatch alongside the hex/rgb/hsl text, not just text
+- A `...` overflow button surfaces extra context actions when more apply than fit inline
 - Toolbar stays open while your mouse is over it
+- A "Copied to clipboard" toast confirms when an action writes to the clipboard
 
 ### Smart Text Detection
 Automatically detects what you selected and shows relevant actions:
@@ -34,9 +36,9 @@ Automatically detects what you selected and shows relevant actions:
 | UUID | `550e8400-e29b-...` | Generate new UUID |
 | Base64 | `SGVsbG8gV29ybGQ=` | Decode |
 | Date/Time | `2026-04-11T12:00` | Convert timezone, Unix timestamp |
-| Currency | `$33`, `100 SAR` | Convert to target currency |
-| JWT | `eyJhbGciOi...` | Decode header / payload |
-| Unit | `5 ft`, `100 km/h`, `20°C` | Convert to common units |
+| Currency | `$33`, `100 SAR`, `€1.500,50` | Convert to target currency (parses American & European number formats) |
+| JWT | `eyJhbGciOi...` | Decode header / payload (incl. `alg=none` unsigned tokens) |
+| Unit | `5 ft`, `100 km/h`, `20°C`, `5 fl oz` | Convert to common units |
 
 ### Inline Popups (no browser needed)
 - **Translate** — translates selected text using MyMemory API, shows result in popup
@@ -90,9 +92,9 @@ Double-click the system tray icon to open Settings:
 | Search language | 13+ languages or no filter | No filter |
 | Target currency | 15 currencies (USD, EUR, SAR, etc.) | USD |
 | Action categories | Toggle Transform, Encode, Search | All on |
-| Excluded apps | Process names to ignore | KeePass(XC), 1Password, Bitwarden, Dashlane, Enpass, LastPass, RoboForm, NordPass, ProtonPass, Keeper |
+| Excluded apps | Process names to ignore (use **Add running app...** to pick from currently-running processes) | KeePass(XC), 1Password, Bitwarden, Dashlane, Enpass, LastPass, RoboForm, NordPass, ProtonPass, Keeper |
 
-Settings auto-save on every change. Stored in `%AppData%\SnapActions\settings.json`. If the file gets corrupted, it's renamed to `settings.json.broken-<timestamp>` and defaults are loaded — never silent data loss.
+Settings auto-save on every change. Stored in `%AppData%\SnapActions\settings.json`. If the file gets corrupted, it's renamed to `settings.json.broken-<timestamp>` and defaults are loaded — never silent data loss. Old `.broken-*` backups are pruned to the most recent 5.
 
 Logs (errors and lifecycle events) are written to `%AppData%\SnapActions\logs\YYYY-MM-DD.log` and rotated after 7 days.
 
@@ -119,8 +121,9 @@ Transform actions and paste mode use multi-layer detection:
 
 ```bash
 git clone https://github.com/roko-tech/SnapActions.git
-cd SnapActions/SnapActions
-dotnet build -c Release
+cd SnapActions
+dotnet build SnapActions/SnapActions.csproj -c Release
+dotnet test SnapActions.Tests/SnapActions.Tests.csproj
 ```
 
 ### Publish Self-Contained
@@ -132,17 +135,24 @@ build.bat
 
 Produces a single compressed `SnapActions.exe` in `bin\publish\` (~74MB, includes .NET runtime).
 
+## Tests & CI
+
+The repo ships with an xUnit test suite covering every detector, the math evaluator, the unit converter, color conversion (including alpha-preservation and negative-hue normalization), the locale-agnostic number parser, all transform/encode/wrap actions, and `WebSearchAction.BuildUrl`. GitHub Actions runs build + tests on every push and PR — see `.github/workflows/build.yml`.
+
 ## Architecture
 
 ```
 SnapActions/
-  Core/           Mouse hook (dedicated thread), text capture (WM_COPY + Ctrl+Insert),
-                  selection tracking, foreground app detection
-  Detection/      13 text type detectors + classifier pipeline
-  Actions/        Context actions, transforms, encode/decode, search, popups
-  UI/             WPF floating toolbar, result popup, settings window, system tray
-  Config/         JSON settings with migration for built-in search engines
-  Helpers/        Math evaluator, screen utilities, shared P/Invoke (NativeMethods)
+  Core/             Mouse hook (dedicated thread), text capture (WM_COPY + Ctrl+Insert),
+                    selection tracking, foreground app detection
+  Detection/        13 text type detectors + classifier pipeline
+  Actions/          Context actions, transforms, encode/decode, search, popups
+  UI/               WPF floating toolbar, result popup, settings window, system tray
+  Config/           JSON settings with migration for built-in search engines
+  Helpers/          Math evaluator, locale-agnostic number parsing, screen utilities,
+                    shared P/Invoke (NativeMethods)
+SnapActions.Tests/  xUnit test project (200+ tests) covering pure-function surfaces
+.github/workflows/  CI: build + test on push and PR
 ```
 
 ## Compared to SnipDo

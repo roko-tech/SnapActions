@@ -22,4 +22,9 @@
     <Resource Include="app.ico"/>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Test project needs to call internal helpers like WebSearchAction.BuildUrl -->
+    <InternalsVisibleTo Include="SnapActions.Tests"/>
+  </ItemGroup>
+
 </Project>
