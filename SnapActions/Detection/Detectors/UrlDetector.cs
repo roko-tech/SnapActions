@@ -13,8 +13,10 @@ public partial class UrlDetector : ITextDetector
     {
         result = default!;
         var trimmed = text.Trim();
-        if (trimmed.Contains('\n') && trimmed.Split('\n').Length > 3)
-            return false;
+        // URLs don't contain newlines. The previous "up to 3 lines" cutoff let multi-line
+        // selections classify as URL when only line 1 was actually a URL — then OpenUrlAction
+        // would feed a multi-line string to the shell.
+        if (trimmed.Contains('\n')) return false;
 
         if (UrlPattern().IsMatch(trimmed) || Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
             && (uri.Scheme == "http" || uri.Scheme == "https" || uri.Scheme == "ftp"))

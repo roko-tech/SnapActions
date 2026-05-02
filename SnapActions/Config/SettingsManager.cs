@@ -145,7 +145,10 @@ public static class SettingsManager
 
     public static void SetAutoStart(bool enable)
     {
-        Current.AutoStart = enable;
+        // Apply the registry change first, then commit Current/Save only on success — otherwise
+        // a failed registry write would leave the in-memory flag and disk file out of sync with
+        // reality.
+        bool applied = false;
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(
@@ -154,15 +157,32 @@ public static class SettingsManager
 
             if (enable)
             {
-                var exePath = Environment.ProcessPath ?? "";
+                // Environment.ProcessPath is null when running under a non-PE host (e.g.
+                // dotnet some.dll). Without this guard the registry would get an empty quoted
+                // string and Windows would silently fail to autostart anything.
+                var exePath = Environment.ProcessPath;
+                if (string.IsNullOrEmpty(exePath))
+                {
+                    SnapActions.Helpers.Log.Warn("SetAutoStart: ProcessPath is null/empty; skipping registry write");
+                    return;
+                }
                 key.SetValue("SnapActions", $"\"{exePath}\"");
             }
             else
             {
                 key.DeleteValue("SnapActions", false);
             }
+            applied = true;
         }
-        catch { }
-        Save();
+        catch (Exception ex)
+        {
+            SnapActions.Helpers.Log.Warn($"SetAutoStart: registry write failed: {ex.Message}");
+        }
+
+        if (applied)
+        {
+            Current.AutoStart = enable;
+            Save();
+        }
     }
 }

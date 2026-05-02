@@ -417,7 +417,11 @@ public partial class SettingsWindow : Window
     private void AddExcludedAppName(string name)
     {
         var current = ExcludedAppsBox.Text;
-        var sep = string.IsNullOrEmpty(current) || current.EndsWith('\n') ? "" : "\n";
+        // Already-newline-terminated content (either \n or \r\n) doesn't need a leading separator.
+        // The TextChanged handler splits on '\n', so CRLF endings would otherwise leave a trailing \r
+        // attached to the previous entry.
+        bool endsWithNewline = current.EndsWith('\n') || current.EndsWith("\r\n", StringComparison.Ordinal);
+        var sep = string.IsNullOrEmpty(current) || endsWithNewline ? "" : "\n";
         ExcludedAppsBox.Text = current + sep + name;
         // The TextChanged handler will pick this up and queue a save.
     }

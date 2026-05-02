@@ -30,7 +30,6 @@ public partial class ToolbarWindow : Window
     private bool _editMode;
     private string? _currentSubMenuGroup;
     private ActionCategory? _currentSubMenuCategory;
-    private FrameworkElement? _currentSubMenuTarget;
 
     private const int GWL_EXSTYLE = -20;
     private const int WS_EX_NOACTIVATE = 0x08000000;
@@ -320,17 +319,16 @@ public partial class ToolbarWindow : Window
                 HorizontalAlignment = HorizontalAlignment.Center
             }
         };
-        btn.Click += (_, _) => ShowContextOverflowSubMenu(overflow, btn);
+        btn.Click += (_, _) => ShowContextOverflowSubMenu(overflow);
         return btn;
     }
 
-    private void ShowContextOverflowSubMenu(List<IAction> actions, FrameworkElement target)
+    private void ShowContextOverflowSubMenu(List<IAction> actions)
     {
         // Reuse the existing sub-menu plumbing but skip _actionGroups (these are the *overflow*,
         // not a registered category). Edit-mode arrows / pin toggles aren't meaningful here.
         _currentSubMenuGroup = "More actions";
         _currentSubMenuCategory = null;
-        _currentSubMenuTarget = target;
         _editMode = false;
 
         SubMenuPanel.Children.Clear();
@@ -825,14 +823,13 @@ public partial class ToolbarWindow : Window
 
     // ── Sub-menu show/toggle ─────────────────────────────────────
 
-    private void ShowSubMenu(string groupName, ActionCategory category, FrameworkElement target)
+    private void ShowSubMenu(string groupName, ActionCategory category)
     {
         if (SubMenuPopup.IsOpen && _currentSubMenuGroup == groupName)
         { SubMenuPopup.IsOpen = false; _editMode = false; PreviewBorder.Visibility = Visibility.Collapsed; return; }
 
         _currentSubMenuGroup = groupName;
         _currentSubMenuCategory = category;
-        _currentSubMenuTarget = target;
         _editMode = false;
         RebuildCurrentSubMenu();
     }
@@ -871,7 +868,6 @@ public partial class ToolbarWindow : Window
         // Build a submenu with: Plain paste + all transform actions on clipboard text
         _currentSubMenuGroup = "Paste As";
         _currentSubMenuCategory = ActionCategory.Transform;
-        _currentSubMenuTarget = PasteButton;
 
         SubMenuPanel.Children.Clear();
         ResetPreview();
@@ -915,16 +911,22 @@ public partial class ToolbarWindow : Window
 
     private void PasteButton_Click(object sender, RoutedEventArgs e)
     {
+        // Match the action-click paste flow: snapshot the foreground HWND first, run synchronously,
+        // and abort if focus shifted between click and paste (rare, but Alt-Tab during the click
+        // window would otherwise paste into the wrong app).
+        IntPtr expected = NativeMethods.GetForegroundWindow();
         HideToolbar();
-        Dispatcher.InvokeAsync(() => TextCapture.SimulatePaste(), DispatcherPriority.Background);
+        IntPtr current = NativeMethods.GetForegroundWindow();
+        if (current == expected || current == IntPtr.Zero)
+            TextCapture.SimulatePaste();
     }
 
     private void TransformButton_Click(object sender, RoutedEventArgs e) =>
-        ShowSubMenu("Transform", ActionCategory.Transform, (FrameworkElement)sender);
+        ShowSubMenu("Transform", ActionCategory.Transform);
     private void EncodeButton_Click(object sender, RoutedEventArgs e) =>
-        ShowSubMenu("Encode", ActionCategory.Encode, (FrameworkElement)sender);
+        ShowSubMenu("Encode", ActionCategory.Encode);
     private void SearchButton_Click(object sender, RoutedEventArgs e) =>
-        ShowSubMenu("Search", ActionCategory.Search, (FrameworkElement)sender);
+        ShowSubMenu("Search", ActionCategory.Search);
 
     [DllImport("user32.dll")]
     private static extern int GetWindowLong(IntPtr hWnd, int nIndex);

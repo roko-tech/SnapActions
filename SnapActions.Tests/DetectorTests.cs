@@ -22,6 +22,15 @@ public class DetectorTests
     [Fact]
     public void Url_RejectsPlainWord() => Assert.NotEqual(TextType.Url, Classify("example"));
 
+    [Fact]
+    public void Url_RejectsMultiLineSelection()
+    {
+        // Regression: B4 in v1.6.1. Previously up-to-3 newlines was allowed; a selection like
+        // "https://example.com\nrest of the paragraph" classified as URL and then OpenUrlAction
+        // fed the multi-line string to the shell.
+        Assert.NotEqual(TextType.Url, Classify("https://example.com\nmore prose"));
+    }
+
     // ── Email ────────────────────────────────────────────────────
 
     [Theory]

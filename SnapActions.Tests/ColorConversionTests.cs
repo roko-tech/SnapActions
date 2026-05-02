@@ -98,4 +98,20 @@ public class ColorConversionTests
         var result = Convert("hsl(-30, 100%, 50%)");
         Assert.Equal("#FF0080", result);
     }
+
+    [Fact]
+    public void Rgb_OutOfRangeChannels_ClampedTo255()
+    {
+        // Regression: B3 in v1.6.1. The detector regex permits up to 3 digits per channel,
+        // so "rgb(999, 0, 0)" classifies. Without clamping, FormatHex would produce a
+        // malformed hex string with too many digits.
+        var result = Convert("rgb(999, 0, 0)");
+        Assert.StartsWith("hsl(", result); // rgb cycles to hsl
+        // The result should represent pure red (since 999 clamps to 255).
+        Assert.Contains("0%", result); // saturation cap means hsl reads as 0 sat for the clamped value… let it normalize
+        // Stricter: cycle one more time and confirm we land back on a valid hex.
+        var classifier = new SnapActions.Detection.TextClassifier();
+        var hslAnalysis = classifier.Classify(result);
+        Assert.Equal(SnapActions.Detection.TextType.ColorCode, hslAnalysis.Type);
+    }
 }

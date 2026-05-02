@@ -1,4 +1,3 @@
-using System.Windows;
 using SnapActions.Detection;
 
 namespace SnapActions.Actions.ContextActions;
@@ -106,9 +105,12 @@ public class ConvertColorAction : IAction
             .Cast<System.Text.RegularExpressions.Match>()
             .ToList();
         if (nums.Count < 3) throw new FormatException("Invalid rgb()");
-        int r = int.Parse(nums[0].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture);
-        int g = int.Parse(nums[1].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture);
-        int b = int.Parse(nums[2].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture);
+        // Clamp to the 0–255 range. The detector regex permits up to 999, so a malformed
+        // selection like "rgb(999, 0, 0)" reaches here; without clamping the subsequent
+        // FormatHex would output too many hex digits and produce a malformed color string.
+        int r = Math.Clamp(int.Parse(nums[0].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture), 0, 255);
+        int g = Math.Clamp(int.Parse(nums[1].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture), 0, 255);
+        int b = Math.Clamp(int.Parse(nums[2].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture), 0, 255);
         double? a = null;
         if (nums.Count >= 4)
         {

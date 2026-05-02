@@ -6,7 +6,7 @@ namespace SnapActions.Helpers;
 /// <summary>
 /// Small file logger writing to %AppData%\SnapActions\logs\YYYY-MM-DD.log (UTC dates).
 /// Thread-safe via a simple lock — volume is low (errors / lifecycle events).
-/// Old logs (more than 7 days) are deleted on first write each session.
+/// Old logs (older than 7 days) are pruned at most once every 24 hours of process uptime.
 /// Each log file is capped at MaxBytesPerFile; older content rotates to .1.log, .2.log, etc.
 /// </summary>
 public static class Log

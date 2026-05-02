@@ -32,8 +32,13 @@ public static class ProcessHelper
     // Extensions where launching may run code — confirm with the user first.
     private static readonly HashSet<string> RiskyExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
+        // Direct executables / scripts
         ".exe", ".bat", ".cmd", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
-        ".msi", ".scr", ".com", ".pif", ".reg", ".lnk"
+        ".msi", ".scr", ".com", ".pif", ".reg", ".lnk",
+        // Disk images that mount as drives (autorun/lnk inside can run on open)
+        ".iso", ".img", ".vhd", ".vhdx",
+        // Office formats that can carry macros
+        ".docm", ".dotm", ".xlsm", ".xltm", ".xlam", ".pptm", ".potm", ".ppam",
     };
 
     /// <summary>

@@ -73,12 +73,17 @@ public static class TextCapture
         }
     }
 
+    /// <summary>
+    /// Snapshots the clipboard. Returns null on error (so the restore step can skip and avoid
+    /// destroying user data); returns an empty dict when the clipboard was actually empty.
+    /// </summary>
     private static Dictionary<string, object>? SnapshotClipboard()
     {
         try
         {
             var data = Clipboard.GetDataObject();
-            if (data == null) return null;
+            if (data == null)
+                return new Dictionary<string, object>(); // empty clipboard, not an error
             var snap = new Dictionary<string, object>();
             foreach (var fmt in data.GetFormats(autoConvert: false))
             {
@@ -89,20 +94,33 @@ public static class TextCapture
                 }
                 catch { /* delay-rendered formats may throw — skip */ }
             }
-            return snap.Count == 0 ? null : snap;
+            return snap;
         }
-        catch { return null; }
+        catch
+        {
+            // Distinguish failure from empty: returning null tells RestoreClipboard to leave the
+            // clipboard alone, which preserves whatever's there now (the WM_COPY/Ctrl+Insert
+            // result if it succeeded, or unmodified state otherwise).
+            return null;
+        }
     }
 
     private static void RestoreClipboard(Dictionary<string, object>? snapshot)
     {
         try
         {
-            if (snapshot == null || snapshot.Count == 0)
+            // Snapshot failed — best we can do is leave the clipboard as-is. Clearing it would
+            // destroy the WM_COPY result we just put there (which the caller is about to use)
+            // AND lose whatever the user had before us.
+            if (snapshot == null) return;
+
+            if (snapshot.Count == 0)
             {
+                // Clipboard was empty before us — restore that state.
                 Clipboard.Clear();
                 return;
             }
+
             var data = new System.Windows.DataObject();
             foreach (var (fmt, obj) in snapshot)
             {
