@@ -164,8 +164,9 @@ public static partial class UnitConverter
     };
 
     [GeneratedRegex(
-        // <number><optional space><unit>. Unit can include letters, slash, degree sign, quote, and spaces (for "fl oz").
-        @"^(-?[\d,]+\.?\d*)\s*([°a-zA-Z/'\""][a-zA-Z/'\""\s]*)$",
+        // <number><optional space><unit>. Unit can include letters, slash, degree sign, quote,
+        // a single dot (for "fl. oz"), and spaces (for "fl oz").
+        @"^(-?[\d,]+\.?\d*)\s*([°a-zA-Z/'\""][a-zA-Z/'\""\s.]*)$",
         RegexOptions.IgnoreCase)]
     private static partial Regex NumberAndUnit();
 }

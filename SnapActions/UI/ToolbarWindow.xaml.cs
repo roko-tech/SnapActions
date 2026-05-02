@@ -227,15 +227,18 @@ public partial class ToolbarWindow : Window
     {
         if (!IsVisible) return false;
 
-        // The window's Left/Top are in DIPs of the monitor it was placed on. We must convert the
-        // cursor's physical pixels using *that* monitor's DPI, not whichever monitor the cursor
-        // is currently over — otherwise on mixed-DPI multi-monitor setups the toolbar gets
-        // dismissed prematurely (or held open spuriously) when the cursor crosses a boundary.
-        double dpiX = _dpiX > 0 ? _dpiX : 1.0;
-        double dpiY = _dpiY > 0 ? _dpiY : 1.0;
-        double x = screenX / dpiX, y = screenY / dpiY;
-
-        if (x >= Left && x <= Left + ActualWidth && y >= Top && y <= Top + ActualHeight)
+        // Compare in physical pixels everywhere. The toolbar's Left/Top/ActualWidth/Height are
+        // in DIPs of the monitor where it was placed (stored as _dpiX/_dpiY at show time). The
+        // sub-menu popup may render on a *different* monitor (WPF auto-positions to keep it on
+        // screen) and so needs its own DPI lookup — sharing _dpiX/_dpiY with the toolbar is
+        // wrong when the two are on monitors of different scale.
+        double mainDpiX = _dpiX > 0 ? _dpiX : 1.0;
+        double mainDpiY = _dpiY > 0 ? _dpiY : 1.0;
+        double mainL = Left * mainDpiX;
+        double mainT = Top * mainDpiY;
+        double mainR = mainL + ActualWidth * mainDpiX;
+        double mainB = mainT + ActualHeight * mainDpiY;
+        if (screenX >= mainL && screenX <= mainR && screenY >= mainT && screenY <= mainB)
             return true;
 
         if (SubMenuPopup.IsOpen && SubMenuPopup.Child is FrameworkElement child)
@@ -243,8 +246,12 @@ public partial class ToolbarWindow : Window
             try
             {
                 var pt = child.PointToScreen(new Point(0, 0));
-                double px = pt.X / dpiX, py = pt.Y / dpiY;
-                if (x >= px && x <= px + child.ActualWidth && y >= py && y <= py + child.ActualHeight)
+                var popupDpi = Helpers.ScreenHelper.GetDpiForPoint(pt);
+                double pdx = popupDpi.X > 0 ? popupDpi.X : 1.0;
+                double pdy = popupDpi.Y > 0 ? popupDpi.Y : 1.0;
+                double popR = pt.X + child.ActualWidth * pdx;
+                double popB = pt.Y + child.ActualHeight * pdy;
+                if (screenX >= pt.X && screenX <= popR && screenY >= pt.Y && screenY <= popB)
                     return true;
             }
             catch { }
@@ -288,8 +295,51 @@ public partial class ToolbarWindow : Window
             int max = Math.Max(1, Config.SettingsManager.Current.MaxInlineContextActions);
             foreach (var a in cg.Actions.Take(max))
                 ContextActionsPanel.Children.Add(CreateActionButton(a));
+            // If the user has more applicable context actions than the inline cap, surface the
+            // remainder via an overflow button instead of silently dropping them. Previously
+            // selecting a URL with translate/dictionary/QR/etc. could produce 5+ actions and
+            // anything past the cap was just gone from the UI.
+            if (cg.Actions.Count > max)
+                ContextActionsPanel.Children.Add(CreateContextOverflowButton(cg.Actions.Skip(max).ToList()));
         }
         else ContextSeparator.Visibility = Visibility.Collapsed;
+    }
+
+    private Button CreateContextOverflowButton(List<IAction> overflow)
+    {
+        var btn = new Button
+        {
+            Style = (Style)FindResource("ActionButtonStyle"),
+            ToolTip = $"{overflow.Count} more action{(overflow.Count == 1 ? "" : "s")}",
+            Tag = overflow,
+            Content = new TextBlock
+            {
+                Text = "...", FontWeight = FontWeights.Bold,
+                Foreground = (Brush)FindResource("TextSecondaryBrush"),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center
+            }
+        };
+        btn.Click += (_, _) => ShowContextOverflowSubMenu(overflow, btn);
+        return btn;
+    }
+
+    private void ShowContextOverflowSubMenu(List<IAction> actions, FrameworkElement target)
+    {
+        // Reuse the existing sub-menu plumbing but skip _actionGroups (these are the *overflow*,
+        // not a registered category). Edit-mode arrows / pin toggles aren't meaningful here.
+        _currentSubMenuGroup = "More actions";
+        _currentSubMenuCategory = null;
+        _currentSubMenuTarget = target;
+        _editMode = false;
+
+        SubMenuPanel.Children.Clear();
+        ResetPreview();
+        SubMenuTitle.Text = "More actions";
+        foreach (var a in actions)
+            SubMenuPanel.Children.Add(CreateSubMenuButton(a, false));
+        SubMenuPopup.IsOpen = true;
+        StartDismissTimer();
     }
 
     private void BuildPinnedActions()
@@ -556,6 +606,7 @@ public partial class ToolbarWindow : Window
     {
         if (sender is not Button { Tag: IAction action }) return;
         string preview;
+        string? swatchHex = null;
 
         // Preview is opt-in via IAction.IsPreviewSafe — only pure transforms run on hover.
         if (action.IsPreviewSafe
@@ -566,6 +617,9 @@ public partial class ToolbarWindow : Window
             {
                 var r = action.Execute(_selectedText, _analysis);
                 preview = r.ResultText != null ? Truncate(r.ResultText, 120) : action.Name;
+                // For ConvertColorAction the result is a color string; show a swatch alongside.
+                if (_analysis.Type == Detection.TextType.ColorCode)
+                    swatchHex = r.ResultText ?? _selectedText;
             }
             catch { preview = action.Name; }
         }
@@ -574,14 +628,64 @@ public partial class ToolbarWindow : Window
         else
             preview = action.Name;
 
+        // For color selections, also show a swatch for *non*-pure actions like Preview Color.
+        if (_analysis.Type == Detection.TextType.ColorCode && swatchHex == null)
+            swatchHex = _selectedText;
+
         PreviewText.Text = preview;
         PreviewText.Opacity = 1;
+        SetSwatch(swatchHex);
     }
 
     private void SubMenuButton_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e) =>
         ResetPreview();
 
-    private void ResetPreview() => PreviewText.Opacity = 0;
+    private void ResetPreview()
+    {
+        PreviewText.Opacity = 0;
+        SetSwatch(null);
+    }
+
+    private void SetSwatch(string? colorText)
+    {
+        if (string.IsNullOrEmpty(colorText))
+        {
+            ColorSwatch.Visibility = Visibility.Collapsed;
+            return;
+        }
+        try
+        {
+            var converter = new System.Windows.Media.BrushConverter();
+            var brush = converter.ConvertFromString(colorText.Trim()) as Brush;
+            if (brush == null) { ColorSwatch.Visibility = Visibility.Collapsed; return; }
+            ColorSwatch.Background = brush;
+            ColorSwatch.Visibility = Visibility.Visible;
+        }
+        catch
+        {
+            ColorSwatch.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>
+    /// Briefly flash a "Copied!" indicator in the preview band before the toolbar fades out.
+    /// Uses the existing PreviewText/PreviewBorder so we don't need another widget.
+    /// </summary>
+    private async Task ShowCopiedToast()
+    {
+        if (!SubMenuPopup.IsOpen)
+        {
+            // The user clicked an inline button (no submenu open). Open the submenu briefly so
+            // the preview band — which lives inside it — is visible.
+            SubMenuPanel.Children.Clear();
+            SubMenuTitle.Text = "";
+            SubMenuPopup.IsOpen = true;
+        }
+        SetSwatch(null);
+        PreviewText.Text = "Copied to clipboard";
+        PreviewText.Opacity = 1;
+        await Task.Delay(450);
+    }
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "...";
 
@@ -659,6 +763,8 @@ public partial class ToolbarWindow : Window
                     TextCapture.SimulatePaste();
                 return;
             }
+            // Plain copy-to-clipboard path: flash a confirmation so the user knows it happened.
+            await ShowCopiedToast();
         }
         HideToolbar();
     }
@@ -800,7 +906,12 @@ public partial class ToolbarWindow : Window
 
     // ── Button handlers ──────────────────────────────────────────
 
-    private void CopyButton_Click(object sender, RoutedEventArgs e) { Clipboard.SetText(_selectedText); HideToolbar(); }
+    private async void CopyButton_Click(object sender, RoutedEventArgs e)
+    {
+        Clipboard.SetText(_selectedText);
+        await ShowCopiedToast();
+        HideToolbar();
+    }
 
     private void PasteButton_Click(object sender, RoutedEventArgs e)
     {

@@ -120,11 +120,16 @@
                             Background="{StaticResource SurfaceBrush}"
                             CornerRadius="4" Padding="8,6" Margin="4,4,4,2"
                             Height="32">
-                        <TextBlock x:Name="PreviewText" FontSize="12" Opacity="0"
-                                   Foreground="{StaticResource AccentBrush}"
-                                   FontFamily="Consolas" TextWrapping="NoWrap"
-                                   TextTrimming="CharacterEllipsis"
-                                   VerticalAlignment="Center"/>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Border x:Name="ColorSwatch" Width="16" Height="16" CornerRadius="3"
+                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                    Margin="0,0,8,0" Visibility="Collapsed"/>
+                            <TextBlock x:Name="PreviewText" FontSize="12" Opacity="0"
+                                       Foreground="{StaticResource AccentBrush}"
+                                       FontFamily="Consolas" TextWrapping="NoWrap"
+                                       TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
                     </Border>
                 </StackPanel>
             </Border>

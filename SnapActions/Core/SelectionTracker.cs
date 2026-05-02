@@ -14,8 +14,10 @@ public class SelectionTracker
     private readonly TextClassifier _classifier;
     private readonly ActionRegistry _actionRegistry;
     private ToolbarWindow? _toolbar;
-    private DateTime _lastShowTime = DateTime.MinValue;
-    private const int DebounceMs = 250;
+    // TickCount64 is monotonic — wall-clock jumps (NTP sync, hibernation resume, manual time
+    // change) used to spuriously suppress or re-fire the debounce when DateTime.UtcNow drifted.
+    private long _lastShowTicks;
+    private const long DebounceMs = 250;
     private static readonly uint OwnPid = (uint)Environment.ProcessId;
 
     public SelectionTracker()
@@ -73,9 +75,9 @@ public class SelectionTracker
     {
         if (IsSelfFocused()) return;
 
-        var now = DateTime.UtcNow;
-        if ((now - _lastShowTime).TotalMilliseconds < DebounceMs) return;
-        _lastShowTime = now;
+        long now = Environment.TickCount64;
+        if (now - _lastShowTicks < DebounceMs) return;
+        _lastShowTicks = now;
 
         Application.Current.Dispatcher.InvokeAsync(async () =>
         {
@@ -129,7 +131,7 @@ public class SelectionTracker
                 _toolbar ??= new ToolbarWindow();
                 _toolbar.Registry = _actionRegistry;
                 _toolbar.ShowPasteMode(cursorPos.X, cursorPos.Y);
-                _lastShowTime = DateTime.UtcNow;
+                _lastShowTicks = Environment.TickCount64;
             }
             catch (Exception ex)
             {

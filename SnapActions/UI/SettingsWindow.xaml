@@ -209,8 +209,16 @@
                 <!-- Excluded Apps -->
                 <TextBlock Text="EXCLUDED APPS" FontSize="11" FontWeight="SemiBold"
                            Foreground="#FFA6ADC8" Margin="0,18,0,6"/>
-                <TextBlock Text="One process name per line"
-                           FontSize="10" Foreground="#FFA6ADC8" Margin="0,0,0,4"/>
+                <DockPanel Margin="0,0,0,4">
+                    <Button DockPanel.Dock="Right" Content="Add running app..."
+                            Padding="10,2" FontSize="11"
+                            Background="#FF2D2D3D" Foreground="#FFCDD6F4"
+                            BorderBrush="#FF3D3D50"
+                            Click="AddRunningApp_Click" Cursor="Hand"/>
+                    <TextBlock Text="One process name per line"
+                               FontSize="10" Foreground="#FFA6ADC8"
+                               VerticalAlignment="Center"/>
+                </DockPanel>
                 <TextBox x:Name="ExcludedAppsBox" AcceptsReturn="True" Height="80"
                          Background="#FF2D2D3D"
                          Foreground="#FFCDD6F4"

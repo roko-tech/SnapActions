@@ -18,12 +18,12 @@ public partial class ColorCodeDetector : ITextDetector
     [GeneratedRegex(@"^rgba?\(\s*\d{1,3}\s+\d{1,3}\s+\d{1,3}(\s*\/\s*[\d.]+%?)?\s*\)$")]
     private static partial Regex RgbSpacePattern();
 
-    // Comma form: hsl(h, s%, l%) / hsla(...)
-    [GeneratedRegex(@"^hsla?\(\s*\d{1,3}\s*,\s*\d{1,3}%?\s*,\s*\d{1,3}%?(\s*,\s*[\d.]+%?)?\s*\)$")]
+    // Comma form: hsl(h, s%, l%) / hsla(...). Hue may be negative (CSS spec — wrapped at render).
+    [GeneratedRegex(@"^hsla?\(\s*-?\d{1,3}\s*,\s*\d{1,3}%?\s*,\s*\d{1,3}%?(\s*,\s*[\d.]+%?)?\s*\)$")]
     private static partial Regex HslCommaPattern();
 
     // CSS Color Module 4 space form: hsl(h s% l%) / hsl(h s% l% / a)
-    [GeneratedRegex(@"^hsla?\(\s*\d{1,3}\s+\d{1,3}%?\s+\d{1,3}%?(\s*\/\s*[\d.]+%?)?\s*\)$")]
+    [GeneratedRegex(@"^hsla?\(\s*-?\d{1,3}\s+\d{1,3}%?\s+\d{1,3}%?(\s*\/\s*[\d.]+%?)?\s*\)$")]
     private static partial Regex HslSpacePattern();
 
     public bool TryDetect(string text, out TextAnalysis result)

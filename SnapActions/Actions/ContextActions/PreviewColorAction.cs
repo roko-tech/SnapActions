@@ -123,8 +123,10 @@ public class ConvertColorAction : IAction
 
     private static (int r, int g, int b, double? a) HslToRgba(string s)
     {
+        // Allow a leading minus for hue. The post-parse normalization wraps it back into
+        // [0, 360); without "-?" here we'd silently parse "-30" as 30.
         var nums = System.Text.RegularExpressions.Regex
-            .Matches(s, @"[\d.]+%?")
+            .Matches(s, @"-?[\d.]+%?")
             .Cast<System.Text.RegularExpressions.Match>()
             .ToList();
         if (nums.Count < 3) throw new FormatException("Invalid hsl()");

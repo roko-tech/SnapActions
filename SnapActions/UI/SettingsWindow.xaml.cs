@@ -315,4 +315,110 @@ public partial class SettingsWindow : Window
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void AddRunningApp_Click(object sender, RoutedEventArgs e)
+    {
+        // List currently-running processes that have a visible main window — typing process
+        // names into the textbox by hand is error-prone (case, spelling, .exe vs not).
+        var picker = new System.Windows.Window
+        {
+            Title = "Pick an app to exclude",
+            Width = 320, Height = 420,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.CanResize,
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x1E, 0x2E)),
+        };
+        var list = new System.Windows.Controls.ListBox
+        {
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2D, 0x2D, 0x3D)),
+            Foreground = _textBrush,
+            BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3D, 0x3D, 0x50)),
+            FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+            Margin = new Thickness(8),
+        };
+
+        try
+        {
+            var ownPid = Environment.ProcessId;
+            var existing = new HashSet<string>(SettingsManager.Current.ExcludedApps,
+                StringComparer.OrdinalIgnoreCase);
+            var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in System.Diagnostics.Process.GetProcesses())
+            {
+                try
+                {
+                    if (p.Id == ownPid) continue;
+                    if (p.MainWindowHandle == IntPtr.Zero) continue;
+                    var name = p.ProcessName; // already without .exe
+                    if (string.IsNullOrEmpty(name)) continue;
+                    if (existing.Contains(name)) continue;
+                    if (name.Equals("SnapActions", StringComparison.OrdinalIgnoreCase)) continue;
+                    names.Add(name);
+                }
+                catch { /* access denied on system processes — skip */ }
+                finally { p.Dispose(); }
+            }
+            foreach (var n in names) list.Items.Add(n);
+        }
+        catch (Exception ex)
+        {
+            SnapActions.Helpers.Log.Warn($"Process enumeration failed: {ex.Message}");
+        }
+
+        list.MouseDoubleClick += (_, _) =>
+        {
+            if (list.SelectedItem is string s) AddExcludedAppName(s);
+            picker.Close();
+        };
+
+        var addBtn = new System.Windows.Controls.Button
+        {
+            Content = "Add", Padding = new Thickness(16, 4, 16, 4),
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x89, 0xB4, 0xFA)),
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x1E, 0x2E)),
+            BorderThickness = new Thickness(0),
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        addBtn.Click += (_, _) =>
+        {
+            if (list.SelectedItem is string s) AddExcludedAppName(s);
+            picker.Close();
+        };
+        var cancelBtn = new System.Windows.Controls.Button
+        {
+            Content = "Cancel", Padding = new Thickness(16, 4, 16, 4),
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2D, 0x2D, 0x3D)),
+            Foreground = _textBrush,
+            BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3D, 0x3D, 0x50)),
+        };
+        cancelBtn.Click += (_, _) => picker.Close();
+
+        var buttonRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(8, 0, 8, 8),
+        };
+        buttonRow.Children.Add(addBtn);
+        buttonRow.Children.Add(cancelBtn);
+
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetRow(list, 0);
+        Grid.SetRow(buttonRow, 1);
+        grid.Children.Add(list);
+        grid.Children.Add(buttonRow);
+        picker.Content = grid;
+        picker.ShowDialog();
+    }
+
+    private void AddExcludedAppName(string name)
+    {
+        var current = ExcludedAppsBox.Text;
+        var sep = string.IsNullOrEmpty(current) || current.EndsWith('\n') ? "" : "\n";
+        ExcludedAppsBox.Text = current + sep + name;
+        // The TextChanged handler will pick this up and queue a save.
+    }
 }

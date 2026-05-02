@@ -1,0 +1,27 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    # WPF + WinForms only resolve on Windows runners.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore SnapActions/SnapActions.csproj
+
+      - name: Build (Release)
+        run: dotnet build SnapActions/SnapActions.csproj -c Release --no-restore
+
+      - name: Test
+        run: dotnet test SnapActions.Tests/SnapActions.Tests.csproj -c Release --logger "console;verbosity=normal"

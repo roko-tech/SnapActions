@@ -20,29 +20,27 @@ public class UnitConvertAction : IAction
         if (!UnitConverter.TryParse(text.Trim(), out var value, out var unit) || unit is null)
             return new ActionResult(false, Message: "Couldn't parse value/unit");
 
-        var sb = new StringBuilder();
-        sb.AppendLine($"{Format(value)} {unit.Symbol}");
-        sb.AppendLine();
-
-        bool any = false;
+        // Compact one-line summary: "5 ft = 1.524 m | 60 in | 1.667 yd | 0.001 mi"
+        // Previously the click-to-copy result was a multi-line table, which is rarely what users
+        // wanted on the clipboard. The full table is still useful but it lives in the popup
+        // hover; on click we hand back a tighter representation that pastes cleanly into any
+        // single-line context (Slack, search bar, table cell).
+        var converted = new List<string>();
         foreach (var target in UnitConverter.TargetsFor(unit.Category))
         {
             if (target.Symbol == unit.Symbol) continue;
             try
             {
-                var converted = UnitConverter.Convert(value, unit, target);
-                sb.AppendLine($"  = {Format(converted)} {target.Symbol}");
-                any = true;
+                var v = UnitConverter.Convert(value, unit, target);
+                converted.Add($"{Format(v)} {target.Symbol}");
             }
             catch { /* skip incompatible — shouldn't happen since same category */ }
         }
-        if (!any) return new ActionResult(false, Message: "No conversions available");
+        if (converted.Count == 0)
+            return new ActionResult(false, Message: "No conversions available");
 
-        // For hover preview: just show one common conversion as a one-liner.
-        // For the popup: show the full table.
-        // We return the full text as ResultText so click → clipboard gets everything;
-        // hover preview will Truncate(120) the first conversion line.
-        return new ActionResult(true, sb.ToString().TrimEnd(), $"Converted {unit.Symbol}");
+        var oneLiner = $"{Format(value)} {unit.Symbol} = {string.Join(" | ", converted)}";
+        return new ActionResult(true, oneLiner, $"Converted {unit.Symbol}");
     }
 
     private static string Format(double v)
