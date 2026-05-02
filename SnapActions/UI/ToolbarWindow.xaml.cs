@@ -30,6 +30,9 @@ public partial class ToolbarWindow : Window
     private bool _editMode;
     private string? _currentSubMenuGroup;
     private ActionCategory? _currentSubMenuCategory;
+    // True when the sub-menu popup is open just to host the hover-preview band (no submenu items
+    // populated, no title). Reset whenever the popup is closed or repurposed for a real submenu.
+    private bool _hoverPreviewMode;
 
     private const int GWL_EXSTYLE = -20;
     private const int WS_EX_NOACTIVATE = 0x08000000;
@@ -207,6 +210,7 @@ public partial class ToolbarWindow : Window
         if (!IsVisible) return;
         _dismissTimer.Stop();
         _editMode = false;
+        _hoverPreviewMode = false;
         SubMenuPopup.IsOpen = false;
         var fadeOut = (Storyboard)FindResource("FadeOut");
         fadeOut.Stop(this);
@@ -330,6 +334,7 @@ public partial class ToolbarWindow : Window
         _currentSubMenuGroup = "More actions";
         _currentSubMenuCategory = null;
         _editMode = false;
+        _hoverPreviewMode = false;
 
         SubMenuPanel.Children.Clear();
         ResetPreview();
@@ -376,6 +381,10 @@ public partial class ToolbarWindow : Window
                     VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center } as object
         };
         btn.Click += ActionButton_Click;
+        // Hover preview — same MouseEnter/Leave handlers as submenu buttons but routed through
+        // InlineButton_* so the popup opens in preview-only mode if it isn't already open.
+        btn.MouseEnter += InlineButton_MouseEnter;
+        btn.MouseLeave += InlineButton_MouseLeave;
         return btn;
     }
 
@@ -404,6 +413,9 @@ public partial class ToolbarWindow : Window
         });
         btn.Content = sp;
         btn.Click += ActionButton_Click;
+        // Hover preview for pinned actions too — same routing as inline context buttons.
+        btn.MouseEnter += InlineButton_MouseEnter;
+        btn.MouseLeave += InlineButton_MouseLeave;
 
         // Drag-to-reorder. We track the press point so a small click doesn't initiate drag.
         Point pressPoint = default;
@@ -603,10 +615,22 @@ public partial class ToolbarWindow : Window
     private void SubMenuButton_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
     {
         if (sender is not Button { Tag: IAction action }) return;
+        UpdatePreviewBand(action);
+    }
+
+    private void SubMenuButton_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e) =>
+        ResetPreview();
+
+    /// <summary>
+    /// Computes the preview text + optional color swatch for an action and writes them into the
+    /// preview band. Doesn't open or close the popup — caller is responsible for that.
+    /// </summary>
+    private void UpdatePreviewBand(IAction action)
+    {
         string preview;
         string? swatchHex = null;
 
-        // Preview is opt-in via IAction.IsPreviewSafe — only pure transforms run on hover.
+        // Preview is opt-in via IAction.IsPreviewSafe — only pure actions run on hover.
         if (action.IsPreviewSafe
             && !string.IsNullOrEmpty(_selectedText)
             && _selectedText.Length <= MaxPreviewExecuteChars)
@@ -614,8 +638,12 @@ public partial class ToolbarWindow : Window
             try
             {
                 var r = action.Execute(_selectedText, _analysis);
-                preview = r.ResultText != null ? Truncate(r.ResultText, 120) : action.Name;
-                // For ConvertColorAction the result is a color string; show a swatch alongside.
+                // Prefer ResultText (the "what gets copied" output). Fall back to Message so
+                // actions that don't produce clipboard text — PreviewColor returns
+                // Message="Color: #89B4FA" with null ResultText — still surface useful preview.
+                preview = r.ResultText != null
+                    ? Truncate(r.ResultText, 120)
+                    : (r.Message != null ? Truncate(r.Message, 120) : action.Name);
                 if (_analysis.Type == Detection.TextType.ColorCode)
                     swatchHex = r.ResultText ?? _selectedText;
             }
@@ -635,7 +663,37 @@ public partial class ToolbarWindow : Window
         SetSwatch(swatchHex);
     }
 
-    private void SubMenuButton_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e) =>
+    /// <summary>
+    /// Hover handler for the *inline* main-toolbar action buttons (CreateActionButton /
+    /// CreatePinnedButton). Opens the sub-menu popup with just the preview band visible — the
+    /// preview band lives inside the popup, so without opening it the user sees nothing.
+    /// </summary>
+    private void InlineButton_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is not Button { Tag: IAction action }) return;
+        // Standard tooltips already cover the action name for non-previewable actions; only
+        // bother opening the popup when there's something interesting to show.
+        if (!action.IsPreviewSafe && action.Category != ActionCategory.Search) return;
+        if (string.IsNullOrEmpty(_selectedText)) return;
+
+        // Don't override an already-open submenu — the user is interacting with that. Just refresh
+        // its preview band with the inline action's preview.
+        if (SubMenuPopup.IsOpen && !_hoverPreviewMode)
+        {
+            UpdatePreviewBand(action);
+            return;
+        }
+
+        // Open popup in hover-preview mode: empty submenu panel, empty title row.
+        _hoverPreviewMode = true;
+        SubMenuPanel.Children.Clear();
+        SubMenuTitle.Text = "";
+        UpdatePreviewBand(action);
+        SubMenuPopup.IsOpen = true;
+        StartDismissTimer();
+    }
+
+    private void InlineButton_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e) =>
         ResetPreview();
 
     private void ResetPreview()
@@ -825,12 +883,13 @@ public partial class ToolbarWindow : Window
 
     private void ShowSubMenu(string groupName, ActionCategory category)
     {
-        if (SubMenuPopup.IsOpen && _currentSubMenuGroup == groupName)
+        if (SubMenuPopup.IsOpen && _currentSubMenuGroup == groupName && !_hoverPreviewMode)
         { SubMenuPopup.IsOpen = false; _editMode = false; PreviewBorder.Visibility = Visibility.Collapsed; return; }
 
         _currentSubMenuGroup = groupName;
         _currentSubMenuCategory = category;
         _editMode = false;
+        _hoverPreviewMode = false;
         RebuildCurrentSubMenu();
     }
 
@@ -868,6 +927,7 @@ public partial class ToolbarWindow : Window
         // Build a submenu with: Plain paste + all transform actions on clipboard text
         _currentSubMenuGroup = "Paste As";
         _currentSubMenuCategory = ActionCategory.Transform;
+        _hoverPreviewMode = false;
 
         SubMenuPanel.Children.Clear();
         ResetPreview();

@@ -8,6 +8,9 @@ public class PreviewColorAction : IAction
     public string Name => "Preview Color";
     public string IconKey => "IconColor";
     public ActionCategory Category => ActionCategory.Context;
+    // Pure: just returns a Message describing the color, no I/O. Marking preview-safe lets the
+    // hover band show a swatch + the color text.
+    public bool IsPreviewSafe => true;
 
     public bool CanExecute(string text, TextAnalysis analysis) => analysis.Type == TextType.ColorCode;
 

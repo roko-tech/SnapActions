@@ -204,4 +204,34 @@ public class ContextActionTests
         Assert.Contains("|", result.ResultText);
         Assert.Contains("m", result.ResultText);
     }
+
+    // ── IsPreviewSafe markers (regression: hover preview wiring) ─────
+
+    [Fact]
+    public void PreviewColor_IsMarkedPreviewSafe()
+    {
+        // Regression: v1.6.2. Without this flag the inline-button hover preview wouldn't
+        // execute the action and PreviewColor would show only the button name, not "Color: #...".
+        Assert.True(new PreviewColorAction().IsPreviewSafe);
+    }
+
+    [Fact]
+    public void ConvertTimezone_IsMarkedPreviewSafe()
+    {
+        Assert.True(new ConvertTimezoneAction().IsPreviewSafe);
+    }
+
+    [Fact]
+    public void PreviewColor_ExposesColorInMessage()
+    {
+        // The hover preview falls back to Message when ResultText is null. PreviewColor
+        // deliberately returns null ResultText (so it doesn't hijack the clipboard) but its
+        // Message contains the color text, which is what the preview band should surface.
+        var action = new PreviewColorAction();
+        var result = action.Execute("#89B4FA", Classify("#89B4FA"));
+        Assert.True(result.Success);
+        Assert.Null(result.ResultText);
+        Assert.NotNull(result.Message);
+        Assert.Contains("#89B4FA", result.Message);
+    }
 }

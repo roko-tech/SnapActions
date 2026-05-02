@@ -9,6 +9,8 @@ public class ConvertTimezoneAction : IAction
     public string Name => "Convert Time";
     public string IconKey => "IconTime";
     public ActionCategory Category => ActionCategory.Context;
+    // Pure: parses the date and formats Local/UTC/Unix without I/O.
+    public bool IsPreviewSafe => true;
 
     public bool CanExecute(string text, TextAnalysis analysis) => analysis.Type == TextType.DateTime;
 
