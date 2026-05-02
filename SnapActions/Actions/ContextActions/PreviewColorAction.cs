@@ -140,6 +140,11 @@ public class ConvertColorAction : IAction
             a = raw.EndsWith('%') ? v / 100.0 : v;
         }
 
+        // Normalize hue into [0, 360). CSS allows angles outside this range (negative, >360),
+        // and without normalization the switch below misclassifies them — h=400 used to fall
+        // through to the 300-360 branch, painting orange as something else entirely.
+        h = ((h % 360.0) + 360.0) % 360.0;
+
         double c = (1 - Math.Abs(2 * l - 1)) * sat;
         double x = c * (1 - Math.Abs(((h / 60.0) % 2) - 1));
         double m = l - c / 2;

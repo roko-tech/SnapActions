@@ -14,8 +14,11 @@ public partial class CurrencyConverterAction : IAction
     // Require an actual currency token — symbol prefix/suffix, or a 3-letter ISO code adjacent
     // to digits. Without the requirement, plain numbers like "100 monkeys" matched and the
     // toolbar offered to convert any numeric selection.
+    // Number group is [\d][\d.,]* so both American (1,234.56) and European (1.234,56) formats
+    // are accepted; FetchCurrencyConversion later parses the actual value with locale-agnostic
+    // logic.
     [GeneratedRegex(
-        @"(?:[\$€£¥]\s*[\d,]+\.?\d*|[\d,]+\.?\d*\s*[\$€£¥]|[\d,]+\.?\d*\s*(?:USD|EUR|GBP|JPY|SAR|AED|KWD|BHD|QAR|OMR|CAD|AUD|CHF|CNY|INR|BRL|KRW|TRY)\b|\b(?:USD|EUR|GBP|JPY|SAR|AED|KWD|BHD|QAR|OMR|CAD|AUD|CHF|CNY|INR|BRL|KRW|TRY)\s*[\d,]+\.?\d*)",
+        @"(?:[\$€£¥]\s*[\d][\d.,]*|[\d][\d.,]*\s*[\$€£¥]|[\d][\d.,]*\s*(?:USD|EUR|GBP|JPY|SAR|AED|KWD|BHD|QAR|OMR|CAD|AUD|CHF|CNY|INR|BRL|KRW|TRY)\b|\b(?:USD|EUR|GBP|JPY|SAR|AED|KWD|BHD|QAR|OMR|CAD|AUD|CHF|CNY|INR|BRL|KRW|TRY)\s*[\d][\d.,]*)",
         RegexOptions.IgnoreCase)]
     private static partial Regex CurrencyPattern();
 

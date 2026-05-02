@@ -282,9 +282,11 @@ public partial class ResultPopup : Window
     public static async Task<string> FetchCurrencyConversion(HttpClient http, string text, string targetCurrency = "USD",
         System.Threading.CancellationToken ct = default)
     {
-        var numMatch = System.Text.RegularExpressions.Regex.Match(text, @"[\d,]+\.?\d*");
+        // Capture both kinds of separators — TryParseLocaleAgnostic will figure out which is
+        // decimal vs thousands. The previous regex + Replace(",", "") parsed "1.000,50" as 1.0.
+        var numMatch = System.Text.RegularExpressions.Regex.Match(text, @"[\d][\d.,]*");
         if (!numMatch.Success) return "No amount found";
-        var amount = numMatch.Value.Replace(",", "");
+        var amount = numMatch.Value;
 
         var src = DetectSourceCurrency(text, numMatch.Index, numMatch.Length);
 
@@ -292,7 +294,8 @@ public partial class ResultPopup : Window
         {
             var rates = await GetRates(http, src, ct);
             if (rates == null) return "Conversion failed";
-            var amt = double.Parse(amount, System.Globalization.CultureInfo.InvariantCulture);
+            if (!TryParseLocaleAgnostic(amount, out var amt))
+                return "No amount found";
             if (!rates.TryGetValue(targetCurrency, out var rate))
                 return $"Cannot convert {src} to {targetCurrency}";
             return $"{amount} {src} = {amt * rate:N2} {targetCurrency}";
@@ -303,6 +306,56 @@ public partial class ResultPopup : Window
             Log.Warn($"Currency conversion failed: {ex.Message}");
             return "Conversion failed";
         }
+    }
+
+    /// <summary>
+    /// Parses a number string that might be in American (1,234.56) or European (1.234,56)
+    /// notation. The last `,` or `.` in the string is treated as the decimal separator unless
+    /// it's a single separator followed by exactly 3 digits (then it's a thousand separator —
+    /// "1,500" / "1.500" both mean fifteen hundred).
+    /// </summary>
+    internal static bool TryParseLocaleAgnostic(string s, out double value)
+    {
+        value = 0;
+        if (string.IsNullOrEmpty(s)) return false;
+
+        int lastComma = s.LastIndexOf(',');
+        int lastDot = s.LastIndexOf('.');
+        int lastSep = Math.Max(lastComma, lastDot);
+
+        string normalized;
+        if (lastSep < 0)
+        {
+            normalized = s;
+        }
+        else
+        {
+            bool hasBoth = lastComma >= 0 && lastDot >= 0;
+            int digitsAfter = s.Length - lastSep - 1;
+            // If both separators present, the trailing one wins as decimal. With a single
+            // separator: 1–2 digits after = decimal; exactly 3 = thousand separator (so
+            // "1.500" → 1500, not 1.5).
+            bool isDecimal = hasBoth || digitsAfter != 3;
+            if (isDecimal)
+            {
+                var sb = new System.Text.StringBuilder(s.Length);
+                for (int i = 0; i < s.Length; i++)
+                {
+                    char c = s[i];
+                    if (i == lastSep) sb.Append('.');
+                    else if (c != ',' && c != '.') sb.Append(c);
+                }
+                normalized = sb.ToString();
+            }
+            else
+            {
+                normalized = s.Replace(",", "").Replace(".", "");
+            }
+        }
+
+        return double.TryParse(normalized,
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out value);
     }
 
     /// <summary>

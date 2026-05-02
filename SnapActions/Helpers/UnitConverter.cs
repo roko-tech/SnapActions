@@ -84,7 +84,10 @@ public static partial class UnitConverter
         Add(d, usQt, "qt", "quart", "quarts");
         Add(d, usPt, "pt", "pint", "pints");
         Add(d, usCup, "cup", "cups");
-        Add(d, usFlOz, "fl_oz", "floz", "fluid_ounce", "fluid_ounces");
+        // Include the canonical "fl oz" symbol the regex permits. Without this, a user typing
+        // "5 fl oz" matched the number-and-unit regex but failed the alias lookup and silently
+        // returned no detection.
+        Add(d, usFlOz, "fl oz", "fl. oz", "fl. oz.", "fl_oz", "floz", "fluid_ounce", "fluid_ounces");
         Add(d, tsp, "tsp", "teaspoon", "teaspoons");
         Add(d, tbsp, "tbsp", "tablespoon", "tablespoons");
 

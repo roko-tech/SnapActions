@@ -6,8 +6,10 @@ public partial class JwtDetector : ITextDetector
 {
     public TextType Type => TextType.Jwt;
 
-    // header.payload.signature, all base64url
-    [GeneratedRegex(@"^eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+$")]
+    // header.payload.signature, all base64url. The signature segment may be empty for
+    // alg=none JWTs (RFC 7519 §6) — the trailing dot is mandatory but the bytes after it
+    // can be zero-length.
+    [GeneratedRegex(@"^eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*$")]
     private static partial Regex JwtPattern();
 
     public bool TryDetect(string text, out TextAnalysis result)

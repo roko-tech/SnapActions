@@ -24,16 +24,27 @@ public static class MathEvaluator
         public string Input { get; } = input;
         public int Position { get; private set; }
 
+        // Cap the recursion depth so a pathological input like 200 nested "(" can't blow the
+        // managed stack. 64 is comfortably more than any realistic expression a user would type.
+        private const int MaxDepth = 64;
+        private int _depth;
+
         public double ParseExpression()
         {
-            var left = ParseTerm();
-            while (Position < Input.Length && (Input[Position] == '+' || Input[Position] == '-'))
+            if (++_depth > MaxDepth)
+                throw new FormatException("Expression nesting too deep");
+            try
             {
-                char op = Input[Position++];
-                var right = ParseTerm();
-                left = op == '+' ? left + right : left - right;
+                var left = ParseTerm();
+                while (Position < Input.Length && (Input[Position] == '+' || Input[Position] == '-'))
+                {
+                    char op = Input[Position++];
+                    var right = ParseTerm();
+                    left = op == '+' ? left + right : left - right;
+                }
+                return left;
             }
-            return left;
+            finally { _depth--; }
         }
 
         private double ParseTerm()
