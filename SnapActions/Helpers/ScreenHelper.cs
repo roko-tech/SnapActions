@@ -13,6 +13,10 @@ public static class ScreenHelper
         return new Rect(wa.X, wa.Y, wa.Width, wa.Height);
     }
 
+    // Avoid spamming logs when DPI lookup fails — log only the first time per process. The
+    // toolbar still works at the system-DPI fallback, so this is informational.
+    private static int _dpiFailureLogged;
+
     /// <summary>
     /// Returns the DPI scale factor for the monitor under the given physical-pixel point.
     /// Returns (1.0, 1.0) if the OS can't tell — caller should treat that as system DPI.
@@ -27,7 +31,11 @@ public static class ScreenHelper
                 GetDpiForMonitor(hMon, MDT_EFFECTIVE_DPI, out uint dpiX, out uint dpiY) == 0)
                 return (dpiX / 96.0, dpiY / 96.0);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref _dpiFailureLogged, 1, 0) == 0)
+                Log.Warn($"GetDpiForMonitor failed (will use 1.0 fallback for the rest of this session): {ex.Message}");
+        }
         return (1.0, 1.0);
     }
 

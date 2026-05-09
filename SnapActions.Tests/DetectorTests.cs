@@ -31,6 +31,12 @@ public class DetectorTests
         Assert.NotEqual(TextType.Url, Classify("https://example.com\nmore prose"));
     }
 
+    [Theory]
+    [InlineData("www.x")]           // regression: B15 in v1.6.3 — single-letter host with no TLD
+    [InlineData("www.example")]     // host with no TLD
+    public void Url_RejectsBareWwwHostWithoutTld(string text) =>
+        Assert.NotEqual(TextType.Url, Classify(text));
+
     // ── Email ────────────────────────────────────────────────────
 
     [Theory]
@@ -40,6 +46,22 @@ public class DetectorTests
 
     [Fact]
     public void Email_RejectsBareUser() => Assert.NotEqual(TextType.Email, Classify("user"));
+
+    [Fact]
+    public void Email_RejectsLeadingDotInLocal()
+    {
+        // Catches a class of obviously-malformed addresses the loose regex would otherwise let
+        // through; MailAddress.TryCreate is the authoritative gate.
+        Assert.NotEqual(TextType.Email, Classify(".leading@example.com"));
+    }
+
+    [Fact]
+    public void Email_AcceptsHyphenInTld()
+    {
+        // Punycoded TLDs (e.g. xn--p1ai for .рф) contain hyphens; the looser regex + framework
+        // validator handles them where the previous letters-only pattern rejected.
+        Assert.Equal(TextType.Email, Classify("user@example.xn--p1ai"));
+    }
 
     // ── JSON ─────────────────────────────────────────────────────
 
@@ -169,6 +191,19 @@ public class DetectorTests
     [InlineData("2024/01-15")] // mixed-separator date (regression: B-pattern in v1.5.6)
     public void Math_RejectsDateShapes(string text) =>
         Assert.NotEqual(TextType.MathExpression, Classify(text));
+
+    [Theory]
+    [InlineData("1-2-3")]      // regression: B2 in v1.6.3 — used to match the date carve-out
+    [InlineData("5-1-2")]
+    [InlineData("10-3-1")]
+    public void Math_AcceptsArithmeticDespiteDashes(string text) =>
+        Assert.Equal(TextType.MathExpression, Classify(text));
+
+    [Theory]
+    [InlineData("1e10+2")]      // regression: B4 in v1.6.3 — exponent shouldn't break the parser
+    [InlineData("2.5e3*4")]
+    public void Math_AcceptsScientificNotationInExpressions(string text) =>
+        Assert.Equal(TextType.MathExpression, Classify(text));
 
     // ── Unit ─────────────────────────────────────────────────────
 

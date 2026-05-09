@@ -3,7 +3,7 @@ using System.Windows.Threading;
 using SnapActions.Core;
 using SnapActions.Detection;
 
-namespace SnapActions.Actions.ContextActions;
+namespace SnapActions.Actions.TransformActions;
 
 public class PastePlainTextAction : IAction
 {

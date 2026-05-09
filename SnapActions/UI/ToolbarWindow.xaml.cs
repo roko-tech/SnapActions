@@ -49,8 +49,11 @@ public partial class ToolbarWindow : Window
         SourceInitialized += (_, _) =>
         {
             var hwnd = new WindowInteropHelper(this).Handle;
-            var style = GetWindowLong(hwnd, GWL_EXSTYLE);
-            SetWindowLong(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
+            // Use the IntPtr variants so 64-bit ex-styles (e.g. anything past bit 31) survive.
+            // SetWindowLong silently truncates to 32 bits on x64, which would corrupt high-bit flags.
+            var style = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+            SetWindowLongPtr(hwnd, GWL_EXSTYLE,
+                new IntPtr(style.ToInt64() | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW));
         };
 
         // Esc dismisses the toolbar even when it doesn't have keyboard focus
@@ -278,7 +281,7 @@ public partial class ToolbarWindow : Window
                 TextType.MathExpression => "MATH",
                 TextType.IpAddress => _analysis.Metadata?.GetValueOrDefault("version", "IP") ?? "IP",
                 TextType.Uuid => "UUID", TextType.Base64 => "BASE64", TextType.Jwt => "JWT",
-                TextType.DateTime => "DATE/TIME", TextType.CodeSnippet => "CODE",
+                TextType.DateTime => "DATE/TIME",
                 TextType.Unit => $"UNIT {_analysis.Metadata?.GetValueOrDefault("symbol", "")}".TrimEnd(),
                 _ => ""
             };
@@ -804,7 +807,16 @@ public partial class ToolbarWindow : Window
 
         if (result.ResultText != null)
         {
-            Clipboard.SetText(result.ResultText);
+            // Other apps (RDP clipboard sync, security tools, OneNote on launch) routinely hold
+            // the clipboard lock and Clipboard.SetText throws COMException. Surface that instead
+            // of letting it bubble to the global handler and silently failing the toast.
+            try { Clipboard.SetText(result.ResultText); }
+            catch (Exception ex)
+            {
+                Log.Warn($"Clipboard.SetText failed: {ex.Message}");
+                await ShowFailureAndHide("Clipboard locked by another app");
+                return;
+            }
             // In paste mode or editable+transform: paste the result
             if (_isPasteMode || (_isEditable && Config.SettingsManager.Current.ReplaceSelectionOnTransform
                                 && action.Category == ActionCategory.Transform))
@@ -964,7 +976,13 @@ public partial class ToolbarWindow : Window
 
     private async void CopyButton_Click(object sender, RoutedEventArgs e)
     {
-        Clipboard.SetText(_selectedText);
+        try { Clipboard.SetText(_selectedText); }
+        catch (Exception ex)
+        {
+            Log.Warn($"Clipboard.SetText failed: {ex.Message}");
+            await ShowFailureAndHide("Clipboard locked by another app");
+            return;
+        }
         await ShowCopiedToast();
         HideToolbar();
     }
@@ -988,10 +1006,14 @@ public partial class ToolbarWindow : Window
     private void SearchButton_Click(object sender, RoutedEventArgs e) =>
         ShowSubMenu("Search", ActionCategory.Search);
 
-    [DllImport("user32.dll")]
-    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-    [DllImport("user32.dll")]
-    private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+    // Use *Ptr variants — 32-bit truncation in the legacy GetWindowLong/SetWindowLong corrupts
+    // high-bit ex-style flags on 64-bit Windows. The current style mask (NOACTIVATE | TOOLWINDOW
+    // = 0x08000080) fits in 32 bits so the legacy path worked, but new flags in future edits
+    // could silently drop.
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
 }

@@ -6,7 +6,10 @@ public partial class UrlDetector : ITextDetector
 {
     public TextType Type => TextType.Url;
 
-    [GeneratedRegex(@"^(https?://|ftp://|www\.)\S+", RegexOptions.IgnoreCase)]
+    // For www-prefixed URLs require a recognizable host (at least one extra dot + 2-char label).
+    // The previous looser `www\.\S+` accepted "www.x" and OpenUrlAction would happily prepend
+    // https:// and shell that to the browser, which then 404'd ungracefully.
+    [GeneratedRegex(@"^(https?://\S+|ftp://\S+|www\.[A-Za-z0-9\-]+\.[A-Za-z0-9\-]{2,}\S*)", RegexOptions.IgnoreCase)]
     private static partial Regex UrlPattern();
 
     public bool TryDetect(string text, out TextAnalysis result)

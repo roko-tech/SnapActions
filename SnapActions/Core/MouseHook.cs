@@ -125,7 +125,8 @@ public class MouseHook : IDisposable
         _multiClickTimer?.Stop();
         if (_clickCount >= 2)
         {
-            try { SelectionLikely?.Invoke(_lastClickPoint); } catch { }
+            try { SelectionLikely?.Invoke(_lastClickPoint); }
+            catch (Exception ex) { Log.Warn($"SelectionLikely (multi-click) handler threw: {ex.Message}"); }
         }
         _clickCount = 0;
     }
@@ -135,7 +136,8 @@ public class MouseHook : IDisposable
         _longPressTimer?.Stop();
         if (!_isTracking) return;
         _longPressFired = true;
-        try { LongPress?.Invoke(_mouseDownPoint); } catch { }
+        try { LongPress?.Invoke(_mouseDownPoint); }
+        catch (Exception ex) { Log.Warn($"LongPress handler threw: {ex.Message}"); }
     }
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -154,7 +156,8 @@ public class MouseHook : IDisposable
         if (msg == WM_LBUTTONDOWN)
         {
             var pt = ReadPoint(lParam);
-            try { MouseDown?.Invoke(pt); } catch { }
+            try { MouseDown?.Invoke(pt); }
+            catch (Exception ex) { Log.Warn($"MouseDown handler threw: {ex.Message}"); }
             _mouseDownPoint = pt;
             _mouseDownTicks = Environment.TickCount64;
             _isTracking = true;
@@ -192,7 +195,8 @@ public class MouseHook : IDisposable
 
             if (distSq >= MinDragSelectDistSq && dur >= MinClickDurationMs)
             {
-                try { SelectionLikely?.Invoke(up); } catch { }
+                try { SelectionLikely?.Invoke(up); }
+                catch (Exception ex) { Log.Warn($"SelectionLikely (drag) handler threw: {ex.Message}"); }
                 _clickCount = 0;
                 _lastClickTicks = 0;
             }
@@ -213,7 +217,8 @@ public class MouseHook : IDisposable
                         // doesn't fire SelectionLikely twice.
                         if (_clickCount == 2)
                         {
-                            try { SelectionLikely?.Invoke(up); } catch { }
+                            try { SelectionLikely?.Invoke(up); }
+                            catch (Exception ex) { Log.Warn($"SelectionLikely (instant double-click) handler threw: {ex.Message}"); }
                         }
                     }
                     else

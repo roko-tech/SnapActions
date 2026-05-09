@@ -128,14 +128,13 @@ public static partial class UnitConverter
             return false;
 
         var unitText = m.Groups[2].Value.Trim();
-        // Normalize a few common variants.
+        // Strip the degree sign before alias lookup — "°c"/"°f" map to plain "c"/"f" entries.
         unitText = unitText.Replace("°", "");
         if (_aliases.TryGetValue(unitText, out var u))
         {
             unit = u;
             return true;
         }
-        // Re-add the degree sign for °c/°f lookup if the bare letter didn't match a unit.
         return false;
     }
 

@@ -22,8 +22,10 @@ public partial class MathExprDetector : ITextDetector
     // Rejects date-shaped strings (e.g. "2024-01-99" — invalid date that would otherwise
     // evaluate as 2024 - 1 - 99 = 1924, which is surprising). Covers slash-separated and
     // mixed-separator forms too, which the DateTime detector won't catch when the date is
-    // syntactically wrong but still recognizable as a date attempt.
-    [GeneratedRegex(@"^\d{1,4}[/\-]\d{1,2}[/\-]\d{1,4}$")]
+    // syntactically wrong but still recognizable as a date attempt. Requires a 4-digit year
+    // segment somewhere — without that gate, plain arithmetic like "1-2-3" matched and got
+    // silently dropped from math classification.
+    [GeneratedRegex(@"^(\d{4}[/\-]\d{1,2}[/\-]\d{1,4}|\d{1,4}[/\-]\d{1,2}[/\-]\d{4})$")]
     private static partial Regex IsoDateShape();
 
     public bool TryDetect(string text, out TextAnalysis result)

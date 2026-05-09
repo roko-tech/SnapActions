@@ -35,8 +35,10 @@ public partial class ResultPopup : Window
         SourceInitialized += (_, _) =>
         {
             var hwnd = new WindowInteropHelper(this).Handle;
-            var style = GetWindowLong(hwnd, GWL_EXSTYLE);
-            SetWindowLong(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
+            // *Ptr variants — see ToolbarWindow.xaml.cs for the rationale.
+            var style = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+            SetWindowLongPtr(hwnd, GWL_EXSTYLE,
+                new IntPtr(style.ToInt64() | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW));
         };
 
         // Dismissal: Esc, the X / Copy buttons, a new popup replacing this one, OR a click
@@ -61,10 +63,10 @@ public partial class ResultPopup : Window
         };
     }
 
-    [DllImport("user32.dll")]
-    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-    [DllImport("user32.dll")]
-    private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
 
@@ -82,6 +84,12 @@ public partial class ResultPopup : Window
     /// <summary>Static helper: creates popup, positions near cursor, fetches result.</summary>
     public static void ShowNearCursor(string title, Func<HttpClient, System.Threading.CancellationToken, Task<string>> fetchResult)
     {
+        // _current is read/written from this method and SafeClose; both must run on the UI
+        // dispatcher or the static-instance handoff is racy. Cheap to assert in DEBUG builds.
+        System.Diagnostics.Debug.Assert(
+            System.Windows.Application.Current?.Dispatcher.CheckAccess() ?? true,
+            "ResultPopup.ShowNearCursor must run on the UI dispatcher");
+
         // Replace any existing popup so two back-to-back lookups don't stack on screen.
         _current?.SafeClose();
         var popup = new ResultPopup();
@@ -93,6 +101,12 @@ public partial class ResultPopup : Window
     public async void ShowAt(double screenX, double screenY, string title,
         Func<HttpClient, System.Threading.CancellationToken, Task<string>> fetchResult)
     {
+        // Async void — the caller (ShowNearCursor) treats this as fire-and-forget. Wrap the
+        // whole body so a synchronous WPF exception during setup (rare but possible during
+        // teardown) reaches the logger instead of escaping into the dispatcher's unhandled
+        // path. The fetch itself already has its own try/catch below.
+        try
+        {
         TitleText.Text = title;
         LoadingText.Visibility = Visibility.Visible;
         ResultText.Visibility = Visibility.Collapsed;
@@ -139,12 +153,24 @@ public partial class ResultPopup : Window
             if (_closed) return;
             LoadingText.Text = $"Error: {ex.Message}";
         }
+        }
+        catch (Exception ex)
+        {
+            // Setup-time exception (e.g. a stale window handle from a racing teardown). Don't
+            // let it escape into the dispatcher unhandled handler.
+            Log.Error("ResultPopup.ShowAt failed during setup", ex);
+            try { SafeClose(); } catch { }
+        }
     }
 
     private void Copy_Click(object sender, RoutedEventArgs e)
     {
         if (!string.IsNullOrEmpty(_resultText))
-            Clipboard.SetText(_resultText);
+        {
+            // Same hardening as ToolbarWindow's Copy button — clipboard locks shouldn't crash us.
+            try { Clipboard.SetText(_resultText); }
+            catch (Exception ex) { Log.Warn($"Clipboard.SetText failed: {ex.Message}"); }
+        }
         SafeClose();
     }
 
@@ -194,7 +220,10 @@ public partial class ResultPopup : Window
             DateTime.UtcNow - cached.fetched < TranslationCacheTtl)
             return cached.text;
 
-        var url = $"https://api.mymemory.translated.net/get?q={Uri.EscapeDataString(text)}&langpair=autodetect|{to}";
+        // Pipe is not a legal URI character per RFC 3986 — encode the whole langpair value so
+        // we don't depend on the server's lenient URL parser.
+        var langpair = Uri.EscapeDataString($"autodetect|{to}");
+        var url = $"https://api.mymemory.translated.net/get?q={Uri.EscapeDataString(text)}&langpair={langpair}";
         string json;
         try { json = await http.GetStringAsync(url, ct); }
         catch (HttpRequestException ex) when (ex.Message.Contains("429"))
@@ -313,7 +342,9 @@ public partial class ResultPopup : Window
     /// "$50 last EUR-trip" → USD (because $ is adjacent to 50, EUR is far away).
     /// Falls back to USD when no symbol/code is found.
     /// </summary>
-    private static string DetectSourceCurrency(string text, int numStart, int numLength)
+    /// <remarks>internal so the test project (InternalsVisibleTo) can verify proximity rules
+    /// without spinning up a real popup or HttpClient.</remarks>
+    internal static string DetectSourceCurrency(string text, int numStart, int numLength)
     {
         int numEnd = numStart + numLength;
         string best = "USD";

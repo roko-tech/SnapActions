@@ -30,7 +30,6 @@ public class TextClassifier
             new DateTimeDetector(),
             new UnitDetector(),
             new MathExprDetector(),
-            new CodeSnippetDetector()
         ];
     }
 

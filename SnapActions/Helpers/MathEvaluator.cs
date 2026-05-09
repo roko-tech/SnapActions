@@ -71,7 +71,9 @@ public static class MathEvaluator
             if (Position < Input.Length && Input[Position] == '^')
             {
                 Position++;
-                var exp = ParseUnary();
+                // Right-associative: 2^3^2 evaluates as 2^(3^2) = 512, matching standard math
+                // convention. Recursing into ParsePower instead of ParseUnary makes that work.
+                var exp = ParsePower();
                 return Math.Pow(baseVal, exp);
             }
             return baseVal;
@@ -122,15 +124,34 @@ public static class MathEvaluator
                 return ApplyConstant(name);
             }
 
-            // Number
+            // Number — including scientific notation (1e10, 2.5e-3). Without the exponent loop,
+            // a selection like "1e10" used to parse "1" then identifier "e" then leftover "10",
+            // throwing "Unexpected character".
             int numStart = Position;
             while (Position < Input.Length && (char.IsDigit(Input[Position]) || Input[Position] == '.'))
                 Position++;
 
+            if (numStart < Position && Position < Input.Length &&
+                (Input[Position] == 'e' || Input[Position] == 'E'))
+            {
+                int exponentStart = Position;
+                Position++;
+                if (Position < Input.Length && (Input[Position] == '+' || Input[Position] == '-'))
+                    Position++;
+                int expDigitStart = Position;
+                while (Position < Input.Length && char.IsDigit(Input[Position]))
+                    Position++;
+                // Roll back if the exponent had no digits — could legitimately be "2*e" rather
+                // than scientific notation. The constant lookup below will pick "e" up.
+                if (Position == expDigitStart) Position = exponentStart;
+            }
+
             if (numStart == Position)
                 throw new FormatException($"Expected number at position {Position}");
 
-            return double.Parse(Input[numStart..Position], System.Globalization.CultureInfo.InvariantCulture);
+            return double.Parse(Input[numStart..Position],
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture);
         }
 
         private static bool IsLetter(char c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
