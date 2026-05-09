@@ -19,11 +19,12 @@ public partial class ColorCodeDetector : ITextDetector
     private static partial Regex RgbSpacePattern();
 
     // Comma form: hsl(h, s%, l%) / hsla(...). Hue may be negative (CSS spec — wrapped at render).
-    [GeneratedRegex(@"^hsla?\(\s*-?\d{1,3}\s*,\s*\d{1,3}%?\s*,\s*\d{1,3}%?(\s*,\s*[\d.]+%?)?\s*\)$")]
+    // Hue accepts an optional CSS angle unit (deg/rad/grad/turn); HslToRgba normalizes to degrees.
+    [GeneratedRegex(@"^hsla?\(\s*-?\d{1,3}(?:\.\d+)?(?:deg|rad|grad|turn)?\s*,\s*\d{1,3}%?\s*,\s*\d{1,3}%?(\s*,\s*[\d.]+%?)?\s*\)$", RegexOptions.IgnoreCase)]
     private static partial Regex HslCommaPattern();
 
     // CSS Color Module 4 space form: hsl(h s% l%) / hsl(h s% l% / a)
-    [GeneratedRegex(@"^hsla?\(\s*-?\d{1,3}\s+\d{1,3}%?\s+\d{1,3}%?(\s*\/\s*[\d.]+%?)?\s*\)$")]
+    [GeneratedRegex(@"^hsla?\(\s*-?\d{1,3}(?:\.\d+)?(?:deg|rad|grad|turn)?\s+\d{1,3}%?\s+\d{1,3}%?(\s*\/\s*[\d.]+%?)?\s*\)$", RegexOptions.IgnoreCase)]
     private static partial Regex HslSpacePattern();
 
     public bool TryDetect(string text, out TextAnalysis result)

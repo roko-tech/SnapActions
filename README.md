@@ -103,8 +103,10 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 
 ## Privacy
 
-- **Detection is local.** All 13 detectors run in-process. No network calls for detection.
-- **Cloud actions are clearly scoped.** Translate, Dictionary, and Currency Converter send the selected text to MyMemory, dictionaryapi.dev, and open.er-api.com over HTTPS. The other actions never send your selection anywhere.
+- **Detection is local.** All detectors run in-process. No network calls for detection.
+- **Inline cloud popups.** Translate, Dictionary, and Currency Converter send the selected text to MyMemory, dictionaryapi.dev, and open.er-api.com over HTTPS — the SnapActions process makes the request and shows the result inline.
+- **Browser-handoff actions.** QR Code (api.qrserver.com) and IP Lookup (ipinfo.io) open a URL containing your selection in your default browser; SnapActions itself never makes the request. Web search engines work the same way.
+- **Everything else stays local.** Format/minify, transform, encode/decode, hash, color/unit/timezone/JWT/Base64 — none of these touch the network.
 - **Password managers excluded by default.** No toolbar appears when the foreground process is a known password manager. Add your own via Settings → Excluded apps.
 - **Risky-extension prompt.** Opening files with extensions that can run code (`.exe`, `.ps1`, `.iso`, `.docm`, `.lnk`, etc.) requires explicit confirmation.
 - **UNC path prompt.** Opening `\\server\share\…` paths prompts before contacting the remote host (avoids leaking NTLM hashes via SMB).
@@ -155,7 +157,7 @@ GitHub Actions runs build + tests on every push and PR — see [`.github/workflo
 SnapActions/
   Core/             Mouse hook (dedicated thread), text capture (WM_COPY + Ctrl+Insert),
                     selection tracking, foreground-app + editable-field detection
-  Detection/        13 text type detectors + classifier pipeline
+  Detection/        Text-type detectors + classifier pipeline
   Actions/          Context, transform, encode, search, popups
   UI/               WPF floating toolbar, result popup, settings window, system tray
   Config/           JSON settings with migration, atomic writes, broken-file recovery

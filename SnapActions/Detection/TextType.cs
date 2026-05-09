@@ -11,7 +11,6 @@ public enum TextType
     XmlHtml,
     MathExpression,
     IpAddress,
-    CodeSnippet,
     DateTime,
     Uuid,
     Base64,

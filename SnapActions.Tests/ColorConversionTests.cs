@@ -99,6 +99,57 @@ public class ColorConversionTests
         Assert.Equal("#FF0080", result);
     }
 
+    // ── Hue with CSS angle units (regression: B1 in v1.6.3) ─────
+
+    [Theory]
+    [InlineData("hsl(120deg, 100%, 50%)")] // explicit deg suffix
+    [InlineData("hsl(120, 100%, 50%)")]    // bare degrees
+    public void Hsl_DegSuffix_DetectedAndConverted(string input)
+    {
+        // Both forms should produce the same result — pure green hex.
+        Assert.Equal("#00FF00", Convert(input));
+    }
+
+    [Fact]
+    public void Hsl_TurnSuffix_Converted()
+    {
+        // 0.5 turn = 180° = cyan-ish (#00FFFF for 100% sat / 50% lightness).
+        Assert.Equal("#00FFFF", Convert("hsl(0.5turn, 100%, 50%)"));
+    }
+
+    [Fact]
+    public void Hsl_RadSuffix_Converted()
+    {
+        // π rad = 180° = cyan.
+        Assert.Equal("#00FFFF", Convert("hsl(3.14159rad, 100%, 50%)"));
+    }
+
+    [Fact]
+    public void Hsl_GradSuffix_Converted()
+    {
+        // 200 grad = 180° = cyan.
+        Assert.Equal("#00FFFF", Convert("hsl(200grad, 100%, 50%)"));
+    }
+
+    // ── CSS Color Module 4 round-trips through ConvertColor (regression: I7 in v1.6.3) ──
+
+    [Fact]
+    public void Rgb_SpaceForm_WithSlashAlpha_Converts()
+    {
+        var result = Convert("rgb(255 0 0 / 50%)");
+        // Cycles to hsl(a). Pure red with alpha 0.5.
+        Assert.StartsWith("hsla(0, 100%, 50%, 0.5", result);
+    }
+
+    [Fact]
+    public void Hsl_SpaceForm_WithSlashAlpha_Converts()
+    {
+        var result = Convert("hsl(0 100% 50% / 0.5)");
+        // Cycles to hex with alpha (#FF000080 ± rounding).
+        Assert.StartsWith("#FF0000", result);
+        Assert.Equal(9, result.Length);
+    }
+
     [Fact]
     public void Rgb_OutOfRangeChannels_ClampedTo255()
     {

@@ -128,20 +128,37 @@ public class ConvertColorAction : IAction
 
     private static (int r, int g, int b, double? a) HslToRgba(string s)
     {
-        // Allow a leading minus for hue. The post-parse normalization wraps it back into
-        // [0, 360); without "-?" here we'd silently parse "-30" as 30.
+        // Hue can carry a CSS angle unit (deg/rad/grad/turn). Pre-extract it so we can convert
+        // rad/grad/turn to degrees before the rest of the parse — the trailing-number regex below
+        // strips the unit suffix and would otherwise silently treat 2rad as 2deg.
+        var hueMatch = System.Text.RegularExpressions.Regex.Match(s,
+            @"hsla?\(\s*(-?[\d.]+)\s*(deg|rad|grad|turn)?",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!hueMatch.Success) throw new FormatException("Invalid hsl()");
+        double h = double.Parse(hueMatch.Groups[1].Value,
+            System.Globalization.CultureInfo.InvariantCulture);
+        h = hueMatch.Groups[2].Value.ToLowerInvariant() switch
+        {
+            "rad" => h * 180.0 / Math.PI,
+            "grad" => h * 0.9,
+            "turn" => h * 360.0,
+            _ => h, // "deg" or empty
+        };
+
+        // Saturation / lightness / alpha — match what comes after the hue group. Allow a leading
+        // minus on each token so the same regex copes with the rare negative-percent edge case.
+        var rest = s[(hueMatch.Index + hueMatch.Length)..];
         var nums = System.Text.RegularExpressions.Regex
-            .Matches(s, @"-?[\d.]+%?")
+            .Matches(rest, @"-?[\d.]+%?")
             .Cast<System.Text.RegularExpressions.Match>()
             .ToList();
-        if (nums.Count < 3) throw new FormatException("Invalid hsl()");
-        double h = double.Parse(nums[0].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture);
-        double sat = double.Parse(nums[1].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture) / 100.0;
-        double l = double.Parse(nums[2].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture) / 100.0;
+        if (nums.Count < 2) throw new FormatException("Invalid hsl()");
+        double sat = double.Parse(nums[0].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture) / 100.0;
+        double l = double.Parse(nums[1].Value.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture) / 100.0;
         double? a = null;
-        if (nums.Count >= 4)
+        if (nums.Count >= 3)
         {
-            var raw = nums[3].Value;
+            var raw = nums[2].Value;
             double v = double.Parse(raw.TrimEnd('%'),
                 System.Globalization.CultureInfo.InvariantCulture);
             a = raw.EndsWith('%') ? v / 100.0 : v;

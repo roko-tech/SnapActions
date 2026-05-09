@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using SnapActions.Detection;
 using SnapActions.Helpers;
 
-namespace SnapActions.Actions.ContextActions;
+namespace SnapActions.Actions.TransformActions;
 
 public class DeleteTextAction : IAction
 {

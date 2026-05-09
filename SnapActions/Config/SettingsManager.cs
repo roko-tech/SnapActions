@@ -143,8 +143,15 @@ public static class SettingsManager
         }
     }
 
+    // Serialize SetAutoStart calls — rapid checkbox toggles in Settings + tray menu both fire
+    // Task.Run(SetAutoStart, ...). Without this, two registry writes can interleave and the
+    // saved settings.json AutoStart flag could disagree with the registry value.
+    private static readonly object _autoStartLock = new();
+
     public static void SetAutoStart(bool enable)
     {
+        lock (_autoStartLock)
+        {
         // Apply the registry change first, then commit Current/Save only on success — otherwise
         // a failed registry write would leave the in-memory flag and disk file out of sync with
         // reality.
@@ -183,6 +190,7 @@ public static class SettingsManager
         {
             Current.AutoStart = enable;
             Save();
+        }
         }
     }
 }
