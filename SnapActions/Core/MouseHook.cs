@@ -11,6 +11,10 @@ public class MouseHook : IDisposable
     private const int WM_LBUTTONDOWN = 0x0201;
     private const int WM_LBUTTONUP = 0x0202;
     private const int WM_MOUSEMOVE = 0x0200;
+    private const uint WM_NCHITTEST = 0x0084;
+    private const int HTCLIENT = 1;
+    private const uint SMTO_ABORTIFHUNG = 0x0002;
+    private const uint NcHitTestTimeoutMs = 50;
 
     // Tuning constants (squared distances in pixels, time in ms).
     // 8px² = 64 — radius below which we still consider the cursor "stationary" during a hold.
@@ -158,6 +162,20 @@ public class MouseHook : IDisposable
             var pt = ReadPoint(lParam);
             try { MouseDown?.Invoke(pt); }
             catch (Exception ex) { Log.Warn($"MouseDown handler threw: {ex.Message}"); }
+
+            // Skip drag-tracking when the click landed on a non-client area (title bar, border,
+            // scrollbar, etc.). Without this, dragging a window's title bar fires SelectionLikely
+            // on mouse-up — the hook can't tell that motion from text-selection drag — and the
+            // toolbar appears with whatever stale selection happened to be in the foreground app.
+            // The MouseDown event still fires above, so a click-outside-toolbar still hides any
+            // already-visible toolbar.
+            if (!IsClickOnClientArea(pt))
+            {
+                _isTracking = false;
+                _longPressTimer?.Stop();
+                return;
+            }
+
             _mouseDownPoint = pt;
             _mouseDownTicks = Environment.TickCount64;
             _isTracking = true;
@@ -249,6 +267,30 @@ public class MouseHook : IDisposable
         Y = Marshal.ReadInt32(lParam, 4)
     };
 
+    /// <summary>
+    /// True when a click at <paramref name="pt"/> (screen coords) lands inside the client area
+    /// of the window beneath. Anything else (title bar, scrollbar, resize border) is a window
+    /// drag, not a text-selection drag, and shouldn't enable our tracking.
+    /// </summary>
+    /// <remarks>
+    /// SendMessageTimeout is bounded by SMTO_ABORTIFHUNG + 50ms so a wedged target can't lock
+    /// up the hook thread. On timeout we return true (permissive) — better to occasionally show
+    /// the toolbar over a slow-responding window than to suppress legitimate selections.
+    /// </remarks>
+    private static bool IsClickOnClientArea(POINT pt)
+    {
+        IntPtr hwnd = WindowFromPoint(pt);
+        if (hwnd == IntPtr.Zero) return false;
+        // LPARAM packing for WM_NCHITTEST: low word = x, high word = y, both in screen coords.
+        // Mask to 16 bits before shifting so a negative-on-one-monitor coordinate doesn't sign-
+        // extend into the high word.
+        IntPtr lParam = (IntPtr)(((pt.Y & 0xFFFF) << 16) | (pt.X & 0xFFFF));
+        IntPtr ret = SendMessageTimeout(hwnd, WM_NCHITTEST, IntPtr.Zero, lParam,
+            SMTO_ABORTIFHUNG, NcHitTestTimeoutMs, out IntPtr result);
+        if (ret == IntPtr.Zero) return true; // timeout / no permission — be permissive
+        return result.ToInt32() == HTCLIENT;
+    }
+
     public void Dispose()
     {
         Uninstall();
@@ -271,4 +313,11 @@ public class MouseHook : IDisposable
 
     [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
     private static extern IntPtr GetModuleHandle(string? lpModuleName);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr WindowFromPoint(POINT pt);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,
+        uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
 }
