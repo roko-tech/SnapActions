@@ -16,6 +16,14 @@ public class MouseHook : IDisposable
     private const uint SMTO_ABORTIFHUNG = 0x0002;
     private const uint NcHitTestTimeoutMs = 50;
 
+    // Scrollbar suppression: a drag with both endpoints within this many px of the foreground
+    // window's right (vertical scrollbar) or bottom (horizontal scrollbar) edge AND a strongly
+    // perpendicular direction is treated as a scrollbar drag, not a text-selection drag.
+    // Native scrollbars are already caught by NCHITTEST=HTVSCROLL/HTHSCROLL; this exists for
+    // custom scrollbars (Chrome, VS Code, Electron apps) where NCHITTEST returns HTCLIENT.
+    private const int ScrollbarEdgeSlopPx = 25;
+    private const double PerpendicularRatio = 3.0;
+
     // Tuning constants (squared distances in pixels, time in ms).
     // 8px² = 64 — radius below which we still consider the cursor "stationary" during a hold.
     private const int LongPressMoveCancelDistSq = 64;
@@ -139,6 +147,12 @@ public class MouseHook : IDisposable
     {
         _longPressTimer?.Stop();
         if (!_isTracking) return;
+        // Holding the mouse on a scrollbar (right/bottom slop region of the foreground window)
+        // shouldn't summon paste mode. The downstream IsTextInputAtPoint check catches most of
+        // these but Chrome's accessibility tree exposes the document under its custom scrollbar,
+        // so the AutomationElement check returns true. Geometric edge check is a cheap safety
+        // net that handles those.
+        if (LooksLikeScrollbarPosition(_mouseDownPoint)) return;
         _longPressFired = true;
         try { LongPress?.Invoke(_mouseDownPoint); }
         catch (Exception ex) { Log.Warn($"LongPress handler threw: {ex.Message}"); }
@@ -213,6 +227,9 @@ public class MouseHook : IDisposable
 
             if (distSq >= MinDragSelectDistSq && dur >= MinClickDurationMs)
             {
+                // Same scrollbar suppression as long-press, but with a stronger signal: drag must
+                // be primarily perpendicular to the edge (vertical scrollbar = vertical drag).
+                if (LooksLikeScrollbarDrag(_mouseDownPoint, up)) return;
                 try { SelectionLikely?.Invoke(up); }
                 catch (Exception ex) { Log.Warn($"SelectionLikely (drag) handler threw: {ex.Message}"); }
                 _clickCount = 0;
@@ -268,6 +285,51 @@ public class MouseHook : IDisposable
     };
 
     /// <summary>
+    /// True when both endpoints of the drag are within <see cref="ScrollbarEdgeSlopPx"/> of the
+    /// foreground window's right edge AND the motion is primarily vertical, OR both are near the
+    /// bottom edge AND the motion is primarily horizontal. That's a custom-scrollbar drag —
+    /// native scrollbars are caught earlier by NCHITTEST=HTVSCROLL/HTHSCROLL.
+    /// </summary>
+    private static bool LooksLikeScrollbarDrag(POINT down, POINT up)
+    {
+        if (!TryGetForegroundWindowRect(out var rect)) return false;
+
+        int absDx = Math.Abs(up.X - down.X);
+        int absDy = Math.Abs(up.Y - down.Y);
+
+        bool downNearRight = down.X >= rect.right - ScrollbarEdgeSlopPx;
+        bool upNearRight = up.X >= rect.right - ScrollbarEdgeSlopPx;
+        if (downNearRight && upNearRight && absDy > absDx * PerpendicularRatio) return true;
+
+        bool downNearBottom = down.Y >= rect.bottom - ScrollbarEdgeSlopPx;
+        bool upNearBottom = up.Y >= rect.bottom - ScrollbarEdgeSlopPx;
+        if (downNearBottom && upNearBottom && absDx > absDy * PerpendicularRatio) return true;
+
+        return false;
+    }
+
+    /// <summary>
+    /// Single-point variant for long-press: don't fire if the mouse is held within the scrollbar
+    /// slop region of the foreground window's right or bottom edge. Looser than the drag check
+    /// since we can't read direction here; biased toward false positives in the slop region (a
+    /// user wanting paste mode at the very edge of a text input has to click ~25 px inside).
+    /// </summary>
+    private static bool LooksLikeScrollbarPosition(POINT pt)
+    {
+        if (!TryGetForegroundWindowRect(out var rect)) return false;
+        return pt.X >= rect.right - ScrollbarEdgeSlopPx
+            || pt.Y >= rect.bottom - ScrollbarEdgeSlopPx;
+    }
+
+    private static bool TryGetForegroundWindowRect(out RECT rect)
+    {
+        rect = default;
+        IntPtr hwnd = GetForegroundWindow();
+        if (hwnd == IntPtr.Zero) return false;
+        return GetWindowRect(hwnd, out rect);
+    }
+
+    /// <summary>
     /// True when a click at <paramref name="pt"/> (screen coords) lands inside the client area
     /// of the window beneath. Anything else (title bar, scrollbar, resize border) is a window
     /// drag, not a text-selection drag, and shouldn't enable our tracking.
@@ -320,4 +382,14 @@ public class MouseHook : IDisposable
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,
         uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int left, top, right, bottom; }
 }
