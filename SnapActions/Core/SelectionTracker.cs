@@ -89,9 +89,16 @@ public class SelectionTracker
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
                 var editableTask = Task.Run(() => ForegroundApp.IsEditableFieldFocused());
+                // Run the point-element check in parallel with text capture. Catches custom-chrome
+                // window drags (Chrome, Slack, VS Code, etc.) where NCHITTEST returns HTCLIENT for
+                // the title bar and we'd otherwise show the toolbar with whatever stale selection
+                // happened to be in the page.
+                var atPointTask = Task.Run(() => ForegroundApp.IsTextInputAtPoint(cursorPos.X, cursorPos.Y));
 
                 var text = await TextCapture.CaptureSelectedTextAsync();
                 if (string.IsNullOrWhiteSpace(text)) return;
+
+                if (!await atPointTask) return;
 
                 int showDelay = SettingsManager.Current.ToolbarShowDelay;
                 if (showDelay > 0) await Task.Delay(showDelay);
@@ -124,7 +131,12 @@ public class SelectionTracker
                 if (!SettingsManager.Current.Enabled) return;
                 if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps)) return;
 
-                if (!await Task.Run(() => ForegroundApp.IsTextInputFocused())) return;
+                // Use the point-based check, not the focused-element check. Holding the mouse on
+                // a Chrome/Electron title bar leaves whatever was previously focused (search box,
+                // address bar) "focused" — IsTextInputFocused would return true and the paste
+                // menu would pop up over the title bar. IsTextInputAtPoint asks UI Automation
+                // what's literally under the cursor instead.
+                if (!await Task.Run(() => ForegroundApp.IsTextInputAtPoint(cursorPos.X, cursorPos.Y))) return;
 
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 

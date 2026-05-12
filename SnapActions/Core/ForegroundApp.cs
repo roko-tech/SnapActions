@@ -106,6 +106,54 @@ public static class ForegroundApp
         return false;
     }
 
+    /// <summary>
+    /// True when the UI Automation element directly under (<paramref name="x"/>, <paramref name="y"/>)
+    /// is a text-bearing element — Edit, Document, Group+TextPattern, or anything else exposing
+    /// TextPattern. False for buttons, title bars, scrollbars, tabs, panes, etc.
+    /// </summary>
+    /// <remarks>
+    /// Why we need this on top of IsTextInputFocused / NCHITTEST: Chrome and other Electron apps
+    /// draw their own title bars in the same Win32 client area, so NCHITTEST returns HTCLIENT for
+    /// a title-bar drag and IsTextInputFocused returns true if any address bar / search box
+    /// elsewhere in the window happens to still be focused. Asking "what's under the cursor" via
+    /// UI Automation cuts through that — the title-bar element doesn't expose TextPattern.
+    /// Slow (50–300 ms on Electron); call from a worker thread, never the hook thread or the
+    /// dispatcher synchronously.
+    /// </remarks>
+    public static bool IsTextInputAtPoint(int x, int y)
+    {
+        try
+        {
+            var element = AutomationElement.FromPoint(new System.Windows.Point(x, y));
+            if (element == null) return false;
+
+            var ct = element.Current.ControlType;
+
+            // Native edit controls + browser <input>/<textarea>.
+            if (ct == ControlType.Edit) return true;
+
+            // Browser document body — selectable text lives here.
+            if (ct == ControlType.Document) return true;
+
+            // Rich-text editors in Electron apps (ProseMirror/CodeMirror/Slate) — Group + TextPattern.
+            if (ct == ControlType.Group && element.TryGetCurrentPattern(TextPattern.Pattern, out _))
+                return true;
+
+            // Catch-all for anything else exposing user-selectable text — labels, paragraphs in
+            // accessible apps, etc. Chrome/Electron title bars and tab strips do NOT expose
+            // TextPattern, so window-drag cases fall through to false here.
+            if (element.TryGetCurrentPattern(TextPattern.Pattern, out _)) return true;
+
+            return false;
+        }
+        catch
+        {
+            // Be permissive on errors — better to occasionally show the toolbar than to suppress
+            // legitimate selections in apps that don't cooperate with UI Automation.
+            return true;
+        }
+    }
+
     private static bool HasWin32Caret()
     {
         IntPtr hwnd = GetForegroundWindow();
