@@ -81,28 +81,6 @@ public static class ForegroundApp
     }
 
     /// <summary>
-    /// Strict gate for the Ctrl+Insert capture-fallback: only true when we're confident the
-    /// foreground has *selectable text*. Caret check first (cheap, covers native Win32 edits);
-    /// then the focused element's ControlType.Edit or TextPattern. Deliberately does NOT accept
-    /// non-readonly ValuePattern (sliders, spinners, ComboBoxes) — those aren't text and
-    /// sending Ctrl+Insert into them is at best a no-op and at worst conflicts with app hotkeys.
-    /// </summary>
-    public static bool IsTextSelectionCapable()
-    {
-        if (HasWin32Caret()) return true;
-        try
-        {
-            var focused = AutomationElement.FocusedElement;
-            if (focused == null) return false;
-
-            if (focused.Current.ControlType == ControlType.Edit) return true;
-            if (focused.TryGetCurrentPattern(TextPattern.Pattern, out _)) return true;
-        }
-        catch { }
-        return false;
-    }
-
-    /// <summary>
     /// True when the UI Automation element directly under (<paramref name="x"/>, <paramref name="y"/>)
     /// is a text-bearing element — Edit, Document, Group+TextPattern, or anything else exposing
     /// TextPattern. False for buttons, title bars, scrollbars, tabs, panes, etc.

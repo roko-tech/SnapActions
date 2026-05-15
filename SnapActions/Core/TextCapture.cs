@@ -155,17 +155,17 @@ public static class TextCapture
     }
 
     /// <summary>
-    /// Strict gate before the Ctrl+Insert fallback fires. Returns true only when we're confident
-    /// the foreground has selectable text (caret, ControlType.Edit, or TextPattern). Returns
-    /// false on exception — the gate exists to prevent the synthetic key from reaching apps that
-    /// bind Insert to non-paste actions (games, terminals, etc.); failing open into those exact
-    /// apps is the worst-case behavior. If a cooperative app's a11y is transiently broken we
-    /// lose one capture and try again on the next selection — preferable to a stray Insert.
+    /// Gate before the Ctrl+Insert fallback fires. Permissive: caret, Edit, non-readonly
+    /// ValuePattern, OR TextPattern all pass; exceptions also pass. v1.6.8 made this strict
+    /// (TextPattern-only + false-on-exception) and broke captures in browsers/Electron apps
+    /// where the focused element is a parent pane rather than the text-bearing element. The
+    /// strictness was theoretical — the actual reported synthetic-key issue is Shift+Insert
+    /// from paste mode, not Ctrl+Insert from capture — so the trade-off favors permissive.
     /// </summary>
     private static bool IsForegroundTextCapable()
     {
-        try { return ForegroundApp.IsTextSelectionCapable(); }
-        catch { return false; }
+        try { return ForegroundApp.IsEditableFieldFocused(); }
+        catch { return true; }
     }
 
     private static void CopyViaWindowMessage()
