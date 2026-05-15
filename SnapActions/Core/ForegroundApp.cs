@@ -80,49 +80,50 @@ public static class ForegroundApp
         return false;
     }
 
+    // Maximum UIA parent levels to walk when probing for text capability. Leaf nodes in a
+    // browser DOM (`<span>`, `<a>`, `<i>`, `<svg>`) routinely don't expose TextPattern on
+    // themselves even though their paragraph / article / document ancestor does. 4 levels is
+    // enough to reach `<p>` from a nested inline element (`<a><span>text</span></a>` style).
+    private const int TextPatternParentWalkDepth = 4;
+
     /// <summary>
-    /// True when the UI Automation element directly under (<paramref name="x"/>, <paramref name="y"/>)
-    /// is a text-bearing element — Edit, Document, Group+TextPattern, or anything else exposing
-    /// TextPattern. False for buttons, title bars, scrollbars, tabs, panes, etc.
+    /// True when the UI Automation element under (<paramref name="x"/>, <paramref name="y"/>)
+    /// — or any of its first <see cref="TextPatternParentWalkDepth"/> ancestors — is a
+    /// text-bearing element (Edit / Document / TextPattern). False for title bars, scrollbars,
+    /// tabs, panes, draggable file icons, etc.
     /// </summary>
     /// <remarks>
-    /// Why we need this on top of NCHITTEST + the focused-element checks: Chrome and other
-    /// Electron apps draw their own title bars in the same Win32 client area, so NCHITTEST
-    /// returns HTCLIENT for a title-bar drag and the focused-element check returns true if any
-    /// address bar / search box elsewhere in the window happens to still be focused. Asking
-    /// "what's under the cursor" via UI Automation cuts through that — the title-bar element
-    /// doesn't expose TextPattern.
-    /// Slow (50–300 ms on Electron); call from a worker thread, never the hook thread or the
-    /// dispatcher synchronously. Permissive on uncertainty (null element OR exception): better
-    /// to occasionally show the toolbar than to suppress legitimate selections in apps with
-    /// quirky a11y trees.
+    /// The parent walk is the v1.6.11 fix for the v1.6.10 over-suppression bug: in browsers
+    /// and Electron apps `FromPoint` returns the deepest element under the cursor, which is
+    /// often a leaf inline element with no TextPattern of its own. Walking up to the paragraph
+    /// or document recovers the real "is this text?" answer.
+    /// Slow (50–500 ms on Electron with a11y not loaded); call from a worker thread, never the
+    /// hook thread or the dispatcher synchronously. Permissive on uncertainty (null element OR
+    /// exception): better to occasionally show the toolbar than to suppress legitimate selections
+    /// in apps with quirky a11y trees.
     /// </remarks>
     public static bool IsTextInputAtPoint(int x, int y)
     {
         try
         {
             var element = AutomationElement.FromPoint(new System.Windows.Point(x, y));
-            // Permissive on null too — same rationale as the catch below. The previous strict
-            // null branch made the gate inconsistent: errors permissive, missing element strict.
             if (element == null) return true;
 
-            var ct = element.Current.ControlType;
+            var walker = TreeWalker.RawViewWalker;
+            for (int depth = 0; element != null && depth < TextPatternParentWalkDepth; depth++)
+            {
+                try
+                {
+                    var ct = element.Current.ControlType;
+                    if (ct == ControlType.Edit) return true;
+                    if (ct == ControlType.Document) return true;
+                    if (element.TryGetCurrentPattern(TextPattern.Pattern, out _)) return true;
+                }
+                catch { /* per-level UIA failure — try the parent */ }
 
-            // Native edit controls + browser <input>/<textarea>.
-            if (ct == ControlType.Edit) return true;
-
-            // Browser document body — selectable text lives here.
-            if (ct == ControlType.Document) return true;
-
-            // Rich-text editors in Electron apps (ProseMirror/CodeMirror/Slate) — Group + TextPattern.
-            if (ct == ControlType.Group && element.TryGetCurrentPattern(TextPattern.Pattern, out _))
-                return true;
-
-            // Catch-all for anything else exposing user-selectable text — labels, paragraphs in
-            // accessible apps, etc. Chrome/Electron title bars and tab strips do NOT expose
-            // TextPattern, so window-drag cases fall through to false here.
-            if (element.TryGetCurrentPattern(TextPattern.Pattern, out _)) return true;
-
+                try { element = walker.GetParent(element); }
+                catch { break; }
+            }
             return false;
         }
         catch
