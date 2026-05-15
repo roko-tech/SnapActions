@@ -49,19 +49,16 @@ public static class TextCapture
             var text = await ReadClipboard();
 
             // Fall back to Ctrl+Insert (for browsers). Up to 250 ms total.
+            // No focus-element gate before this: v1.6.7–1.6.9 tried various flavors of "skip the
+            // synthetic key in non-text apps" by probing AutomationElement.FocusedElement, but
+            // browsers and Electron apps focus parent panes that don't themselves expose
+            // TextPattern even though the underlying document does — so the gate blocked the
+            // exact common case it was supposed to leave alone. If a specific app reacts badly
+            // to a stray Ctrl+Insert (rare; most map it to copy or ignore it), add it to
+            // Settings → Excluded apps. The reported synthetic-key issue was Shift+Insert from
+            // paste mode, not this path.
             if (string.IsNullOrEmpty(text))
             {
-                // Skip the synthetic key send when the foreground element doesn't expose a
-                // TextPattern. Insert / Ctrl+Insert is bound to non-paste actions in some apps
-                // (games map Insert to inventory, terminals to selection paste, etc.); sending
-                // it into a non-text app produces unwanted side effects with no upside —
-                // there's nothing to copy.
-                if (!await Task.Run(IsForegroundTextCapable))
-                {
-                    SnapActions.Helpers.Log.Info("Skipping Ctrl+Insert fallback — focused element has no TextPattern");
-                    await Application.Current.Dispatcher.InvokeAsync(() => RestoreClipboard(saved));
-                    return null;
-                }
                 CopyViaKeyboard();
                 for (int i = 0; i < 25; i++)
                 {
@@ -152,20 +149,6 @@ public static class TextCapture
             try { return Clipboard.ContainsText() ? Clipboard.GetText() : null; }
             catch { return null; }
         });
-    }
-
-    /// <summary>
-    /// Gate before the Ctrl+Insert fallback fires. Permissive: caret, Edit, non-readonly
-    /// ValuePattern, OR TextPattern all pass; exceptions also pass. v1.6.8 made this strict
-    /// (TextPattern-only + false-on-exception) and broke captures in browsers/Electron apps
-    /// where the focused element is a parent pane rather than the text-bearing element. The
-    /// strictness was theoretical — the actual reported synthetic-key issue is Shift+Insert
-    /// from paste mode, not Ctrl+Insert from capture — so the trade-off favors permissive.
-    /// </summary>
-    private static bool IsForegroundTextCapable()
-    {
-        try { return ForegroundApp.IsEditableFieldFocused(); }
-        catch { return true; }
     }
 
     private static void CopyViaWindowMessage()

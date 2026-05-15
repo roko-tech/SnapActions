@@ -90,12 +90,13 @@ public class SelectionTracker
     ///         the right/left/bottom edges (custom scrollbars in Chrome/Electron/etc.).</item>
     ///   <item>This method's pre-checks: self-PID, debounce, Enabled, IsPointInside (toolbar
     ///         self-click), ExcludedApps.</item>
-    ///   <item>TextCapture.WM_COPY — silent path; Ctrl+Insert fallback gated by
-    ///         IsTextSelectionCapable so we don't send the synthetic key into non-text apps.</item>
-    ///   <item>IsTextInputAtPoint(mouse-up) — rejects when the cursor isn't on selectable text
-    ///         (catches custom-chrome title-bar drags after WM_COPY happened to return text).</item>
+    ///   <item>TextCapture.WM_COPY then unconditional Ctrl+Insert fallback if WM_COPY returned
+    ///         empty. v1.6.7–1.6.9 had a focused-element gate before the synthetic key send;
+    ///         removed in v1.6.10 because browsers/Electron focus parent panes that don't
+    ///         themselves expose TextPattern, and the gate blocked the common case.</item>
     ///   <item>IsTextInputAtPoint(mouse-down) — rejects when the drag *started* on a non-text
-    ///         element (catches drag-and-drop and object drags).</item>
+    ///         element (catches drag-and-drop and object drags). The mouse-UP equivalent that
+    ///         existed in v1.6.5–1.6.9 was removed in v1.6.10 for over-suppression.</item>
     /// </list>
     /// LongPress has a parallel pipeline: NCHITTEST + LooksLikeScrollbarPosition in MouseHook,
     /// then IsTextInputAtPoint at the cursor in OnLongPress.
@@ -118,15 +119,13 @@ public class SelectionTracker
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
                 var editableTask = Task.Run(() => ForegroundApp.IsEditableFieldFocused());
-                // Run the point-element check in parallel with text capture. Catches custom-chrome
-                // window drags (Chrome, Slack, VS Code, etc.) where NCHITTEST returns HTCLIENT for
-                // the title bar and we'd otherwise show the toolbar with whatever stale selection
-                // happened to be in the page.
-                var atPointTask = Task.Run(() => ForegroundApp.IsTextInputAtPoint(cursorPos.X, cursorPos.Y));
                 // Mouse-down position gate. Text selections always start on a text element by
                 // definition; file/icon/object drags start on non-text elements (file icons,
-                // Trello cards, panel handles, etc.). The mouse-up check above only catches
-                // drag-to-non-text — this covers drag-from-non-text, including drag-and-drop.
+                // Trello cards, panel handles, etc.). The mouse-UP equivalent (added in v1.6.5)
+                // was removed in v1.6.10 — it caused false positives whenever a real text
+                // selection ended on whitespace/padding/non-text element under the cursor, AND
+                // its main intended target (custom-chrome title-bar drags) is already covered by
+                // this mouse-DOWN check (the title-bar drag has to start on the title bar too).
                 long packed = System.Threading.Interlocked.Read(ref _lastMouseDownPacked);
                 int downX = (int)(packed >> 32);
                 int downY = (int)packed;
@@ -135,11 +134,6 @@ public class SelectionTracker
                 var text = await TextCapture.CaptureSelectedTextAsync();
                 if (string.IsNullOrWhiteSpace(text)) return;
 
-                if (!await atPointTask)
-                {
-                    SnapActions.Helpers.Log.Info($"Suppressed: mouse-up position ({cursorPos.X},{cursorPos.Y}) wasn't a text element (likely custom-chrome title bar or non-text drag target)");
-                    return;
-                }
                 if (!await atDownTask)
                 {
                     SnapActions.Helpers.Log.Info($"Suppressed: mouse-down position ({downX},{downY}) wasn't a text element (likely drag-and-drop or object drag)");
