@@ -17,11 +17,6 @@ public class SelectionTracker
     // TickCount64 is monotonic — wall-clock jumps (NTP sync, hibernation resume, manual time
     // change) used to spuriously suppress or re-fire the debounce when DateTime.UtcNow drifted.
     private long _lastShowTicks;
-    // Most recent mouse-down position, packed atomically: high 32 bits = X, low 32 bits = Y as
-    // uint bit pattern (preserves negative coords from monitors left/above the primary). Single
-    // long via Interlocked so the UI-dispatcher reader can never see a torn (Xₙ, Yₙ₊₁) pair from
-    // a concurrent hook-thread write.
-    private long _lastMouseDownPacked;
     private const long DebounceMs = 250;
     private static readonly uint OwnPid = (uint)Environment.ProcessId;
 
@@ -69,11 +64,6 @@ public class SelectionTracker
         // Quick checks only — no WPF access from hook thread
         if (IsSelfFocused()) { _mouseHook.CancelTracking(); return; }
 
-        // Capture for the OnSelectionLikely mouse-down UIA gate. Pack into one long via
-        // Interlocked.Exchange so the UI-thread reader can never observe a torn pair.
-        System.Threading.Interlocked.Exchange(
-            ref _lastMouseDownPacked, ((long)pt.X << 32) | (uint)pt.Y);
-
         Application.Current.Dispatcher.InvokeAsync(() =>
         {
             if (_toolbar is { IsVisible: true } && !_toolbar.IsPointInside(pt.X, pt.Y))
@@ -91,15 +81,16 @@ public class SelectionTracker
     ///   <item>This method's pre-checks: self-PID, debounce, Enabled, IsPointInside (toolbar
     ///         self-click), ExcludedApps.</item>
     ///   <item>TextCapture.WM_COPY then unconditional Ctrl+Insert fallback if WM_COPY returned
-    ///         empty. v1.6.7–1.6.9 had a focused-element gate before the synthetic key send;
-    ///         removed in v1.6.10 because browsers/Electron focus parent panes that don't
-    ///         themselves expose TextPattern, and the gate blocked the common case.</item>
-    ///   <item>IsTextInputAtPoint(mouse-down) — rejects when the drag *started* on a non-text
-    ///         element (catches drag-and-drop and object drags). The mouse-UP equivalent that
-    ///         existed in v1.6.5–1.6.9 was removed in v1.6.10 for over-suppression.</item>
+    ///         empty. Empty captured text aborts here.</item>
     /// </list>
-    /// LongPress has a parallel pipeline: NCHITTEST + LooksLikeScrollbarPosition in MouseHook,
-    /// then IsTextInputAtPoint at the cursor in OnLongPress.
+    /// Three UIA-based gates have been added and removed across v1.6.5–1.6.12:
+    ///   • atPointTask (mouse-up UIA) — removed v1.6.10, false-positive on whitespace endings
+    ///   • IsForegroundTextCapable (focused-element UIA) — removed v1.6.10, browsers focus parent panes
+    ///   • atDownTask (mouse-down UIA) — removed v1.6.12, blocks selections in apps with shallow UIA trees
+    /// The lesson: UIA's TextPattern coverage is too inconsistent across apps to be a reliable gate.
+    /// Drag-and-drop / object-drag false-positives now fall back to the user's ExcludedApps list.
+    /// LongPress still uses IsTextInputAtPoint at the cursor — paste mode showing on a button or
+    /// scrollbar is worse than the same false-positive cost there.
     /// </summary>
     private void OnSelectionLikely(MouseHook.POINT cursorPos)
     {
@@ -119,26 +110,9 @@ public class SelectionTracker
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
                 var editableTask = Task.Run(() => ForegroundApp.IsEditableFieldFocused());
-                // Mouse-down position gate. Text selections always start on a text element by
-                // definition; file/icon/object drags start on non-text elements (file icons,
-                // Trello cards, panel handles, etc.). The mouse-UP equivalent (added in v1.6.5)
-                // was removed in v1.6.10 — it caused false positives whenever a real text
-                // selection ended on whitespace/padding/non-text element under the cursor, AND
-                // its main intended target (custom-chrome title-bar drags) is already covered by
-                // this mouse-DOWN check (the title-bar drag has to start on the title bar too).
-                long packed = System.Threading.Interlocked.Read(ref _lastMouseDownPacked);
-                int downX = (int)(packed >> 32);
-                int downY = (int)packed;
-                var atDownTask = Task.Run(() => ForegroundApp.IsTextInputAtPoint(downX, downY));
 
                 var text = await TextCapture.CaptureSelectedTextAsync();
                 if (string.IsNullOrWhiteSpace(text)) return;
-
-                if (!await atDownTask)
-                {
-                    SnapActions.Helpers.Log.Info($"Suppressed: mouse-down position ({downX},{downY}) wasn't a text element (likely drag-and-drop or object drag)");
-                    return;
-                }
 
                 int showDelay = SettingsManager.Current.ToolbarShowDelay;
                 if (showDelay > 0) await Task.Delay(showDelay);
