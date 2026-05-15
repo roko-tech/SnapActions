@@ -127,6 +127,17 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 
 **Foreground-shift-safe paste.** When an action pastes back into the user's app (transforms in editable fields, long-press paste-mode), the foreground HWND is snapshotted at click time and the paste is aborted if focus moved between click and `SimulatePaste` — so an Alt-Tab during the click window can't redirect the paste into the wrong app.
 
+**When the toolbar appears (and when it doesn't).** Mouse-up after a drag, double/triple-click, or long-press *can* trigger the toolbar — but six gates have to agree before it shows. In order:
+
+1. **NCHITTEST gate** (mouse-down) — clicks on a window's title bar, resize border, or native scrollbar are dropped before tracking even starts. The hook can't tell those drags from a text-selection drag at the OS level, so we ask the receiving window via `WM_NCHITTEST`.
+2. **Scrollbar-edge heuristic** (mouse-up) — a drag with both endpoints within ~25 px of the right (or left, in RTL layouts) edge AND primarily vertical is treated as a custom-scrollbar drag (Chrome, VS Code, Slack, Electron apps). Same with bottom edge + horizontal motion.
+3. **Excluded-app + self-PID checks** — anything in your Settings → Excluded apps list never sees a toolbar, and clicks on SnapActions's own toolbar are ignored.
+4. **`WM_COPY` capture, then UIA-gated Ctrl+Insert fallback** — if `WM_COPY` returns nothing, we only send the synthetic Ctrl+Insert when the focused element exposes a text caret, `ControlType.Edit`, or a `TextPattern`. Apps that bind Insert to non-paste actions (games, terminals) are spared the synthetic key.
+5. **Mouse-up element check** — UIA `IsTextInputAtPoint` at the cursor position. Catches custom-chrome title bars and tab strips that NCHITTEST returns `HTCLIENT` for.
+6. **Mouse-down element check** — same UIA probe at the drag's *start* position. Text selections always start on a text element by definition; file/icon drags and object drags (Trello cards, panel handles) start on non-text elements and bail here.
+
+If a suppression case is misbehaving in your app, check the log file (`%AppData%\SnapActions\logs\YYYY-MM-DD.log`) — every gate that fires writes a line with the cursor position and reason. As an escape hatch, add the app's process name to **Settings → Excluded apps**.
+
 ## Build from source
 
 ```bash

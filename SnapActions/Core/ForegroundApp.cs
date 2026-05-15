@@ -81,10 +81,13 @@ public static class ForegroundApp
     }
 
     /// <summary>
-    /// Strict check for paste mode. Only returns true when we're confident
-    /// the user is in a real text input (Win32 caret or ControlType.Edit).
+    /// Strict gate for the Ctrl+Insert capture-fallback: only true when we're confident the
+    /// foreground has *selectable text*. Caret check first (cheap, covers native Win32 edits);
+    /// then the focused element's ControlType.Edit or TextPattern. Deliberately does NOT accept
+    /// non-readonly ValuePattern (sliders, spinners, ComboBoxes) — those aren't text and
+    /// sending Ctrl+Insert into them is at best a no-op and at worst conflicts with app hotkeys.
     /// </summary>
-    public static bool IsTextInputFocused()
+    public static bool IsTextSelectionCapable()
     {
         if (HasWin32Caret()) return true;
         try
@@ -92,15 +95,8 @@ public static class ForegroundApp
             var focused = AutomationElement.FocusedElement;
             if (focused == null) return false;
 
-            var ct = focused.Current.ControlType;
-
-            // Browser <input>, <textarea>, Win32 edit boxes
-            if (ct == ControlType.Edit) return true;
-
-            // Rich text editors (ProseMirror, CodeMirror, etc.) report as Group with TextPattern
-            // Desktop icons report as ListItem with ValuePattern - won't match here
-            if (ct == ControlType.Group && focused.TryGetCurrentPattern(TextPattern.Pattern, out _))
-                return true;
+            if (focused.Current.ControlType == ControlType.Edit) return true;
+            if (focused.TryGetCurrentPattern(TextPattern.Pattern, out _)) return true;
         }
         catch { }
         return false;
@@ -112,20 +108,25 @@ public static class ForegroundApp
     /// TextPattern. False for buttons, title bars, scrollbars, tabs, panes, etc.
     /// </summary>
     /// <remarks>
-    /// Why we need this on top of IsTextInputFocused / NCHITTEST: Chrome and other Electron apps
-    /// draw their own title bars in the same Win32 client area, so NCHITTEST returns HTCLIENT for
-    /// a title-bar drag and IsTextInputFocused returns true if any address bar / search box
-    /// elsewhere in the window happens to still be focused. Asking "what's under the cursor" via
-    /// UI Automation cuts through that — the title-bar element doesn't expose TextPattern.
+    /// Why we need this on top of NCHITTEST + the focused-element checks: Chrome and other
+    /// Electron apps draw their own title bars in the same Win32 client area, so NCHITTEST
+    /// returns HTCLIENT for a title-bar drag and the focused-element check returns true if any
+    /// address bar / search box elsewhere in the window happens to still be focused. Asking
+    /// "what's under the cursor" via UI Automation cuts through that — the title-bar element
+    /// doesn't expose TextPattern.
     /// Slow (50–300 ms on Electron); call from a worker thread, never the hook thread or the
-    /// dispatcher synchronously.
+    /// dispatcher synchronously. Permissive on uncertainty (null element OR exception): better
+    /// to occasionally show the toolbar than to suppress legitimate selections in apps with
+    /// quirky a11y trees.
     /// </remarks>
     public static bool IsTextInputAtPoint(int x, int y)
     {
         try
         {
             var element = AutomationElement.FromPoint(new System.Windows.Point(x, y));
-            if (element == null) return false;
+            // Permissive on null too — same rationale as the catch below. The previous strict
+            // null branch made the gate inconsistent: errors permissive, missing element strict.
+            if (element == null) return true;
 
             var ct = element.Current.ControlType;
 
@@ -148,8 +149,6 @@ public static class ForegroundApp
         }
         catch
         {
-            // Be permissive on errors — better to occasionally show the toolbar than to suppress
-            // legitimate selections in apps that don't cooperate with UI Automation.
             return true;
         }
     }

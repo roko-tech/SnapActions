@@ -23,6 +23,8 @@ public class MouseHook : IDisposable
     // custom scrollbars (Chrome, VS Code, Electron apps) where NCHITTEST returns HTCLIENT.
     private const int ScrollbarEdgeSlopPx = 25;
     private const double PerpendicularRatio = 3.0;
+    private const int GWL_EXSTYLE = -20;
+    private const long WS_EX_LAYOUTRTL = 0x00400000;
 
     // Tuning constants (squared distances in pixels, time in ms).
     // 8px² = 64 — radius below which we still consider the cursor "stationary" during a hold.
@@ -152,11 +154,19 @@ public class MouseHook : IDisposable
         // these but Chrome's accessibility tree exposes the document under its custom scrollbar,
         // so the AutomationElement check returns true. Geometric edge check is a cheap safety
         // net that handles those.
-        if (LooksLikeScrollbarPosition(_mouseDownPoint)) return;
+        if (LooksLikeScrollbarPosition(_mouseDownPoint))
+        {
+            Log.Info($"Suppressed long-press: hold at ({_mouseDownPoint.X},{_mouseDownPoint.Y}) is in the scrollbar slop region");
+            return;
+        }
         _longPressFired = true;
         try { LongPress?.Invoke(_mouseDownPoint); }
         catch (Exception ex) { Log.Warn($"LongPress handler threw: {ex.Message}"); }
     }
+
+    // Logged once per process so a recurring hook-thread bug doesn't spam the log file. Hot path —
+    // fires per mouse event — so we'd rather miss subsequent occurrences than write 60 lines/sec.
+    private static int _hookCallbackErrorLogged;
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
@@ -165,7 +175,11 @@ public class MouseHook : IDisposable
             if (nCode >= 0)
                 ProcessMouseEvent(wParam.ToInt32(), lParam);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            if (Interlocked.CompareExchange(ref _hookCallbackErrorLogged, 1, 0) == 0)
+                Log.Error("MouseHook.ProcessMouseEvent threw (logged once per process)", ex);
+        }
         return CallNextHookEx(_hookId, nCode, wParam, lParam);
     }
 
@@ -185,6 +199,7 @@ public class MouseHook : IDisposable
             // already-visible toolbar.
             if (!IsClickOnClientArea(pt))
             {
+                Log.Info($"Suppressed: WM_LBUTTONDOWN at ({pt.X},{pt.Y}) is on a non-client area (title bar / border / scrollbar)");
                 _isTracking = false;
                 _longPressTimer?.Stop();
                 return;
@@ -229,7 +244,11 @@ public class MouseHook : IDisposable
             {
                 // Same scrollbar suppression as long-press, but with a stronger signal: drag must
                 // be primarily perpendicular to the edge (vertical scrollbar = vertical drag).
-                if (LooksLikeScrollbarDrag(_mouseDownPoint, up)) return;
+                if (LooksLikeScrollbarDrag(_mouseDownPoint, up))
+                {
+                    Log.Info($"Suppressed: drag from ({_mouseDownPoint.X},{_mouseDownPoint.Y}) to ({up.X},{up.Y}) looks like a scrollbar drag");
+                    return;
+                }
                 try { SelectionLikely?.Invoke(up); }
                 catch (Exception ex) { Log.Warn($"SelectionLikely (drag) handler threw: {ex.Message}"); }
                 _clickCount = 0;
@@ -284,22 +303,39 @@ public class MouseHook : IDisposable
         Y = Marshal.ReadInt32(lParam, 4)
     };
 
-    /// <summary>
-    /// True when both endpoints of the drag are within <see cref="ScrollbarEdgeSlopPx"/> of the
-    /// foreground window's right edge AND the motion is primarily vertical, OR both are near the
-    /// bottom edge AND the motion is primarily horizontal. That's a custom-scrollbar drag —
-    /// native scrollbars are caught earlier by NCHITTEST=HTVSCROLL/HTHSCROLL.
-    /// </summary>
     private static bool LooksLikeScrollbarDrag(POINT down, POINT up)
     {
-        if (!TryGetForegroundWindowRect(out var rect)) return false;
+        if (!TryGetForegroundWindowRect(out var rect, out bool isRtl)) return false;
+        return LooksLikeScrollbarDrag(down, up, rect, isRtl);
+    }
 
+    /// <summary>
+    /// Pure-function variant for testability: caller supplies the foreground rect + RTL flag.
+    /// True when both endpoints of the drag are within <see cref="ScrollbarEdgeSlopPx"/> of the
+    /// vertical-scrollbar edge (right for LTR, left for RTL) AND the motion is primarily
+    /// vertical, OR both are near the bottom edge AND the motion is primarily horizontal.
+    /// That's a custom-scrollbar drag — native scrollbars are caught earlier by
+    /// NCHITTEST=HTVSCROLL/HTHSCROLL.
+    /// </summary>
+    internal static bool LooksLikeScrollbarDrag(POINT down, POINT up, RECT rect, bool isRtl)
+    {
         int absDx = Math.Abs(up.X - down.X);
         int absDy = Math.Abs(up.Y - down.Y);
 
-        bool downNearRight = down.X >= rect.right - ScrollbarEdgeSlopPx;
-        bool upNearRight = up.X >= rect.right - ScrollbarEdgeSlopPx;
-        if (downNearRight && upNearRight && absDy > absDx * PerpendicularRatio) return true;
+        // Vertical scrollbar: right edge for LTR, left edge for RTL (Arabic / Hebrew layouts
+        // and apps that explicitly set WS_EX_LAYOUTRTL).
+        bool downNearVer, upNearVer;
+        if (isRtl)
+        {
+            downNearVer = down.X <= rect.left + ScrollbarEdgeSlopPx;
+            upNearVer = up.X <= rect.left + ScrollbarEdgeSlopPx;
+        }
+        else
+        {
+            downNearVer = down.X >= rect.right - ScrollbarEdgeSlopPx;
+            upNearVer = up.X >= rect.right - ScrollbarEdgeSlopPx;
+        }
+        if (downNearVer && upNearVer && absDy > absDx * PerpendicularRatio) return true;
 
         bool downNearBottom = down.Y >= rect.bottom - ScrollbarEdgeSlopPx;
         bool upNearBottom = up.Y >= rect.bottom - ScrollbarEdgeSlopPx;
@@ -308,24 +344,38 @@ public class MouseHook : IDisposable
         return false;
     }
 
-    /// <summary>
-    /// Single-point variant for long-press: don't fire if the mouse is held within the scrollbar
-    /// slop region of the foreground window's right or bottom edge. Looser than the drag check
-    /// since we can't read direction here; biased toward false positives in the slop region (a
-    /// user wanting paste mode at the very edge of a text input has to click ~25 px inside).
-    /// </summary>
     private static bool LooksLikeScrollbarPosition(POINT pt)
     {
-        if (!TryGetForegroundWindowRect(out var rect)) return false;
-        return pt.X >= rect.right - ScrollbarEdgeSlopPx
-            || pt.Y >= rect.bottom - ScrollbarEdgeSlopPx;
+        if (!TryGetForegroundWindowRect(out var rect, out bool isRtl)) return false;
+        return LooksLikeScrollbarPosition(pt, rect, isRtl);
     }
 
-    private static bool TryGetForegroundWindowRect(out RECT rect)
+    /// <summary>
+    /// Pure-function variant for testability. Single-point check for long-press: don't fire if
+    /// the mouse is held within the scrollbar slop region of the vertical-scrollbar edge (right
+    /// for LTR, left for RTL) or the bottom edge. Looser than the drag check since we can't read
+    /// direction for a hold; biased toward false positives in the slop region (a user wanting
+    /// paste mode at the very edge of a text input has to click ~25 px inside).
+    /// </summary>
+    internal static bool LooksLikeScrollbarPosition(POINT pt, RECT rect, bool isRtl)
+    {
+        bool nearVer = isRtl
+            ? pt.X <= rect.left + ScrollbarEdgeSlopPx
+            : pt.X >= rect.right - ScrollbarEdgeSlopPx;
+        return nearVer || pt.Y >= rect.bottom - ScrollbarEdgeSlopPx;
+    }
+
+    private static bool TryGetForegroundWindowRect(out RECT rect, out bool isRtl)
     {
         rect = default;
+        isRtl = false;
         IntPtr hwnd = GetForegroundWindow();
         if (hwnd == IntPtr.Zero) return false;
+        // WS_EX_LAYOUTRTL signals Arabic/Hebrew-style mirrored layouts; scrollbars flip to the
+        // left edge. Most apps don't set this even in RTL locales (they handle mirroring
+        // internally), so this catches the explicit cases without false positives elsewhere.
+        long exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();
+        isRtl = (exStyle & WS_EX_LAYOUTRTL) != 0;
         return GetWindowRect(hwnd, out rect);
     }
 
@@ -390,6 +440,10 @@ public class MouseHook : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    // Internal so SnapActions.Tests can construct synthetic RECTs for scrollbar-helper tests.
     [StructLayout(LayoutKind.Sequential)]
-    private struct RECT { public int left, top, right, bottom; }
+    internal struct RECT { public int left, top, right, bottom; }
 }

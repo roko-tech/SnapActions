@@ -17,12 +17,11 @@ public class SelectionTracker
     // TickCount64 is monotonic — wall-clock jumps (NTP sync, hibernation resume, manual time
     // change) used to spuriously suppress or re-fire the debounce when DateTime.UtcNow drifted.
     private long _lastShowTicks;
-    // Most recent mouse-down position. SelectionLikely fires at mouse-up; we use this to gate
-    // drag-detection on whether the drag *started* on a text element (file/icon/object drags
-    // start on non-text elements; text selections always start on text). Volatile because read
-    // on the UI dispatcher and written on the hook thread.
-    private volatile int _lastMouseDownX;
-    private volatile int _lastMouseDownY;
+    // Most recent mouse-down position, packed atomically: high 32 bits = X, low 32 bits = Y as
+    // uint bit pattern (preserves negative coords from monitors left/above the primary). Single
+    // long via Interlocked so the UI-dispatcher reader can never see a torn (Xₙ, Yₙ₊₁) pair from
+    // a concurrent hook-thread write.
+    private long _lastMouseDownPacked;
     private const long DebounceMs = 250;
     private static readonly uint OwnPid = (uint)Environment.ProcessId;
 
@@ -70,11 +69,10 @@ public class SelectionTracker
         // Quick checks only — no WPF access from hook thread
         if (IsSelfFocused()) { _mouseHook.CancelTracking(); return; }
 
-        // Capture for the OnSelectionLikely mouse-down UIA gate. Two volatile ints rather than a
-        // struct because the runtime guarantees torn-write-free reads/writes for aligned ints
-        // but not for multi-field structs.
-        _lastMouseDownX = pt.X;
-        _lastMouseDownY = pt.Y;
+        // Capture for the OnSelectionLikely mouse-down UIA gate. Pack into one long via
+        // Interlocked.Exchange so the UI-thread reader can never observe a torn pair.
+        System.Threading.Interlocked.Exchange(
+            ref _lastMouseDownPacked, ((long)pt.X << 32) | (uint)pt.Y);
 
         Application.Current.Dispatcher.InvokeAsync(() =>
         {
@@ -83,6 +81,25 @@ public class SelectionTracker
         }, DispatcherPriority.Background);
     }
 
+    /// <summary>
+    /// Selection-likely pipeline (gates, in order):
+    /// <list type="number">
+    ///   <item>MouseHook.NCHITTEST gate (mouse-down) — rejects clicks on title bars / borders /
+    ///         native scrollbars before tracking even starts.</item>
+    ///   <item>MouseHook.LooksLikeScrollbarDrag (mouse-up) — rejects perpendicular drags along
+    ///         the right/left/bottom edges (custom scrollbars in Chrome/Electron/etc.).</item>
+    ///   <item>This method's pre-checks: self-PID, debounce, Enabled, IsPointInside (toolbar
+    ///         self-click), ExcludedApps.</item>
+    ///   <item>TextCapture.WM_COPY — silent path; Ctrl+Insert fallback gated by
+    ///         IsTextSelectionCapable so we don't send the synthetic key into non-text apps.</item>
+    ///   <item>IsTextInputAtPoint(mouse-up) — rejects when the cursor isn't on selectable text
+    ///         (catches custom-chrome title-bar drags after WM_COPY happened to return text).</item>
+    ///   <item>IsTextInputAtPoint(mouse-down) — rejects when the drag *started* on a non-text
+    ///         element (catches drag-and-drop and object drags).</item>
+    /// </list>
+    /// LongPress has a parallel pipeline: NCHITTEST + LooksLikeScrollbarPosition in MouseHook,
+    /// then IsTextInputAtPoint at the cursor in OnLongPress.
+    /// </summary>
     private void OnSelectionLikely(MouseHook.POINT cursorPos)
     {
         if (IsSelfFocused()) return;
@@ -110,16 +127,22 @@ public class SelectionTracker
                 // definition; file/icon/object drags start on non-text elements (file icons,
                 // Trello cards, panel handles, etc.). The mouse-up check above only catches
                 // drag-to-non-text — this covers drag-from-non-text, including drag-and-drop.
-                int downX = _lastMouseDownX, downY = _lastMouseDownY;
+                long packed = System.Threading.Interlocked.Read(ref _lastMouseDownPacked);
+                int downX = (int)(packed >> 32);
+                int downY = (int)packed;
                 var atDownTask = Task.Run(() => ForegroundApp.IsTextInputAtPoint(downX, downY));
 
                 var text = await TextCapture.CaptureSelectedTextAsync();
                 if (string.IsNullOrWhiteSpace(text)) return;
 
-                if (!await atPointTask) return;
+                if (!await atPointTask)
+                {
+                    SnapActions.Helpers.Log.Info($"Suppressed: mouse-up position ({cursorPos.X},{cursorPos.Y}) wasn't a text element (likely custom-chrome title bar or non-text drag target)");
+                    return;
+                }
                 if (!await atDownTask)
                 {
-                    SnapActions.Helpers.Log.Info("Suppressed: mouse-down position wasn't a text element (likely drag-and-drop or object drag)");
+                    SnapActions.Helpers.Log.Info($"Suppressed: mouse-down position ({downX},{downY}) wasn't a text element (likely drag-and-drop or object drag)");
                     return;
                 }
 
@@ -159,7 +182,11 @@ public class SelectionTracker
                 // address bar) "focused" — IsTextInputFocused would return true and the paste
                 // menu would pop up over the title bar. IsTextInputAtPoint asks UI Automation
                 // what's literally under the cursor instead.
-                if (!await Task.Run(() => ForegroundApp.IsTextInputAtPoint(cursorPos.X, cursorPos.Y))) return;
+                if (!await Task.Run(() => ForegroundApp.IsTextInputAtPoint(cursorPos.X, cursorPos.Y)))
+                {
+                    SnapActions.Helpers.Log.Info($"Suppressed long-press: hold position ({cursorPos.X},{cursorPos.Y}) isn't a text element");
+                    return;
+                }
 
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 

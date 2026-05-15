@@ -19,7 +19,10 @@ public static class TextCapture
     private static readonly INPUT[] ShiftInsertInputs = BuildExtendedInsertCombo(VK_SHIFT);
     private static readonly int InputSize = Marshal.SizeOf<INPUT>();
 
-    // Serialize captures so two rapid selections can't interleave snapshot/restore and corrupt the clipboard.
+    // Serialize captures so two rapid selections can't interleave snapshot/restore and corrupt
+    // the clipboard. Acquired non-blocking via WaitAsync(0): if another capture is in flight we
+    // drop this round entirely rather than queueing — the SelectionTracker debounce already
+    // gates us at 250 ms and a captured-but-deferred selection would be stale by the time it ran.
     private static readonly System.Threading.SemaphoreSlim _captureLock = new(1, 1);
 
     public static async Task<string?> CaptureSelectedTextAsync()
@@ -152,19 +155,17 @@ public static class TextCapture
     }
 
     /// <summary>
-    /// Cheap check before the Ctrl+Insert fallback fires. Caret check first (microseconds, covers
-    /// native Win32 edits); falls through to a UIA TextPattern probe on the focused element only
-    /// when there's no caret. Returns true on errors so cooperative apps with quirky a11y trees
-    /// don't lose their capture path.
+    /// Strict gate before the Ctrl+Insert fallback fires. Returns true only when we're confident
+    /// the foreground has selectable text (caret, ControlType.Edit, or TextPattern). Returns
+    /// false on exception — the gate exists to prevent the synthetic key from reaching apps that
+    /// bind Insert to non-paste actions (games, terminals, etc.); failing open into those exact
+    /// apps is the worst-case behavior. If a cooperative app's a11y is transiently broken we
+    /// lose one capture and try again on the next selection — preferable to a stray Insert.
     /// </summary>
     private static bool IsForegroundTextCapable()
     {
-        try
-        {
-            // Reuse ForegroundApp's gates — they already centralize caret detection + UIA probing.
-            return ForegroundApp.IsEditableFieldFocused();
-        }
-        catch { return true; }
+        try { return ForegroundApp.IsTextSelectionCapable(); }
+        catch { return false; }
     }
 
     private static void CopyViaWindowMessage()
