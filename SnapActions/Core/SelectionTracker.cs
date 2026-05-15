@@ -17,6 +17,12 @@ public class SelectionTracker
     // TickCount64 is monotonic — wall-clock jumps (NTP sync, hibernation resume, manual time
     // change) used to spuriously suppress or re-fire the debounce when DateTime.UtcNow drifted.
     private long _lastShowTicks;
+    // Most recent mouse-down position. SelectionLikely fires at mouse-up; we use this to gate
+    // drag-detection on whether the drag *started* on a text element (file/icon/object drags
+    // start on non-text elements; text selections always start on text). Volatile because read
+    // on the UI dispatcher and written on the hook thread.
+    private volatile int _lastMouseDownX;
+    private volatile int _lastMouseDownY;
     private const long DebounceMs = 250;
     private static readonly uint OwnPid = (uint)Environment.ProcessId;
 
@@ -64,6 +70,12 @@ public class SelectionTracker
         // Quick checks only — no WPF access from hook thread
         if (IsSelfFocused()) { _mouseHook.CancelTracking(); return; }
 
+        // Capture for the OnSelectionLikely mouse-down UIA gate. Two volatile ints rather than a
+        // struct because the runtime guarantees torn-write-free reads/writes for aligned ints
+        // but not for multi-field structs.
+        _lastMouseDownX = pt.X;
+        _lastMouseDownY = pt.Y;
+
         Application.Current.Dispatcher.InvokeAsync(() =>
         {
             if (_toolbar is { IsVisible: true } && !_toolbar.IsPointInside(pt.X, pt.Y))
@@ -94,11 +106,22 @@ public class SelectionTracker
                 // the title bar and we'd otherwise show the toolbar with whatever stale selection
                 // happened to be in the page.
                 var atPointTask = Task.Run(() => ForegroundApp.IsTextInputAtPoint(cursorPos.X, cursorPos.Y));
+                // Mouse-down position gate. Text selections always start on a text element by
+                // definition; file/icon/object drags start on non-text elements (file icons,
+                // Trello cards, panel handles, etc.). The mouse-up check above only catches
+                // drag-to-non-text — this covers drag-from-non-text, including drag-and-drop.
+                int downX = _lastMouseDownX, downY = _lastMouseDownY;
+                var atDownTask = Task.Run(() => ForegroundApp.IsTextInputAtPoint(downX, downY));
 
                 var text = await TextCapture.CaptureSelectedTextAsync();
                 if (string.IsNullOrWhiteSpace(text)) return;
 
                 if (!await atPointTask) return;
+                if (!await atDownTask)
+                {
+                    SnapActions.Helpers.Log.Info("Suppressed: mouse-down position wasn't a text element (likely drag-and-drop or object drag)");
+                    return;
+                }
 
                 int showDelay = SettingsManager.Current.ToolbarShowDelay;
                 if (showDelay > 0) await Task.Delay(showDelay);

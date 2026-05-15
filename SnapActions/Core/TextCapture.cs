@@ -48,6 +48,17 @@ public static class TextCapture
             // Fall back to Ctrl+Insert (for browsers). Up to 250 ms total.
             if (string.IsNullOrEmpty(text))
             {
+                // Skip the synthetic key send when the foreground element doesn't expose a
+                // TextPattern. Insert / Ctrl+Insert is bound to non-paste actions in some apps
+                // (games map Insert to inventory, terminals to selection paste, etc.); sending
+                // it into a non-text app produces unwanted side effects with no upside —
+                // there's nothing to copy.
+                if (!await Task.Run(IsForegroundTextCapable))
+                {
+                    SnapActions.Helpers.Log.Info("Skipping Ctrl+Insert fallback — focused element has no TextPattern");
+                    await Application.Current.Dispatcher.InvokeAsync(() => RestoreClipboard(saved));
+                    return null;
+                }
                 CopyViaKeyboard();
                 for (int i = 0; i < 25; i++)
                 {
@@ -138,6 +149,22 @@ public static class TextCapture
             try { return Clipboard.ContainsText() ? Clipboard.GetText() : null; }
             catch { return null; }
         });
+    }
+
+    /// <summary>
+    /// Cheap check before the Ctrl+Insert fallback fires. Caret check first (microseconds, covers
+    /// native Win32 edits); falls through to a UIA TextPattern probe on the focused element only
+    /// when there's no caret. Returns true on errors so cooperative apps with quirky a11y trees
+    /// don't lose their capture path.
+    /// </summary>
+    private static bool IsForegroundTextCapable()
+    {
+        try
+        {
+            // Reuse ForegroundApp's gates — they already centralize caret detection + UIA probing.
+            return ForegroundApp.IsEditableFieldFocused();
+        }
+        catch { return true; }
     }
 
     private static void CopyViaWindowMessage()
