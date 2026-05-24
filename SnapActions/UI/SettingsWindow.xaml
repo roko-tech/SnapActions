@@ -233,15 +233,24 @@
             </StackPanel>
         </ScrollViewer>
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
-            <Button Content="Save" Padding="20,8" Margin="0,0,8,0"
-                    Background="#FF89B4FA" Foreground="#1E1E2E"
-                    BorderThickness="0" Click="Save_Click"/>
-            <Button Content="Close" Padding="20,8"
-                    Background="#FF2D2D3D"
-                    Foreground="#FFCDD6F4"
-                    BorderBrush="#FF3D3D50"
-                    Click="Close_Click"/>
-        </StackPanel>
+        <Grid Grid.Row="2" Margin="0,15,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" x:Name="VersionText"
+                       Foreground="#FF6C7086" FontSize="10"
+                       VerticalAlignment="Center"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Save" Padding="20,8" Margin="0,0,8,0"
+                        Background="#FF89B4FA" Foreground="#1E1E2E"
+                        BorderThickness="0" Click="Save_Click"/>
+                <Button Content="Close" Padding="20,8"
+                        Background="#FF2D2D3D"
+                        Foreground="#FFCDD6F4"
+                        BorderBrush="#FF3D3D50"
+                        Click="Close_Click"/>
+            </StackPanel>
+        </Grid>
     </Grid>
 </Window>

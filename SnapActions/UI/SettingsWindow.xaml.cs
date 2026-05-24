@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -22,6 +23,12 @@ public partial class SettingsWindow : Window
         _secondaryBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xA6, 0xAD, 0xC8));
         _textBrush.Freeze();
         _secondaryBrush.Freeze();
+
+        // Show the version pulled from the assembly. ToString(3) drops the .0 build-revision
+        // component so "1.6.13.0" displays as "v1.6.13" — matches the csproj <Version> and
+        // the GitHub release tag.
+        var v = Assembly.GetExecutingAssembly().GetName().Version;
+        VersionText.Text = v != null ? $"v{v.ToString(3)}" : "";
 
         // Debounce auto-save so a fast typer in the excluded-apps box doesn't trigger 30 disk writes.
         // Save synchronously on the UI thread — settings are tiny (kilobytes) and the previous
