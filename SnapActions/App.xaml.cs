@@ -55,11 +55,16 @@ public partial class App : Application
 
         _tracker = new SelectionTracker();
         _tracker.Start();
+
+        // Global Esc-to-dismiss for our windows. Replaces the previous per-window
+        // GetAsyncKeyState polling — see KeyboardHook.cs for the rationale.
+        KeyboardHook.Install();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
         Log.Info("SnapActions shutting down");
+        KeyboardHook.Uninstall();
         _tracker?.Stop();
         _trayIcon?.Dispose();
         if (_ownsMutex)

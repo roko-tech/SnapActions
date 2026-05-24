@@ -36,6 +36,11 @@ public class TransformAndEncodingTests
     [InlineData("case_snake", "helloWorld", "hello_world")] // camelCase boundary detection
     [InlineData("case_kebab", "Hello World", "hello-world")]
     [InlineData("case_kebab", "helloWorld", "hello-world")]
+    // Acronym boundary: SplitWords must break "XMLHttpRequest" as XML | Http | Request, not as
+    // "XMLHttp" + "Request". Pre-fix, snake_case of "XMLHttpRequest" was "xmlhttp_request".
+    [InlineData("case_snake", "XMLHttpRequest", "xml_http_request")]
+    [InlineData("case_kebab", "URLParser", "url-parser")]
+    [InlineData("case_snake", "ABC", "abc")] // pure-uppercase run with no lower stays one word
     public void Case_Transforms(string id, string input, string expected) =>
         Assert.Equal(expected, Run(ActionCategory.Transform, id, input));
 

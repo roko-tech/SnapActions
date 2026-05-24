@@ -116,19 +116,19 @@ public static class ProcessHelper
         {
             if (File.Exists(path))
             {
-                Process.Start("explorer.exe", $"/select,\"{path}\"");
+                StartExplorer($"/select,{path}");
                 return new ActionResult(true, Message: successMessage);
             }
             if (Directory.Exists(path))
             {
-                Process.Start("explorer.exe", $"\"{path}\"");
+                StartExplorer(path);
                 return new ActionResult(true, Message: successMessage);
             }
             // Fall back to the parent directory (file was deleted but folder still exists).
             var parent = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent))
             {
-                Process.Start("explorer.exe", $"\"{parent}\"");
+                StartExplorer(parent);
                 return new ActionResult(true, Message: "Parent folder opened (file missing)");
             }
             return new ActionResult(false, Message: "Path not found");
@@ -137,5 +137,18 @@ public static class ProcessHelper
         {
             return new ActionResult(false, Message: ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Launches explorer.exe with a single argument. Uses ProcessStartInfo.ArgumentList so the
+    /// path is quoted by the runtime — no interpolation into a command-line string, no chance
+    /// of an embedded character changing argument boundaries. (The path is also pre-cleaned of
+    /// quotes by CleanPath, but defense in depth.)
+    /// </summary>
+    private static void StartExplorer(string singleArg)
+    {
+        var psi = new ProcessStartInfo("explorer.exe") { UseShellExecute = false };
+        psi.ArgumentList.Add(singleArg);
+        Process.Start(psi);
     }
 }

@@ -38,6 +38,11 @@
                           Content="Replace selection when transforming text"
                           Foreground="#FFCDD6F4" Margin="0,4"
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+                <CheckBox x:Name="RestoreClipboardCheck"
+                          Content="Restore previous clipboard ~3 s after a copy action"
+                          ToolTip="When you click a toolbar action that copies text (Format JSON, Convert Color, etc.), the result lands on your clipboard. With this on, the previous clipboard contents are put back about 3 seconds later — long enough for you to paste the result first."
+                          Foreground="#FFCDD6F4" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
 
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                     <TextBlock Text="Show delay:" Foreground="#FFCDD6F4"

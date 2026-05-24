@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace SnapActions.Helpers;
@@ -123,8 +122,11 @@ public static partial class UnitConverter
         var m = NumberAndUnit().Match(text.Trim());
         if (!m.Success) return false;
 
-        var numText = m.Groups[1].Value.Replace(",", "");
-        if (!double.TryParse(numText, NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+        // Use LocaleNumber so European-decimal selections ("1,5 kg") aren't silently misparsed as
+        // 15. The previous Replace(",", "") stripped the decimal comma without inspecting whether
+        // it was acting as a decimal or as a thousands separator. Same helper the currency popup
+        // uses for the same reason.
+        if (!LocaleNumber.TryParse(m.Groups[1].Value, out value))
             return false;
 
         var unitText = m.Groups[2].Value.Trim();

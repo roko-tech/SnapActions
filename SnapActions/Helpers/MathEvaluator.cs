@@ -3,9 +3,11 @@ namespace SnapActions.Helpers;
 /// <summary>
 /// Recursive-descent math expression parser.
 /// Operators: + - * / % ^ and parentheses, unary +/-.
-/// Functions: sqrt, sin, cos, tan, log (natural), log10, abs, round, floor, ceil, exp.
-/// Constants: pi, e.
-/// Commas are stripped (so "1,000+200" works).
+/// Functions: sqrt, sin, cos, tan, log (natural), ln, log10, log2, abs, round, floor, ceil, exp.
+/// Constants: pi, e, tau.
+/// Numbers use period as the decimal separator. Commas are treated as thousands separators and
+/// stripped before parsing (so "1,000+200" works). European-decimal numbers like "1,5*2" will
+/// be misparsed as "15*2"; users on European locales should write the decimal as "1.5".
 /// </summary>
 public static class MathEvaluator
 {

@@ -119,8 +119,12 @@ public static class SettingsManager
         }
     }
 
-    // Save can be invoked from multiple threads (auto-save Task.Run, in-toolbar edits, tray menu).
-    // The temp-file + Move dance isn't safe under concurrent writers — both could clobber the .tmp.
+    // Save is currently called only from the WPF UI thread (Settings handlers, toolbar edits,
+    // tray menu, post-SetAutoStart). Keep this lock as a defense-in-depth guard so a future
+    // non-UI-thread caller can't clobber the .tmp file mid-write — but note that the lock does
+    // NOT protect against a UI-thread mutation of SettingsManager.Current racing with this Save
+    // (e.g. JsonSerializer.Serialize iterating a List that's being modified). The single-threaded
+    // invariant above is what keeps the serializer safe; the lock is only for the file write.
     private static readonly object _saveLock = new();
 
     public static void Save()

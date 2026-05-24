@@ -16,6 +16,12 @@ public class UnitConverterTests
     [InlineData("1 kg", 1, "kg")]
     [InlineData("5 fl oz", 5, "fl oz")] // regression: B1 in v1.5.6
     [InlineData("5 fl. oz", 5, "fl oz")]
+    // Locale handling — the parser must agree with LocaleNumber, not strip commas blindly.
+    // Pre-fix, "1,5 kg" silently parsed as 15 kg.
+    [InlineData("1,5 kg", 1.5, "kg")]      // European decimal-comma
+    [InlineData("1,500 kg", 1500, "kg")]   // American thousands-comma
+    [InlineData("1,234.56 kg", 1234.56, "kg")] // American with both
+    [InlineData("-40 c", -40, "°C")]       // negative
     public void TryParse_Matches(string text, double expectedValue, string expectedSymbol)
     {
         Assert.True(UnitConverter.TryParse(text, out var v, out var unit));

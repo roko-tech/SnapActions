@@ -106,17 +106,27 @@ public class ActionRegistry
     }
 
     /// <summary>
+    /// The fixed (non-search) action IDs — invariant across the process lifetime, so we
+    /// instantiate the registry once instead of rebuilding it on every call.
+    /// </summary>
+    private static readonly Lazy<IReadOnlySet<string>> _fixedActionIds = new(() =>
+    {
+        var registry = new ActionRegistry();
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var a in registry._allActions) ids.Add(a.Id);
+        return ids;
+    });
+
+    /// <summary>
     /// All action IDs known to the registry, including the generated `search_<engine.Id>` ones.
     /// Used by SettingsManager.PruneStaleActionIds to drop orphan entries on Load.
     /// </summary>
     public static IReadOnlySet<string> GetAllKnownActionIds(IEnumerable<Config.SearchEngine> engines)
     {
-        // Single source of truth: build a transient registry and harvest its IDs. The previous
-        // hand-maintained list silently dropped pinned/disabled entries whenever a new action was
-        // added without the list being updated.
-        var ids = new HashSet<string>(StringComparer.Ordinal);
-        var registry = new ActionRegistry();
-        foreach (var a in registry._allActions) ids.Add(a.Id);
+        // Reuse the cached fixed-ID set and just merge in the per-call search engine IDs. Previously
+        // every call constructed a fresh ActionRegistry — fine for the single Load-time caller but
+        // wasteful if anything else starts to use this API.
+        var ids = new HashSet<string>(_fixedActionIds.Value, StringComparer.Ordinal);
         foreach (var e in engines) ids.Add($"search_{e.Id}");
         return ids;
     }
@@ -232,7 +242,11 @@ public class ActionRegistry
 
     private static string[] SplitWords(string text)
     {
-        // Split on spaces, underscores, hyphens, and camelCase boundaries
+        // Split on spaces, underscores, hyphens, dots, and camelCase boundaries.
+        // Two camel-case boundaries are recognized:
+        //   1. upper-after-lower      ("helloWorld" → "hello" | "World")
+        //   2. upper-after-upper but followed by lower ("XMLHttpRequest" → "XML" | "Http" | "Request")
+        // Without rule 2, "XMLHttpRequest" would split as "XMLHttp" + "Request".
         var result = new List<string>();
         var current = new System.Text.StringBuilder();
 
@@ -243,7 +257,9 @@ public class ActionRegistry
             {
                 if (current.Length > 0) { result.Add(current.ToString()); current.Clear(); }
             }
-            else if (i > 0 && char.IsUpper(c) && char.IsLower(text[i - 1]))
+            else if (i > 0 && char.IsUpper(c) &&
+                     (char.IsLower(text[i - 1]) ||
+                      (i + 1 < text.Length && char.IsLower(text[i + 1]))))
             {
                 if (current.Length > 0) { result.Add(current.ToString()); current.Clear(); }
                 current.Append(c);
