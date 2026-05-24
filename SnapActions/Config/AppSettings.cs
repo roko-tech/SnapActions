@@ -79,6 +79,15 @@ public class AppSettings
         "KeePass", "KeePassXC", "1Password", "Bitwarden", "Dashlane", "Enpass", "LastPass",
         "RoboForm", "NordPass", "ProtonPass", "KeeperPasswordManager"
     ];
+    /// <summary>
+    /// Tracks which "default ExcludedApps additions" generation this settings file has
+    /// already absorbed. SettingsManager.MigrateExcludedAppsDefaults merges new entries
+    /// forward on Load — users upgrading from an earlier version pick up newly-added
+    /// exclusions automatically without overwriting their own customizations. Removing
+    /// an entry sticks because we only ever *add*, and we only add once per generation.
+    /// </summary>
+    public int ExcludedAppsDefaultsVersion { get; set; } = 0;
+
     public bool ReplaceSelectionOnTransform { get; set; } = true;
 
     /// <summary>

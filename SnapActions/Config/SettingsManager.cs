@@ -43,8 +43,40 @@ public static class SettingsManager
         // Migrate: update built-in search engines to latest defaults
         MigrateSearchEngines();
         MigrateActionIds();
+        MigrateExcludedAppsDefaults();
         PruneStaleActionIds();
         PruneStaleBackups();
+    }
+
+    /// <summary>
+    /// Newly-added default ExcludedApps entries, grouped by the version that introduced them.
+    /// Each existing settings.json moves forward through this list once — users keep their
+    /// own additions, and any entry they explicitly remove stays removed because we record
+    /// the highest applied version in ExcludedAppsDefaultsVersion. New entries should
+    /// always be appended with the next sequential version.
+    /// </summary>
+    private static readonly (int Version, string[] Apps)[] ExcludedAppsDefaultsHistory =
+    {
+        // v1.6.15: PotPlayer reacts to a synthetic Ctrl+Insert (the capture-cascade's last
+        // resort) as a non-copy shortcut, and its custom-chrome title bar reports as client
+        // area to NCHITTEST so a drag-as-title-bar isn't suppressed earlier. Excluding it
+        // entirely is the surgical fix for the user-reported interference; users who do want
+        // capture in PotPlayer can remove these from Settings → Excluded apps.
+        (Version: 1, Apps: new[] { "PotPlayerMini64", "PotPlayerMini" }),
+    };
+
+    private static void MigrateExcludedAppsDefaults()
+    {
+        foreach (var (version, apps) in ExcludedAppsDefaultsHistory)
+        {
+            if (Current.ExcludedAppsDefaultsVersion >= version) continue;
+            foreach (var app in apps)
+            {
+                if (!Current.ExcludedApps.Any(e => e.Equals(app, StringComparison.OrdinalIgnoreCase)))
+                    Current.ExcludedApps.Add(app);
+            }
+            Current.ExcludedAppsDefaultsVersion = version;
+        }
     }
 
     /// <summary>
