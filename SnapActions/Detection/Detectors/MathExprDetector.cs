@@ -10,9 +10,17 @@ public partial class MathExprDetector : ITextDetector
     [GeneratedRegex(@"^[\d\s\+\-\*/%\^\(\)\.,a-zA-Z]+$")]
     private static partial Regex SimpleMathPattern();
 
-    [GeneratedRegex(@"[\+\-\*/%\^]|sqrt|sin|cos|tan|log|abs|round|floor|ceil|exp", RegexOptions.IgnoreCase)]
-    private static partial Regex HasOperatorOrFunction();
+    [GeneratedRegex(@"[a-zA-Z]+")]
+    private static partial Regex LetterRunPattern();
 
+    // Operator characters that count as a "this is math" signal. Kept as a single source of
+    // truth so the pre-filter agrees with what ParseExpression actually consumes.
+    private static readonly char[] MathOperators = ['+', '-', '*', '/', '%', '^'];
+
+    // Functions and constants the evaluator recognizes. Single source of truth for both the
+    // letter-run-validity check below AND the operator-or-known-token pre-filter. Pre-fix,
+    // the pre-filter was a separate regex that omitted `ln`, so `ln(10)` silently classified
+    // as PlainText even though both this set and MathEvaluator.ApplyFunction supported it.
     private static readonly HashSet<string> AllowedTokens = new(StringComparer.OrdinalIgnoreCase)
     {
         "sqrt", "sin", "cos", "tan", "log", "ln", "log10", "log2",
@@ -34,25 +42,30 @@ public partial class MathExprDetector : ITextDetector
         var trimmed = text.Trim();
         if (trimmed.Length < 3 || trimmed.Contains('\n')) return false;
 
-        if (!HasOperatorOrFunction().IsMatch(trimmed)) return false;
         if (!SimpleMathPattern().IsMatch(trimmed)) return false;
 
         // Don't classify ISO-date-shaped strings as math even if the date detector rejected them.
         if (IsoDateShape().IsMatch(trimmed)) return false;
 
-        // Reject any letter run that isn't a known math token (e.g. "hello+1")
-        foreach (Match m in System.Text.RegularExpressions.Regex.Matches(trimmed, "[a-zA-Z]+"))
-            if (!AllowedTokens.Contains(m.Value)) return false;
-
-        // Need at least one digit OR at least two known constant/function tokens
-        // (so "pi+e" or "sqrt(pi)" pass even without a digit).
-        if (!trimmed.Any(char.IsDigit))
+        // Every letter run must be a recognized function or constant token. Counted in the same
+        // pass so the digit-vs-2-token rule below doesn't re-walk the string.
+        int tokenCount = 0;
+        foreach (Match m in LetterRunPattern().Matches(trimmed))
         {
-            int tokenCount = 0;
-            foreach (Match m in System.Text.RegularExpressions.Regex.Matches(trimmed, "[a-zA-Z]+"))
-                if (AllowedTokens.Contains(m.Value)) tokenCount++;
-            if (tokenCount < 2) return false;
+            if (!AllowedTokens.Contains(m.Value)) return false;
+            tokenCount++;
         }
+
+        // Need a "this is math" signal:
+        //   - an operator (covers "2+3", "pi*tau")
+        //   - or a digit AND at least one known token (covers "ln(10)", "sqrt(16)")
+        //   - or at least two known tokens (covers "pi+e" via operator, "sqrt(pi)" via tokens)
+        // Without any of these, a single token like "tau" or a bare number like "200" doesn't
+        // qualify as a math *expression*.
+        bool hasOperator = trimmed.IndexOfAny(MathOperators) >= 0;
+        bool hasDigit = trimmed.Any(char.IsDigit);
+        if (!hasOperator && tokenCount < 2 && !(hasDigit && tokenCount >= 1))
+            return false;
 
         result = new TextAnalysis(TextType.MathExpression, 0.85);
         return true;

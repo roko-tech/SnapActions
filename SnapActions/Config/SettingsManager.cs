@@ -147,9 +147,11 @@ public static class SettingsManager
         }
     }
 
-    // Serialize SetAutoStart calls — rapid checkbox toggles in Settings + tray menu both fire
-    // Task.Run(SetAutoStart, ...). Without this, two registry writes can interleave and the
-    // saved settings.json AutoStart flag could disagree with the registry value.
+    // Defense-in-depth. Today both call sites (SettingsWindow checkbox handler + tray menu)
+    // run on the WPF UI dispatcher, so concurrent SetAutoStart can't actually happen — the
+    // single-threaded dispatcher serializes them for free. The lock survives any future caller
+    // that moves back to Task.Run, keeping the registry write + Save serialized so rapid
+    // toggles can't produce a settings.json that disagrees with the registry value.
     private static readonly object _autoStartLock = new();
 
     public static void SetAutoStart(bool enable)
