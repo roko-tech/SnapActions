@@ -117,7 +117,12 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 
 **Dedicated mouse-hook thread.** The low-level Windows mouse hook runs on its own STA background thread with its own dispatcher. UI thread work — WPF rendering, GC, layout — never delays mouse callbacks. Selection debounce uses `Environment.TickCount64` so NTP sync, hibernation resume, or manual clock changes never spuriously suppress or re-fire the hook.
 
-**Text capture without keyboard interference.** SnapActions sends `WM_COPY` directly to the focused window first; on browsers that don't respond it falls back to **Ctrl+Insert** — not Ctrl+C — to avoid triggering browser extensions like [h5player](https://github.com/xxxily/h5player) that hook letter keys. The user's clipboard is snapshotted across all formats and restored after capture, with `null` snapshots distinguished from empty-clipboard snapshots so transient errors don't wipe the user's data.
+**Text capture in three layers, keys last.** SnapActions tries the quietest mechanism first and only escalates when it has to:
+1. **`WM_COPY`** to the focused window. No keystrokes, no clipboard read needed beyond the post-copy result. Works for native Win32 apps.
+2. **UI Automation `TextPattern.GetSelection`** on the focused element (walking up to 6 parents to find the document). Still no keystrokes — reads the selection from the accessibility tree. Covers Chrome, Edge, and most Electron apps. Slower than WM_COPY (50–500 ms in apps where a11y isn't already loaded) but quiet — apps with global key hooks (h5player, AutoHotkey, IMEs, game overlays) never see a synthetic key for this path.
+3. **Ctrl+Insert** via `SendInput` — last resort for apps where neither WM_COPY nor UIA work (Java Swing, some older Edge contexts, certain custom Electron renderers). Insert, not C, so browser extensions that hook letter keys don't see it. If a specific app still misbehaves on the synthetic key, add its process name to **Settings → Excluded apps** to suppress capture there entirely.
+
+The user's clipboard is snapshotted across all formats before any of this and restored after, with `null` snapshots distinguished from empty-clipboard snapshots so transient errors don't wipe the user's data.
 
 **Editable-field detection.** Transforms and paste-mode use a multi-layer check:
 - **Win32 caret presence** — covers Notepad and other native text controls
@@ -133,9 +138,7 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 1. **NCHITTEST gate** (mouse-down) — clicks on a window's title bar, resize border, or native scrollbar are dropped before tracking even starts. The hook can't tell those drags from a text-selection drag at the OS level, so we ask the receiving window via `WM_NCHITTEST`.
 2. **Scrollbar-edge heuristic** (mouse-up) — a drag with both endpoints within ~25 px of the right (or left, in RTL layouts) edge AND primarily vertical is treated as a custom-scrollbar drag (Chrome, VS Code, Slack, Electron apps). Same with bottom edge + horizontal motion.
 3. **Excluded-app + self-PID checks** — anything in your Settings → Excluded apps list never sees a toolbar, and clicks on SnapActions's own toolbar are ignored.
-4. **`WM_COPY` capture, then UIA-gated Ctrl+Insert fallback** — if `WM_COPY` returns nothing, we only send the synthetic Ctrl+Insert when the focused element exposes a text caret, `ControlType.Edit`, or a `TextPattern`. Apps that bind Insert to non-paste actions (games, terminals) are spared the synthetic key.
-5. **Mouse-up element check** — UIA `IsTextInputAtPoint` at the cursor position. Catches custom-chrome title bars and tab strips that NCHITTEST returns `HTCLIENT` for.
-6. **Mouse-down element check** — same UIA probe at the drag's *start* position. Text selections always start on a text element by definition; file/icon drags and object drags (Trello cards, panel handles) start on non-text elements and bail here.
+4. **Three-layer text capture** — described above. Synthetic Ctrl+Insert only fires when both quieter mechanisms (WM_COPY and UIA TextPattern) come back empty.
 
 If a suppression case is misbehaving in your app, check the log file (`%AppData%\SnapActions\logs\YYYY-MM-DD.log`) — every gate that fires writes a line with the cursor position and reason. As an escape hatch, add the app's process name to **Settings → Excluded apps**.
 
@@ -167,7 +170,7 @@ GitHub Actions runs build + tests on every push and PR — see [`.github/workflo
 
 ```
 SnapActions/
-  Core/             Mouse hook (dedicated thread), text capture (WM_COPY + Ctrl+Insert),
+  Core/             Mouse hook (dedicated thread), text capture (WM_COPY → UIA → Ctrl+Insert),
                     selection tracking, foreground-app + editable-field detection
   Detection/        Text-type detectors + classifier pipeline
   Actions/          Context, transform, encode, search, popups
