@@ -34,10 +34,15 @@ public class ActionRegistry
             new TranslateAction(),
             new DictionaryAction(),
             new CurrencyConverterAction(),
+
+            // Transform actions
+            // DeleteTextAction and PastePlainTextAction live in TransformActions/ because their
+            // Category is Transform, but they're shape-wise different from the case/whitespace
+            // family below (single-effect actions, not pure text-to-text transforms). Listed
+            // first so they sort to the top of the Transform group in the toolbar.
             new DeleteTextAction(),
             new PastePlainTextAction(),
 
-            // Transform actions
             new CaseTransformAction("upper", "UPPERCASE", "IconUppercase", text => text.ToUpperInvariant()),
             new CaseTransformAction("lower", "lowercase", "IconLowercase", text => text.ToLowerInvariant()),
             new CaseTransformAction("title", "Title Case", "IconTitleCase", ToTitleCase),

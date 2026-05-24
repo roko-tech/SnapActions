@@ -98,16 +98,17 @@ public static class ForegroundApp
     /// often a leaf inline element with no TextPattern of its own. Walking up to the paragraph
     /// or document recovers the real "is this text?" answer.
     /// Slow (50–500 ms on Electron with a11y not loaded); call from a worker thread, never the
-    /// hook thread or the dispatcher synchronously. Permissive on uncertainty (null element OR
-    /// exception): better to occasionally show the toolbar than to suppress legitimate selections
-    /// in apps with quirky a11y trees.
+    /// hook thread or the dispatcher synchronously.
+    /// Uncertainty handling: a UIA *exception* returns true (transient quirk; don't suppress
+    /// legitimate selections), but a definite null FromPoint result returns false (UIA gave us
+    /// a clear "no element here" answer — suppress to avoid showing paste mode over voids).
     /// </remarks>
     public static bool IsTextInputAtPoint(int x, int y)
     {
         try
         {
             var element = AutomationElement.FromPoint(new System.Windows.Point(x, y));
-            if (element == null) return true;
+            if (element == null) return false;
 
             var walker = TreeWalker.RawViewWalker;
             for (int depth = 0; element != null && depth < TextPatternParentWalkDepth; depth++)

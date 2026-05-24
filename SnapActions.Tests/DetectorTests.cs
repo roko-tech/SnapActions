@@ -188,8 +188,20 @@ public class DetectorTests
     [InlineData("2+3*4")]
     [InlineData("sqrt(16)")]
     [InlineData("(1 + 2) * 3")]
+    // ln/log10/log2 are supported by the evaluator; the pre-filter regex used to omit `ln` and
+    // silently drop selections like "ln(10)" into PlainText. Single-source-of-truth fix routes
+    // the function-name check through AllowedTokens instead of a parallel regex.
+    [InlineData("ln(10)")]
+    [InlineData("log10(100)")]
+    [InlineData("log2(8)")]
     public void Math_Matches(string text) =>
         Assert.Equal(TextType.MathExpression, Classify(text));
+
+    [Theory]
+    [InlineData("tau")]    // a single known-token constant isn't an expression — needs operator or another token
+    [InlineData("pi")]
+    public void Math_RejectsBareConstants(string text) =>
+        Assert.NotEqual(TextType.MathExpression, Classify(text));
 
     [Theory]
     [InlineData("hello+1")]

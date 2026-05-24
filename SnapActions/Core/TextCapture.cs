@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Automation;
 
 namespace SnapActions.Core;
 
@@ -48,15 +49,22 @@ public static class TextCapture
             await Task.Delay(20);
             var text = await ReadClipboard();
 
-            // Fall back to Ctrl+Insert (for browsers). Up to 250 ms total.
-            // No focus-element gate before this: v1.6.7–1.6.9 tried various flavors of "skip the
-            // synthetic key in non-text apps" by probing AutomationElement.FocusedElement, but
-            // browsers and Electron apps focus parent panes that don't themselves expose
-            // TextPattern even though the underlying document does — so the gate blocked the
-            // exact common case it was supposed to leave alone. If a specific app reacts badly
-            // to a stray Ctrl+Insert (rare; most map it to copy or ignore it), add it to
-            // Settings → Excluded apps. The reported synthetic-key issue was Shift+Insert from
-            // paste mode, not this path.
+            // Try UI Automation next — TextPattern.GetSelection reads the selected text from
+            // the accessibility tree without firing any keystrokes or touching the clipboard.
+            // Slower than WM_COPY (50–500 ms in apps where a11y isn't loaded), but quiet — apps
+            // with global key hooks (h5player, AutoHotkey, IMEs, game overlays) don't see this
+            // path at all. Walks up the focused element's parents because browsers / Electron
+            // routinely focus a parent pane while the document with TextPattern is one or two
+            // levels up.
+            if (string.IsNullOrEmpty(text))
+                text = await CopyViaUIA();
+
+            // Last resort: Ctrl+Insert. Up to 250 ms total. Some apps respond to neither WM_COPY
+            // nor UIA — VS Code's editor sometimes lands here, as do older Edge tabs and Java
+            // Swing windows. This path is what other apps' global key hooks can intercept (the
+            // user-reported interference), so we only fire it when both quieter mechanisms came
+            // back empty. If a specific app still misbehaves on the Ctrl+Insert, add it to
+            // Settings → Excluded apps to suppress capture there entirely.
             if (string.IsNullOrEmpty(text))
             {
                 CopyViaKeyboard();
@@ -148,6 +156,67 @@ public static class TextCapture
         {
             try { return Clipboard.ContainsText() ? Clipboard.GetText() : null; }
             catch { return null; }
+        });
+    }
+
+    /// <summary>
+    /// Maximum UIA parent levels to walk when probing for a TextPattern. Same rationale as
+    /// <see cref="ForegroundApp.IsTextInputAtPoint"/>: leaf elements (a span / anchor / svg)
+    /// usually don't expose TextPattern themselves even though the paragraph / document
+    /// ancestor does.
+    /// </summary>
+    private const int TextPatternParentWalkDepth = 6;
+
+    /// <summary>
+    /// Reads the current selection via UI Automation. Returns null when no focused element,
+    /// no TextPattern within the walk depth, no selection ranges, or any UIA failure. Runs on
+    /// a worker thread because UIA calls can take hundreds of ms in apps where a11y is cold.
+    /// </summary>
+    /// <remarks>
+    /// Why not the only capture mechanism: TextPattern coverage is uneven — Java Swing, some
+    /// Edge contexts, and certain custom Electron renderers either don't expose it or expose
+    /// a pattern that returns empty selections even when the user clearly has text selected.
+    /// Keeping Ctrl+Insert as a last-resort fallback covers those.
+    /// </remarks>
+    private static async Task<string?> CopyViaUIA()
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                var element = AutomationElement.FocusedElement;
+                if (element == null) return null;
+
+                var walker = TreeWalker.RawViewWalker;
+                for (int depth = 0; element != null && depth < TextPatternParentWalkDepth; depth++)
+                {
+                    try
+                    {
+                        if (element.TryGetCurrentPattern(TextPattern.Pattern, out var pat))
+                        {
+                            var tp = (TextPattern)pat;
+                            var ranges = tp.GetSelection();
+                            if (ranges != null && ranges.Length > 0)
+                            {
+                                // GetText(-1) returns the entire range with no length cap. For
+                                // discontiguous selections (rare — Ctrl-click in Excel-style
+                                // grids) join with \n so the caller sees all of it.
+                                var combined = ranges.Length == 1
+                                    ? ranges[0].GetText(-1)
+                                    : string.Join("\n",
+                                        ranges.Select(r => r.GetText(-1)).Where(s => !string.IsNullOrEmpty(s)));
+                                if (!string.IsNullOrEmpty(combined)) return combined;
+                            }
+                        }
+                    }
+                    catch { /* per-level UIA failure — try the parent */ }
+
+                    try { element = walker.GetParent(element); }
+                    catch { break; }
+                }
+            }
+            catch { /* UIA failure */ }
+            return null;
         });
     }
 

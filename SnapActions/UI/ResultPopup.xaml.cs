@@ -339,7 +339,10 @@ public partial class ResultPopup : Window
                 return "No amount found";
             if (!rates.TryGetValue(targetCurrency, out var rate))
                 return $"Cannot convert {src} to {targetCurrency}";
-            return $"{amount} {src} = {amt * rate:N2} {targetCurrency}";
+            // Format both sides with the same culture so the source amount and the target
+            // amount don't visually disagree on the decimal separator (previously the source
+            // echoed the user's raw input verbatim while the target used CurrentCulture's :N2).
+            return $"{amt:N2} {src} = {amt * rate:N2} {targetCurrency}";
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
