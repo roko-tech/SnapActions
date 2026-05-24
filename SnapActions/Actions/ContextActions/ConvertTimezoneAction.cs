@@ -28,7 +28,10 @@ public class ConvertTimezoneAction : IAction
             return new ActionResult(true, result, "Time converted");
         }
 
-        if (DateTime.TryParse(text.Trim(), out var dt))
+        // Use InvariantCulture to match the detector — without it, "1/2/2024" would parse as
+        // Jan-2 on en-US and Feb-1 on en-GB, so the action would silently disagree with the
+        // detector's verdict.
+        if (DateTime.TryParse(text.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
         {
             var utc = dt.ToUniversalTime();
             var unix = new DateTimeOffset(dt).ToUnixTimeSeconds();

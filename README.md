@@ -41,7 +41,7 @@ When an action writes to the clipboard, a "Copied to clipboard" toast confirms i
 | XML/HTML | `<div>text</div>` | Format, strip tags |
 | Math | `2+3*4`, `sqrt(16)`, `pi*2` | Calculate |
 | IP address | `192.168.1.1`, `2001:db8::1` | Lookup |
-| Color | `#89B4FA`, `rgba(255, 0, 0, 0.5)`, `rgb(255 0 0 / 50%)`, `hsl(120deg, 50%, 50%)` | Preview, cycle hex/rgb/hsl with alpha preserved |
+| Color | `#89B4FA`, `rgba(255, 0, 0, 0.5)`, `rgb(255 0 0 / 50%)`, `hsl(120, 50%, 50%)` | Preview, cycle hex/rgb/hsl with alpha preserved |
 | UUID | `550e8400-e29b-41d4-a716-446655440000` | Generate new |
 | Base64 | `SGVsbG8gV29ybGQh` | Decode |
 | Date/Time | `2026-04-11T12:00:00+05:00`, Unix timestamps | Convert (Local / UTC / Unix) |
@@ -91,13 +91,14 @@ URL · Base64 · HTML · Hex · ROT13 · MD5 / SHA-1 / SHA-256 / SHA-512 (under 
 | Long-press duration | 300 ms – 1 s | 500 ms |
 | Auto-dismiss after | 3 / 5 / 8 / 15 / 30 s, Never | 8 s |
 | Replace selection on transform | On / Off | On |
+| Restore previous clipboard after copy action | On / Off | Off |
 | Max inline context actions | 1 / 2 / 3 / 4 / 6 / 8 (rest fall into `…` overflow) | 4 |
 | Search language | 13+ languages or no filter | No filter |
 | Target currency | 15 (USD, EUR, SAR, GBP, JPY, …) | USD |
 | Action categories | Transform / Encode / Search | All on |
 | Excluded apps | Process names — use **Add running app...** to pick from running processes | Password managers (KeePass, 1Password, Bitwarden, Dashlane, Enpass, LastPass, RoboForm, NordPass, ProtonPass, Keeper) |
 
-Settings live at `%AppData%\SnapActions\settings.json` with atomic writes. If the file gets corrupted it's renamed to `settings.json.broken-<timestamp>` and defaults are loaded — never silent data loss. The 5 most recent backups are kept.
+Settings live at `%AppData%\SnapActions\settings.json`. Writes are crash-safe (serialize to `settings.json.tmp`, then atomic rename) so a process crash mid-write can't blank the file; the write is not fsync'd, so a hard power loss between the rename and the disk flush can still resurrect the previous file content. If the file gets corrupted on load it's renamed to `settings.json.broken-<timestamp>` and defaults are used — never silent data loss. The 5 most recent backups are kept.
 
 Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file (older content rotates to `.log.1`, `.log.2`, …) with files older than 7 days pruned every 24 h of process uptime.
 
@@ -108,8 +109,8 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 - **Browser-handoff actions.** QR Code (api.qrserver.com) and IP Lookup (ipinfo.io) open a URL containing your selection in your default browser; SnapActions itself never makes the request. Web search engines work the same way.
 - **Everything else stays local.** Format/minify, transform, encode/decode, hash, color/unit/timezone/JWT/Base64 — none of these touch the network.
 - **Password managers excluded by default.** No toolbar appears when the foreground process is a known password manager. Add your own via Settings → Excluded apps.
-- **Risky-extension prompt.** Opening files with extensions that can run code (`.exe`, `.ps1`, `.iso`, `.docm`, `.lnk`, etc.) requires explicit confirmation.
-- **UNC path prompt.** Opening `\\server\share\…` paths prompts before contacting the remote host (avoids leaking NTLM hashes via SMB).
+- **Risky-extension prompt.** Opening files with code-bearing extensions (`.exe`, `.bat`, `.ps1`, `.iso`, `.docm`, `.lnk`, …) requires explicit confirmation. Without this, a malicious selection like `C:\Users\you\Downloads\invoice.exe` could be one click away from running.
+- **UNC path prompt.** Opening `\\server\share\…` paths prompts before contacting the remote host. Without the prompt, opening a UNC path on an attacker-controlled network could initiate an SMB connection that leaks your Windows NTLM hash to the named server.
 - **No telemetry.** No analytics, no auto-update, no account.
 
 ## How it works

@@ -81,6 +81,13 @@ public class AppSettings
     ];
     public bool ReplaceSelectionOnTransform { get; set; } = true;
 
+    /// <summary>
+    /// When true, after a toolbar action puts result text on the clipboard the previous
+    /// clipboard contents are restored ~3 seconds later. Opt-in because the delay can race
+    /// with a slow user paste — default off.
+    /// </summary>
+    public bool RestoreClipboardAfterAction { get; set; } = false;
+
     public bool ShowTransformActions { get; set; } = true;
     public bool ShowEncodeActions { get; set; } = true;
     public bool ShowSearchActions { get; set; } = true;

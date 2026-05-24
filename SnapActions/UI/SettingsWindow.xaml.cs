@@ -31,6 +31,7 @@ public partial class SettingsWindow : Window
         _saveDebounce.Tick += (_, _) =>
         {
             _saveDebounce.Stop();
+            FlushPendingTextEdits();
             SettingsManager.Save();
         };
 
@@ -42,6 +43,7 @@ public partial class SettingsWindow : Window
             if (_saveDebounce.IsEnabled)
             {
                 _saveDebounce.Stop();
+                FlushPendingTextEdits();
                 SettingsManager.Save();
             }
         };
@@ -70,6 +72,7 @@ public partial class SettingsWindow : Window
         EnabledCheck.IsChecked = s.Enabled;
         AutoStartCheck.IsChecked = s.AutoStart;
         ReplaceSelectionCheck.IsChecked = s.ReplaceSelectionOnTransform;
+        RestoreClipboardCheck.IsChecked = s.RestoreClipboardAfterAction;
 
         SelectComboByTag(DismissTimeCombo, s.ToolbarDismissTimeout.ToString(), 2);
         SelectComboByTag(ShowDelayCombo, s.ToolbarShowDelay.ToString(), 0);
@@ -154,6 +157,7 @@ public partial class SettingsWindow : Window
         var s = SettingsManager.Current;
         s.Enabled = EnabledCheck.IsChecked == true;
         s.ReplaceSelectionOnTransform = ReplaceSelectionCheck.IsChecked == true;
+        s.RestoreClipboardAfterAction = RestoreClipboardCheck.IsChecked == true;
         s.ShowTransformActions = ShowTransformCheck.IsChecked == true;
         s.ShowEncodeActions = ShowEncodeCheck.IsChecked == true;
         s.ShowSearchActions = ShowSearchCheck.IsChecked == true;
@@ -164,8 +168,11 @@ public partial class SettingsWindow : Window
     {
         if (_loading) return;
         var enable = AutoStartCheck.IsChecked == true;
-        // SetAutoStart already calls Save internally.
-        Task.Run(() => SettingsManager.SetAutoStart(enable));
+        // SetAutoStart already calls Save internally. Run synchronously on the UI thread —
+        // registry I/O is sub-ms in practice, and going through Task.Run used to race with
+        // UI-thread mutations of SettingsManager.Current (JsonSerializer.Serialize iterating
+        // a List<T> that's being mutated throws InvalidOperationException).
+        SettingsManager.SetAutoStart(enable);
     }
 
     private void ShowDelay_Changed(object sender, SelectionChangedEventArgs e)
@@ -299,10 +306,21 @@ public partial class SettingsWindow : Window
     private void ExcludedApps_Changed(object sender, TextChangedEventArgs e)
     {
         if (_loading) return;
+        // Don't mutate Current.ExcludedApps per-keystroke; defer to the debounce tick so we only
+        // build one new list per save cycle. FlushPendingTextEdits does the actual assignment.
+        QueueSave();
+    }
+
+    /// <summary>
+    /// Push any text-box-backed settings (currently just ExcludedApps) into SettingsManager.Current
+    /// just before a Save. Called from both the debounce tick and the window-close handler so a
+    /// close-before-debounce-fires path still persists the user's edits.
+    /// </summary>
+    private void FlushPendingTextEdits()
+    {
         SettingsManager.Current.ExcludedApps = ExcludedAppsBox.Text
             .Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(a => a.Trim()).Where(a => a.Length > 0).ToList();
-        QueueSave();
     }
 
     // Settings auto-save on every change; this button is now an explicit "save now" if the user
@@ -311,6 +329,7 @@ public partial class SettingsWindow : Window
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         _saveDebounce.Stop();
+        FlushPendingTextEdits();
         SettingsManager.Save();
     }
 

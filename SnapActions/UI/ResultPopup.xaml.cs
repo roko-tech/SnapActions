@@ -41,15 +41,15 @@ public partial class ResultPopup : Window
                 new IntPtr(style.ToInt64() | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW));
         };
 
-        // Dismissal: Esc, the X / Copy buttons, a new popup replacing this one, OR a click
-        // outside the popup bounds. We don't auto-close on cursor-leave (that fired before
-        // users could finish reading); we *do* close on click-outside because that's a clear
-        // user intent. WS_EX_NOACTIVATE means we never get focus events, so we poll instead.
+        // Esc dismissal goes through the global keyboard hook (no polling latency).
+        // The polling timer below now only watches for click-outside, which still needs polling
+        // because WS_EX_NOACTIVATE means we don't receive focus / capture events.
+        SnapActions.Core.KeyboardHook.EscPressed += OnGlobalEsc;
+
         _checkTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
         _checkTimer.Tick += (_, _) =>
         {
             if (_closed) return;
-            if ((GetAsyncKeyState(0x1B) & 0x8000) != 0) { SafeClose(); return; }
             // Left mouse button currently down? If so, check whether the cursor is outside our
             // bounds — if it is, the user is clicking somewhere else and we should dismiss.
             if ((GetAsyncKeyState(0x01) & 0x8000) != 0)
@@ -61,6 +61,15 @@ public partial class ResultPopup : Window
                     SafeClose();
             }
         };
+    }
+
+    private void OnGlobalEsc()
+    {
+        // Hook fires on its own thread; marshal to UI.
+        Application.Current?.Dispatcher.InvokeAsync(() =>
+        {
+            if (!_closed) SafeClose();
+        });
     }
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
@@ -75,6 +84,7 @@ public partial class ResultPopup : Window
         if (_closed) return;
         _closed = true;
         _checkTimer.Stop();
+        try { SnapActions.Core.KeyboardHook.EscPressed -= OnGlobalEsc; } catch { }
         try { _cts.Cancel(); } catch { }
         try { _cts.Dispose(); } catch { }
         if (ReferenceEquals(_current, this)) _current = null;
@@ -167,7 +177,9 @@ public partial class ResultPopup : Window
     {
         if (!string.IsNullOrEmpty(_resultText))
         {
-            // Same hardening as ToolbarWindow's Copy button — clipboard locks shouldn't crash us.
+            // Clipboard.SetText throws when another process briefly holds the clipboard. Swallow
+            // and log — the popup is about to close either way and there's no good place for an
+            // error toast here.
             try { Clipboard.SetText(_resultText); }
             catch (Exception ex) { Log.Warn($"Clipboard.SetText failed: {ex.Message}"); }
         }
@@ -226,7 +238,7 @@ public partial class ResultPopup : Window
         var url = $"https://api.mymemory.translated.net/get?q={Uri.EscapeDataString(text)}&langpair={langpair}";
         string json;
         try { json = await http.GetStringAsync(url, ct); }
-        catch (HttpRequestException ex) when (ex.Message.Contains("429"))
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
         { return "Translation quota reached. Try again later."; }
 
         try

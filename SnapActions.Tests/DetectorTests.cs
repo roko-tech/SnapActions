@@ -159,6 +159,12 @@ public class DetectorTests
         // 16 hex chars decode as base64 but the result is meaningless garbage
         Assert.NotEqual(TextType.Base64, Classify("DEADBEEF12345678"));
 
+    [Theory]
+    [InlineData("Application1")]   // mixed case + a digit, but decodes to non-UTF-8 bytes
+    [InlineData("HelloWorld12")]   // same shape
+    public void Base64_RejectsAlphaLookingStrings(string text) =>
+        Assert.NotEqual(TextType.Base64, Classify(text));
+
     // ── DateTime ─────────────────────────────────────────────────
 
     [Theory]
@@ -204,6 +210,13 @@ public class DetectorTests
     [InlineData("2.5e3*4")]
     public void Math_AcceptsScientificNotationInExpressions(string text) =>
         Assert.Equal(TextType.MathExpression, Classify(text));
+
+    [Theory]
+    [InlineData("a + b")]      // single-letter identifiers aren't in the math token set
+    [InlineData("foo*bar")]    // free identifiers shouldn't slip through as math
+    [InlineData("x - y - z")]
+    public void Math_RejectsFreeIdentifiers(string text) =>
+        Assert.NotEqual(TextType.MathExpression, Classify(text));
 
     // ── Unit ─────────────────────────────────────────────────────
 
