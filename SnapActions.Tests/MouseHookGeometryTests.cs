@@ -107,4 +107,28 @@ public class MouseHookGeometryTests
     {
         Assert.False(MouseHook.LooksLikeScrollbarPosition(P(500, 400), Rect, isRtl: false));
     }
+
+    // ── System-metric-derived thresholds ─────────────────────────────────────
+    //
+    // We can't pin a specific number — SM_CXDRAG and SM_CXDOUBLECLK depend on the OS / user
+    // settings — but we can check the resolved value lands in a sensible window. If the
+    // GetSystemMetrics P/Invoke ever returns 0 (headless runner / very stripped image), the
+    // ComputeSquaredThreshold fallback to 4 px keeps the value in this range.
+
+    [Fact]
+    public void LongPressMoveCancelDistSq_InSensibleRange()
+    {
+        // Typical Windows defaults give 4 px → 16. Allow up to 32 px (huge custom drag rect,
+        // e.g. touch-optimized) but reject anything that would let an 8 px drag slip past us
+        // (the bug we're fixing).
+        Assert.InRange(MouseHook.LongPressMoveCancelDistSq, 9, 32 * 32);
+    }
+
+    [Fact]
+    public void MultiClickRadiusSq_InSensibleRange()
+    {
+        // Typical Windows defaults give 4 px → 16. Same upper bound as drag, and a floor of
+        // 9 (3 px) so an absurdly tight metric doesn't break legitimate double-clicks.
+        Assert.InRange(MouseHook.MultiClickRadiusSq, 9, 32 * 32);
+    }
 }

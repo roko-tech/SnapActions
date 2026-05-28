@@ -83,12 +83,17 @@ public class SelectionTracker
     ///   <item>TextCapture.WM_COPY then unconditional Ctrl+Insert fallback if WM_COPY returned
     ///         empty. Empty captured text aborts here.</item>
     /// </list>
-    /// Three UIA-based gates have been added and removed across v1.6.5–1.6.12:
+    /// Three UIA-based gates were added and removed across v1.6.5–1.6.12:
     ///   • atPointTask (mouse-up UIA) — removed v1.6.10, false-positive on whitespace endings
     ///   • IsForegroundTextCapable (focused-element UIA) — removed v1.6.10, browsers focus parent panes
     ///   • atDownTask (mouse-down UIA) — removed v1.6.12, blocks selections in apps with shallow UIA trees
-    /// The lesson: UIA's TextPattern coverage is too inconsistent across apps to be a reliable gate.
-    /// Drag-and-drop / object-drag false-positives now fall back to the user's ExcludedApps list.
+    /// The lesson from those: UIA's TextPattern coverage is too inconsistent across apps to be
+    /// a *required* gate (false negatives broke legitimate selections).
+    /// TextCapture.ProbeSelectionViaUIA (the new gate inside the pipeline below) avoids that
+    /// trap because it only acts on *definitive* answers: it suppresses when UIA confirms an
+    /// empty selection or a non-text item type, and falls through to WM_COPY otherwise — so
+    /// the historical false-negative apps (Java Swing, some Edge, custom Electron) still work
+    /// via the clipboard path.
     /// LongPress still uses IsTextInputAtPoint at the cursor — paste mode showing on a button or
     /// scrollbar is worse than the same false-positive cost there.
     /// </summary>

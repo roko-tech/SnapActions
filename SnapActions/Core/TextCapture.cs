@@ -36,6 +36,27 @@ public static class TextCapture
         }
         try
         {
+            // UIA pre-gate. Three outcomes:
+            //   HasText  — there is a real text selection; use it, skip the whole clipboard dance.
+            //   Suppress — UIA *definitively* says no selection (TextPattern present but degenerate,
+            //              or focus is on a non-text item like an Explorer file). Bail out.
+            //   Unknown  — UIA can't tell (no TextPattern, exception, shallow tree). Fall through.
+            // Why the pipeline used to fire SelectionLikely on a double-click in Explorer or a
+            // double-click on a desktop icon: WM_COPY succeeds against those (copies the filename
+            // or item text) even though no *text* is selected. The Suppress branch kills that path
+            // for any app that exposes either TextPattern or item-selection patterns.
+            var probe = await ProbeSelectionViaUIA();
+            switch (probe.Outcome)
+            {
+                case SelectionProbeOutcome.HasText:
+                    SnapActions.Helpers.Log.Info($"UIA pre-gate returned text ({probe.Text!.Length} chars) — skipping clipboard pipeline");
+                    return probe.Text;
+                case SelectionProbeOutcome.Suppress:
+                    SnapActions.Helpers.Log.Info($"UIA pre-gate suppressed capture: {probe.Reason}");
+                    return null;
+                // case SelectionProbeOutcome.Unknown: fall through
+            }
+
             // Snapshot ALL clipboard formats so images/files/RTF survive
             var saved = await Application.Current.Dispatcher.InvokeAsync(SnapshotClipboard);
 
@@ -166,6 +187,124 @@ public static class TextCapture
     /// ancestor does.
     /// </summary>
     private const int TextPatternParentWalkDepth = 6;
+
+    internal enum SelectionProbeOutcome
+    {
+        /// <summary>UIA gave us the selected text directly — use it and skip the clipboard pipeline.</summary>
+        HasText,
+        /// <summary>UIA definitively said no selection (empty TextPattern, or a non-text item). Suppress.</summary>
+        Suppress,
+        /// <summary>UIA couldn't determine. Fall through to WM_COPY / Ctrl+Insert.</summary>
+        Unknown,
+    }
+
+    internal readonly record struct SelectionProbe(SelectionProbeOutcome Outcome, string? Text, string? Reason);
+
+    /// <summary>
+    /// Item-style control types that are NOT text. When the focused element is one of these
+    /// AND exposes SelectionItemPattern AND we found no TextPattern up the tree, we treat the
+    /// "selection" as an item selection (file in Explorer, desktop icon, list-box row, tree
+    /// node) and suppress. Deliberately narrow — Pane / Custom / Document stay out because
+    /// browsers and Electron focus those for real text contexts.
+    /// </summary>
+    private static readonly System.Windows.Automation.ControlType[] NonTextItemTypes =
+    [
+        System.Windows.Automation.ControlType.DataItem,
+        System.Windows.Automation.ControlType.ListItem,
+        System.Windows.Automation.ControlType.TreeItem,
+    ];
+
+    /// <summary>
+    /// Probes UI Automation to decide whether a real text selection exists right now. Layered
+    /// gate to prevent the WM_COPY pipeline from misreading non-text contexts (Explorer file
+    /// double-click, desktop icon, list row) as text selections. Runs on a worker thread —
+    /// UIA calls can take 50–500 ms cold.
+    /// </summary>
+    /// <remarks>
+    /// Three UIA-based gates were tried and removed across v1.6.5–1.6.12 because they over-
+    /// suppressed legitimate selections. This one is more conservative: it only suppresses
+    /// when UIA gives a *definitive* answer — TextPattern explicitly empty, or a clearly non-
+    /// text item element. Anything ambiguous (no TextPattern, exception, shallow tree)
+    /// returns Unknown, which leaves the existing WM_COPY → Ctrl+Insert fallback intact.
+    /// </remarks>
+    internal static async Task<SelectionProbe> ProbeSelectionViaUIA()
+    {
+        return await Task.Run(() =>
+        {
+            AutomationElement? originalFocused = null;
+            try
+            {
+                originalFocused = AutomationElement.FocusedElement;
+                if (originalFocused == null)
+                    return new SelectionProbe(SelectionProbeOutcome.Unknown, null, "no focused element");
+
+                // Walk up looking for TextPattern. If ANY ancestor has TextPattern with non-empty
+                // selection → HasText (return immediately). If we exhaust the walk and saw at least
+                // one TextPattern but all were empty → Suppress. If we never saw TextPattern → fall
+                // through to the item-element check below.
+                var walker = TreeWalker.RawViewWalker;
+                var element = originalFocused;
+                bool sawAnyTextPattern = false;
+                for (int depth = 0; element != null && depth < TextPatternParentWalkDepth; depth++)
+                {
+                    try
+                    {
+                        if (element.TryGetCurrentPattern(TextPattern.Pattern, out var pat))
+                        {
+                            sawAnyTextPattern = true;
+                            var tp = (TextPattern)pat;
+                            var ranges = tp.GetSelection();
+                            if (ranges != null && ranges.Length > 0)
+                            {
+                                var combined = ranges.Length == 1
+                                    ? ranges[0].GetText(-1)
+                                    : string.Join("\n",
+                                        ranges.Select(r => r.GetText(-1)).Where(s => !string.IsNullOrEmpty(s)));
+                                if (!string.IsNullOrEmpty(combined))
+                                    return new SelectionProbe(SelectionProbeOutcome.HasText, combined, null);
+                            }
+                            // TextPattern at this level returned no selection text. Keep walking up
+                            // — an ancestor pane / document may have the real selection (browsers
+                            // often expose TextPattern at multiple levels with the leaf empty).
+                        }
+                    }
+                    catch { /* per-level UIA failure — try the parent */ }
+
+                    try { element = walker.GetParent(element); }
+                    catch { break; }
+                }
+
+                if (sawAnyTextPattern)
+                    return new SelectionProbe(SelectionProbeOutcome.Suppress,
+                        null, "TextPattern present but selection is empty");
+
+                // Layer C: no TextPattern anywhere up the walk. Check the originally-focused
+                // element for non-text item patterns — Explorer file rows, desktop icons,
+                // list-box rows. SelectionItemPattern means "I am a selectable item" (vs.
+                // text); ControlType keeps us off Pane / Custom / Document which browsers
+                // and Electron focus for real text contexts.
+                try
+                {
+                    var ct = originalFocused.Current.ControlType;
+                    bool isItemType = NonTextItemTypes.Contains(ct);
+                    bool hasItemPattern = originalFocused.TryGetCurrentPattern(
+                        SelectionItemPattern.Pattern, out _);
+                    if (isItemType && hasItemPattern)
+                        return new SelectionProbe(SelectionProbeOutcome.Suppress,
+                            null, $"focused element is {ct.ProgrammaticName} with SelectionItemPattern");
+                }
+                catch { /* couldn't read ControlType — fall through to Unknown */ }
+
+                return new SelectionProbe(SelectionProbeOutcome.Unknown, null, "no TextPattern, not a known non-text item");
+            }
+            catch (Exception ex)
+            {
+                // Total UIA failure — be permissive (fall through to clipboard pipeline) so we
+                // don't silently break selections in apps where UIA misbehaves.
+                return new SelectionProbe(SelectionProbeOutcome.Unknown, null, $"UIA exception: {ex.GetType().Name}");
+            }
+        });
+    }
 
     /// <summary>
     /// Reads the current selection via UI Automation. Returns null when no focused element,

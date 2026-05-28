@@ -26,15 +26,54 @@ public class MouseHook : IDisposable
     private const int GWL_EXSTYLE = -20;
     private const long WS_EX_LAYOUTRTL = 0x00400000;
 
-    // Tuning constants (squared distances in pixels, time in ms).
-    // 8px² = 64 — radius below which we still consider the cursor "stationary" during a hold.
-    private const int LongPressMoveCancelDistSq = 64;
-    // 10px² = 100 — minimum drag distance to count as a selection.
+    // GetSystemMetrics indices for the OS-defined click vs. drag thresholds. Same values
+    // Windows uses internally for DragDetect() — keeping our thresholds in lockstep means we
+    // distinguish "click" from "drag" the way every other Windows app does, and we respect
+    // user / OS / DPI overrides automatically.
+    private const int SM_CXDRAG = 68;       // half-width of the drag rectangle (typ. 4 px)
+    private const int SM_CYDRAG = 69;       // half-height of the drag rectangle (typ. 4 px)
+    private const int SM_CXDOUBLECLK = 36;  // half-width of the double-click rectangle (typ. 4 px)
+    private const int SM_CYDOUBLECLK = 37;  // half-height of the double-click rectangle (typ. 4 px)
+
+    /// <summary>
+    /// Squared system drag threshold. A motion of more than √value pixels from the mouse-down
+    /// point cancels the long-press timer. Read once at process start because system metrics
+    /// don't change without a user-session restart.
+    /// </summary>
+    /// <remarks>
+    /// Visible to tests so they can sanity-check the value is reasonable (typically 16 = 4²)
+    /// without taking a hard dependency on a specific number.
+    /// </remarks>
+    internal static readonly int LongPressMoveCancelDistSq = ComputeSquaredThreshold(SM_CXDRAG, SM_CYDRAG, fallback: 4);
+
+    /// <summary>
+    /// Squared system double-click radius. Two clicks within √value pixels are treated as a
+    /// multi-click cluster. Tighter than our old hardcoded 64 (8 px) so a slow drag onset
+    /// between two clicks doesn't get misread as a double-click in the same spot.
+    /// </summary>
+    internal static readonly int MultiClickRadiusSq = ComputeSquaredThreshold(SM_CXDOUBLECLK, SM_CYDOUBLECLK, fallback: 4);
+
+    // 10px² = 100 — minimum drag distance to count as a selection. Not a system metric — this
+    // is our own "the user definitely intended to drag-select" floor, deliberately above the
+    // drag-cancel threshold so a small click-then-twitch doesn't fire SelectionLikely.
     private const int MinDragSelectDistSq = 100;
-    // 8px² = 64 — clicks within this radius of the previous one form a multi-click cluster.
-    private const int MultiClickRadiusSq = 64;
     private const int MinClickDurationMs = 80;
     private const int MultiClickWindowMs = 500;
+
+    /// <summary>
+    /// max(cx, cy)² with a sane fallback when GetSystemMetrics returns 0 (e.g. headless / RDP
+    /// during init). We use max rather than an ellipse for two reasons: cardinal-direction
+    /// motion (just-x or just-y) gets the full allowance, and a single comparison against
+    /// distSq keeps the hot path branch-free.
+    /// </summary>
+    private static int ComputeSquaredThreshold(int cxIndex, int cyIndex, int fallback)
+    {
+        int cx = GetSystemMetrics(cxIndex);
+        int cy = GetSystemMetrics(cyIndex);
+        int max = Math.Max(cx, cy);
+        if (max <= 0) max = fallback;
+        return max * max;
+    }
 
     private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
 
@@ -442,6 +481,9 @@ public class MouseHook : IDisposable
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
 
     // Internal so SnapActions.Tests can construct synthetic RECTs for scrollbar-helper tests.
     [StructLayout(LayoutKind.Sequential)]
