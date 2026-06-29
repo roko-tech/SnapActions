@@ -1,0 +1,469 @@
+using System.Collections.Concurrent;
+using System.Net.Http;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Windows;
+using System.Windows.Interop;
+using SnapActions.Helpers;
+
+namespace SnapActions.UI;
+
+public partial class ResultPopup : Window
+{
+    private string _resultText = "";
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(8) };
+
+    private bool _closed;
+    private double _dpi = 1.0;
+    private double _screenX, _screenY;
+    private string _title = "";
+    private Func<HttpClient, System.Threading.CancellationToken, Task<string>>? _fetch;
+    private readonly System.Windows.Threading.DispatcherTimer _checkTimer;
+    private System.Threading.CancellationTokenSource _cts = new();
+
+    // Track the currently-open popup so a new translation/dictionary lookup replaces the prior
+    // one instead of letting them stack on screen. Previously we relied on cursor-leave to
+    // dismiss the prior popup, but that closed it before the user finished reading.
+    private static ResultPopup? _current;
+
+    private const int GWL_EXSTYLE = -20;
+    private const int WS_EX_NOACTIVATE = 0x08000000;
+    private const int WS_EX_TOOLWINDOW = 0x00000080;
+
+    public ResultPopup()
+    {
+        InitializeComponent();
+
+        // Don't steal focus from the user's app — match ToolbarWindow's no-activate behavior.
+        SourceInitialized += (_, _) =>
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            // *Ptr variants — see ToolbarWindow.xaml.cs for the rationale.
+            var style = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+            SetWindowLongPtr(hwnd, GWL_EXSTYLE,
+                new IntPtr(style.ToInt64() | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW));
+        };
+
+        // Esc dismissal goes through the global keyboard hook (no polling latency).
+        // The polling timer below now only watches for click-outside, which still needs polling
+        // because WS_EX_NOACTIVATE means we don't receive focus / capture events.
+        SnapActions.Core.KeyboardHook.EscPressed += OnGlobalEsc;
+
+        _checkTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
+        _checkTimer.Tick += (_, _) =>
+        {
+            if (_closed) return;
+            // Left mouse button currently down? If so, check whether the cursor is outside our
+            // bounds — if it is, the user is clicking somewhere else and we should dismiss.
+            if ((GetAsyncKeyState(0x01) & 0x8000) != 0)
+            {
+                NativeMethods.GetCursorPos(out var pt);
+                double l = Left * _dpi, t = Top * _dpi;
+                double r = l + ActualWidth * _dpi, b = t + ActualHeight * _dpi;
+                if (pt.X < l || pt.X > r || pt.Y < t || pt.Y > b)
+                    SafeClose();
+            }
+        };
+    }
+
+    private void OnGlobalEsc()
+    {
+        // Hook fires on its own thread; marshal to UI.
+        Application.Current?.Dispatcher.InvokeAsync(() =>
+        {
+            if (!_closed) SafeClose();
+        });
+    }
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    private void SafeClose()
+    {
+        if (_closed) return;
+        _closed = true;
+        _checkTimer.Stop();
+        try { SnapActions.Core.KeyboardHook.EscPressed -= OnGlobalEsc; } catch { }
+        try { _cts.Cancel(); } catch { }
+        try { _cts.Dispose(); } catch { }
+        if (ReferenceEquals(_current, this)) _current = null;
+        try { Close(); } catch { }
+    }
+
+    /// <summary>Static helper: creates popup, positions near cursor, fetches result.</summary>
+    public static void ShowNearCursor(string title, Func<HttpClient, System.Threading.CancellationToken, Task<string>> fetchResult)
+    {
+        // _current is read/written from this method and SafeClose; both must run on the UI
+        // dispatcher or the static-instance handoff is racy. Cheap to assert in DEBUG builds.
+        System.Diagnostics.Debug.Assert(
+            System.Windows.Application.Current?.Dispatcher.CheckAccess() ?? true,
+            "ResultPopup.ShowNearCursor must run on the UI dispatcher");
+
+        // Privacy gate: these popups send the user's selected text to a third-party web service.
+        // Ask once (or whenever the user has turned online lookups off in Settings) before anything
+        // leaves the machine.
+        if (!EnsureOnlineLookupConsent()) return;
+
+        // Replace any existing popup so two back-to-back lookups don't stack on screen.
+        _current?.SafeClose();
+        var popup = new ResultPopup();
+        _current = popup;
+        NativeMethods.GetCursorPos(out var pt);
+        popup.ShowAt(pt.X, pt.Y, title, fetchResult);
+    }
+
+    public async void ShowAt(double screenX, double screenY, string title,
+        Func<HttpClient, System.Threading.CancellationToken, Task<string>> fetchResult)
+    {
+        // Async void — the caller (ShowNearCursor) treats this as fire-and-forget. Wrap the
+        // whole body so a synchronous WPF exception during setup (rare but possible during
+        // teardown) reaches the logger instead of escaping into the dispatcher's unhandled path.
+        try
+        {
+            _screenX = screenX;
+            _screenY = screenY;
+            _title = title;
+            _fetch = fetchResult;
+            TitleText.Text = title;
+
+            // Use the DPI of the monitor under the cursor, not whatever monitor the window starts on.
+            var monitorDpi = ScreenHelper.GetDpiForPoint(new System.Windows.Point(screenX, screenY));
+            _dpi = monitorDpi.X > 0 ? monitorDpi.X : 1.0;
+            Show();
+            ClampToScreen();
+            // Topmost is already declared in XAML; no Activate() call so the user's app keeps focus.
+            _checkTimer.Start();
+
+            await RunFetchAsync();
+        }
+        catch (Exception ex)
+        {
+            // Setup-time exception (e.g. a stale window handle from a racing teardown). Don't
+            // let it escape into the dispatcher unhandled handler.
+            Log.Error("ResultPopup.ShowAt failed during setup", ex);
+            try { SafeClose(); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// (Re)compute Left/Top from the current window size, anchored above-left of the cursor and
+    /// clamped to the working area. Called at show time and again after the result text grows the
+    /// SizeToContent window, so a long definition/translation near a screen edge doesn't overflow
+    /// off-screen.
+    /// </summary>
+    private void ClampToScreen()
+    {
+        UpdateLayout();
+        var sb = ScreenHelper.GetScreenBounds(new System.Windows.Point(_screenX, _screenY));
+        double sL = sb.Left / _dpi, sT = sb.Top / _dpi;
+        double sR = sb.Right / _dpi, sB = sb.Bottom / _dpi;
+
+        double w = ActualWidth > 10 ? ActualWidth : 220;
+        double h = ActualHeight > 10 ? ActualHeight : 120;
+
+        double left = (_screenX / _dpi) - 100;
+        double top = (_screenY / _dpi) - 80;
+        if (left < sL + 8) left = sL + 8;
+        if (left + w > sR - 8) left = sR - 8 - w;
+        if (top < sT + 8) top = sT + 8;
+        if (top + h > sB - 8) top = sB - 8 - h;
+
+        Left = left;
+        Top = top;
+    }
+
+    /// <summary>Runs the stored fetch delegate and renders loading / result / problem states.</summary>
+    private async Task RunFetchAsync()
+    {
+        if (_fetch == null) return;
+        LoadingText.Text = "Loading...";
+        LoadingText.Visibility = Visibility.Visible;
+        ResultText.Visibility = Visibility.Collapsed;
+        CopyButton.Visibility = Visibility.Collapsed;
+        RetryButton.Visibility = Visibility.Collapsed;
+        try
+        {
+            _resultText = await _fetch(Http, _cts.Token);
+            if (_closed) return;
+            ResultText.Text = _resultText;
+            LoadingText.Visibility = Visibility.Collapsed;
+            ResultText.Visibility = Visibility.Visible;
+            CopyButton.Visibility = Visibility.Visible;
+            ClampToScreen(); // result grew the window — re-clamp so it stays on screen
+        }
+        catch (OperationCanceledException) { /* user closed or retried before the result arrived */ }
+        catch (Exception ex)
+        {
+            if (_closed) return;
+            // Don't dead-end on a transient network blip: a friendly message + a Retry button that
+            // re-runs the same fetch, instead of a raw exception string with no way forward.
+            Log.Warn($"ResultPopup fetch failed: {ex.Message}");
+            LoadingText.Text = "Couldn't reach the service. Check your connection and try again.";
+            RetryButton.Visibility = Visibility.Visible;
+            ClampToScreen();
+        }
+    }
+
+    private async void Retry_Click(object sender, RoutedEventArgs e)
+    {
+        // Fresh token for the new attempt — the previous one may have been canceled.
+        try { _cts.Cancel(); _cts.Dispose(); } catch { }
+        _cts = new System.Threading.CancellationTokenSource();
+        await RunFetchAsync();
+    }
+
+    /// <summary>
+    /// First-use (and whenever the user has turned it off) consent for sending the selected text to
+    /// the third-party lookup services. Returns false if the user declines, in which case the popup
+    /// is not shown and nothing is sent.
+    /// </summary>
+    private static bool EnsureOnlineLookupConsent()
+    {
+        if (Config.SettingsManager.Current.AllowOnlineLookups) return true;
+        var msg = "Some actions send your selected text to a third-party online service over HTTPS " +
+                  "to fetch a result: the built-in Translate, Dictionary, and Currency lookups " +
+                  "(MyMemory, dictionaryapi.dev, open.er-api.com), and any custom \"fetch\" actions " +
+                  "you add (which send to the host in their own URL).\n\nAllow these online lookups? " +
+                  "You can turn this back off in Settings.";
+        var answer = System.Windows.MessageBox.Show(msg, "Allow online lookups?",
+            System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Question,
+            System.Windows.MessageBoxResult.No, System.Windows.MessageBoxOptions.DefaultDesktopOnly);
+        if (answer != System.Windows.MessageBoxResult.Yes) return false;
+        Config.SettingsManager.Current.AllowOnlineLookups = true;
+        Config.SettingsManager.Save();
+        return true;
+    }
+
+    private void Copy_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(_resultText))
+        {
+            // Clipboard.SetText throws when another process briefly holds the clipboard. Swallow
+            // and log — the popup is about to close either way and there's no good place for an
+            // error toast here.
+            try { Clipboard.SetText(_resultText); }
+            catch (Exception ex) { Log.Warn($"Clipboard.SetText failed: {ex.Message}"); }
+        }
+        SafeClose();
+    }
+
+    private void Close_Click(object sender, RoutedEventArgs e) => SafeClose();
+
+    // ── API fetch helpers ────────────────────────────────────────
+
+    // Cache translations for ~30 minutes — MyMemory free tier is 5k chars/day per IP.
+    private static readonly ConcurrentDictionary<string, (DateTime fetched, string text)> _translationCache = new();
+    private static readonly TimeSpan TranslationCacheTtl = TimeSpan.FromMinutes(30);
+    private const int MaxCacheEntries = 500;
+
+    private static void PruneTranslationCache()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var kv in _translationCache)
+            if (now - kv.Value.fetched >= TranslationCacheTtl)
+                _translationCache.TryRemove(kv.Key, out _);
+
+        if (_translationCache.Count > MaxCacheEntries)
+        {
+            var toDrop = _translationCache.Count - MaxCacheEntries;
+            foreach (var kv in _translationCache.OrderBy(p => p.Value.fetched).Take(toDrop))
+                _translationCache.TryRemove(kv.Key, out _);
+        }
+    }
+
+    private static void PruneRateCache()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var kv in _rateCache)
+            if (now - kv.Value.fetched >= RateCacheTtl)
+                _rateCache.TryRemove(kv.Key, out _);
+        // Rate cache is naturally bounded by # of source currencies (~14), no size cap needed.
+    }
+
+    public static async Task<string> FetchTranslation(HttpClient http, string text, string targetLang,
+        System.Threading.CancellationToken ct = default)
+    {
+        var to = string.IsNullOrEmpty(targetLang) ? "en" : targetLang;
+        // Normalize whitespace so "Hello" and "Hello " don't create separate cache entries.
+        var cacheKey = $"{to}|{text.Trim()}";
+
+        PruneTranslationCache();
+
+        if (_translationCache.TryGetValue(cacheKey, out var cached) &&
+            DateTime.UtcNow - cached.fetched < TranslationCacheTtl)
+            return cached.text;
+
+        // Pipe is not a legal URI character per RFC 3986 — encode the whole langpair value so
+        // we don't depend on the server's lenient URL parser.
+        var langpair = Uri.EscapeDataString($"autodetect|{to}");
+        var url = $"https://api.mymemory.translated.net/get?q={Uri.EscapeDataString(text)}&langpair={langpair}";
+        string json;
+        try { json = await http.GetStringAsync(url, ct); }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+        { return "Translation quota reached. Try again later."; }
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var translated = doc.RootElement
+                .GetProperty("responseData")
+                .GetProperty("translatedText")
+                .GetString();
+            var result = System.Net.WebUtility.HtmlDecode(translated ?? "Translation not available");
+            _translationCache[cacheKey] = (DateTime.UtcNow, result);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Translation parse failed: {ex.Message}");
+            return "Translation not available";
+        }
+    }
+
+    private static readonly HashSet<string> DictionarySupportedLanguages = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "en", "es", "fr", "de", "hi", "it", "ja", "ko", "pt-BR", "ru", "tr", "zh-CN"
+    };
+
+    public static async Task<string> FetchDefinition(HttpClient http, string word, string lang = "en",
+        System.Threading.CancellationToken ct = default)
+    {
+        var dictLang = DictionarySupportedLanguages.Contains(lang) ? lang : "en";
+        var url = $"https://api.dictionaryapi.dev/api/v2/entries/{dictLang}/{Uri.EscapeDataString(word.Trim())}";
+        string json;
+        try { json = await http.GetStringAsync(url, ct); }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        { return "No definition found"; }
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var entry = doc.RootElement[0];
+            var sb = new StringBuilder();
+
+            if (entry.TryGetProperty("phonetic", out var phonetic))
+                sb.AppendLine(phonetic.GetString()).AppendLine();
+
+            foreach (var meaning in entry.GetProperty("meanings").EnumerateArray())
+            {
+                sb.AppendLine(meaning.GetProperty("partOfSpeech").GetString());
+                int count = 0;
+                foreach (var def in meaning.GetProperty("definitions").EnumerateArray())
+                {
+                    if (count++ >= 2) break;
+                    sb.Append("  ").AppendLine(def.GetProperty("definition").GetString());
+                }
+                sb.AppendLine();
+            }
+
+            var result = sb.ToString().TrimEnd();
+            return string.IsNullOrWhiteSpace(result) ? "No definition found" : result;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Dictionary parse failed: {ex.Message}");
+            return "No definition found";
+        }
+    }
+
+    private static readonly Dictionary<string, string[]> CurrencySymbols = new()
+    {
+        ["EUR"] = ["EUR", "\u20AC"], ["GBP"] = ["GBP", "\u00A3"],
+        ["JPY"] = ["JPY", "\u00A5"], ["SAR"] = ["SAR", "\uFDFC"],
+        ["AED"] = ["AED"], ["KWD"] = ["KWD"], ["CAD"] = ["CAD"],
+        ["AUD"] = ["AUD"], ["CHF"] = ["CHF"], ["CNY"] = ["CNY"],
+        ["INR"] = ["INR", "\u20B9"], ["BRL"] = ["BRL"], ["KRW"] = ["KRW"],
+        ["TRY"] = ["TRY", "\u20BA"], ["USD"] = ["USD", "$"],
+    };
+
+    // Cache rates per source currency for ~6h to avoid hammering open.er-api.com.
+    // ConcurrentDictionary is required because two popups (rapid back-to-back conversions) can fetch in parallel.
+    private static readonly ConcurrentDictionary<string, (DateTime fetched, Dictionary<string, double> rates)> _rateCache = new();
+    private static readonly TimeSpan RateCacheTtl = TimeSpan.FromHours(6);
+
+    public static async Task<string> FetchCurrencyConversion(HttpClient http, string text, string targetCurrency = "USD",
+        System.Threading.CancellationToken ct = default)
+    {
+        // Capture both kinds of separators — TryParseLocaleAgnostic will figure out which is
+        // decimal vs thousands. The previous regex + Replace(",", "") parsed "1.000,50" as 1.0.
+        var numMatch = System.Text.RegularExpressions.Regex.Match(text, @"[\d][\d.,]*");
+        if (!numMatch.Success) return "No amount found";
+        var amount = numMatch.Value;
+
+        var src = DetectSourceCurrency(text, numMatch.Index, numMatch.Length);
+
+        try
+        {
+            var rates = await GetRates(http, src, ct);
+            if (rates == null) return "Conversion failed";
+            if (!Helpers.LocaleNumber.TryParse(amount, out var amt))
+                return "No amount found";
+            if (!rates.TryGetValue(targetCurrency, out var rate))
+                return $"Cannot convert {src} to {targetCurrency}";
+            // Format both sides with the same culture so the source amount and the target
+            // amount don't visually disagree on the decimal separator (previously the source
+            // echoed the user's raw input verbatim while the target used CurrentCulture's :N2).
+            return $"{amt:N2} {src} = {amt * rate:N2} {targetCurrency}";
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Log.Warn($"Currency conversion failed: {ex.Message}");
+            return "Conversion failed";
+        }
+    }
+
+    /// <summary>
+    /// Pick the source currency whose code/symbol is closest to the matched number.
+    /// "$50 last EUR-trip" → USD (because $ is adjacent to 50, EUR is far away).
+    /// Falls back to USD when no symbol/code is found.
+    /// </summary>
+    /// <remarks>internal so the test project (InternalsVisibleTo) can verify proximity rules
+    /// without spinning up a real popup or HttpClient.</remarks>
+    internal static string DetectSourceCurrency(string text, int numStart, int numLength)
+    {
+        int numEnd = numStart + numLength;
+        string best = "USD";
+        int bestDist = int.MaxValue;
+
+        foreach (var (code, symbols) in CurrencySymbols)
+        {
+            foreach (var sym in symbols)
+            {
+                int idx = text.IndexOf(sym, StringComparison.OrdinalIgnoreCase);
+                while (idx >= 0)
+                {
+                    int dist = idx >= numEnd ? idx - numEnd
+                              : idx + sym.Length <= numStart ? numStart - (idx + sym.Length)
+                              : 0; // overlapping = adjacent
+                    if (dist < bestDist) { bestDist = dist; best = code; }
+                    idx = text.IndexOf(sym, idx + 1, StringComparison.OrdinalIgnoreCase);
+                }
+            }
+        }
+        return best;
+    }
+
+    private static async Task<Dictionary<string, double>?> GetRates(HttpClient http, string src,
+        System.Threading.CancellationToken ct)
+    {
+        PruneRateCache();
+
+        if (_rateCache.TryGetValue(src, out var cached) && DateTime.UtcNow - cached.fetched < RateCacheTtl)
+            return cached.rates;
+
+        var json = await http.GetStringAsync($"https://open.er-api.com/v6/latest/{src}", ct);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var ratesEl = doc.RootElement.GetProperty("rates");
+        var rates = new Dictionary<string, double>();
+        foreach (var p in ratesEl.EnumerateObject())
+            if (p.Value.ValueKind == System.Text.Json.JsonValueKind.Number)
+                rates[p.Name] = p.Value.GetDouble();
+        _rateCache[src] = (DateTime.UtcNow, rates);
+        return rates;
+    }
+}

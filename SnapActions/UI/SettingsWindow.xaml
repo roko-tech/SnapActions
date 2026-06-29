@@ -1,0 +1,351 @@
+<Window x:Class="SnapActions.UI.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SnapActions Settings"
+        Width="540" Height="640"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Background="#FF1E1E2E"
+        RenderOptions.BitmapScalingMode="LowQuality"
+        TextOptions.TextFormattingMode="Display">
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,15">
+            <TextBlock Text="SnapActions" FontSize="22" FontWeight="Bold"
+                       Foreground="#FF89B4FA"/>
+            <TextBlock Text="Smart Text Selection Toolbar" FontSize="12"
+                       Foreground="#FFA6ADC8" Margin="0,2,0,0"/>
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <!-- General -->
+                <TextBlock Text="GENERAL" FontSize="11" FontWeight="SemiBold"
+                           Foreground="#FFA6ADC8" Margin="0,0,0,6"/>
+                <CheckBox x:Name="EnabledCheck" Content="Enabled"
+                          Foreground="#FFCDD6F4" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+                <CheckBox x:Name="AutoStartCheck" Content="Start with Windows"
+                          Foreground="#FFCDD6F4" Margin="0,4"
+                          Checked="AutoStart_Changed" Unchecked="AutoStart_Changed"/>
+                <CheckBox x:Name="ReplaceSelectionCheck"
+                          Content="Replace selection when transforming text"
+                          Foreground="#FFCDD6F4" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+                <CheckBox x:Name="RestoreClipboardCheck"
+                          Content="Restore previous clipboard ~3 s after a copy action"
+                          ToolTip="When you click a toolbar action that copies text (Format JSON, Convert Color, etc.), the result lands on your clipboard. With this on, the previous clipboard contents are put back about 3 seconds later — long enough for you to paste the result first."
+                          Foreground="#FFCDD6F4" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+                <CheckBox x:Name="OnlineLookupsCheck"
+                          Content="Allow online lookups (Translate / Dictionary / Currency)"
+                          ToolTip="These actions send your selected text to a third-party online service (MyMemory, dictionaryapi.dev, open.er-api.com) over HTTPS. With this off, they ask before sending anything."
+                          Foreground="#FFCDD6F4" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+                <CheckBox x:Name="CaptureOnCtrlCCheck"
+                          Content="Also show the toolbar when I press Ctrl+C"
+                          ToolTip="When on, copying text with Ctrl+C also pops the toolbar for it. This reads what you just copied — no synthetic keystroke and no clipboard clearing — so it won't interfere with other apps."
+                          Foreground="#FFCDD6F4" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Show delay:" Foreground="#FFCDD6F4"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="ShowDelayCombo" Width="120"
+                              SelectionChanged="ShowDelay_Changed">
+                        <ComboBoxItem Content="Instant" Tag="0"/>
+                        <ComboBoxItem Content="100 ms" Tag="100"/>
+                        <ComboBoxItem Content="200 ms" Tag="200"/>
+                        <ComboBoxItem Content="300 ms" Tag="300"/>
+                        <ComboBoxItem Content="500 ms" Tag="500"/>
+                        <ComboBoxItem Content="1 second" Tag="1000"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Multi-click delay:" Foreground="#FFCDD6F4"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="MultiClickCombo" Width="120"
+                              SelectionChanged="MultiClick_Changed">
+                        <ComboBoxItem Content="Instant" Tag="0"/>
+                        <ComboBoxItem Content="100 ms" Tag="100"/>
+                        <ComboBoxItem Content="200 ms" Tag="200"/>
+                        <ComboBoxItem Content="300 ms" Tag="300"/>
+                        <ComboBoxItem Content="400 ms" Tag="400"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Paste mode:" Foreground="#FFCDD6F4"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="PasteModeCombo" Width="120"
+                              SelectionChanged="PasteMode_Changed"
+                              ToolTip="How to summon the paste menu (the menu that appears with no selection, offering Paste / Paste as transform / etc.)">
+                        <ComboBoxItem Content="Long-press" Tag="longpress"/>
+                        <ComboBoxItem Content="Double-click" Tag="doubleclick"/>
+                        <ComboBoxItem Content="Off" Tag="off"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Long-press duration:" Foreground="#FFCDD6F4"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="LongPressCombo" Width="120"
+                              SelectionChanged="LongPress_Changed"
+                              ToolTip="How long to hold the mouse button to open paste mode (only applies when Paste mode = Long-press)">
+                        <ComboBoxItem Content="300 ms" Tag="300"/>
+                        <ComboBoxItem Content="500 ms" Tag="500"/>
+                        <ComboBoxItem Content="750 ms" Tag="750"/>
+                        <ComboBoxItem Content="1 second" Tag="1000"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Auto-dismiss after:" Foreground="#FFCDD6F4"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="DismissTimeCombo" Width="120"
+                              SelectionChanged="DismissTime_Changed">
+                        <ComboBoxItem Content="3 seconds" Tag="3000"/>
+                        <ComboBoxItem Content="5 seconds" Tag="5000"/>
+                        <ComboBoxItem Content="8 seconds" Tag="8000"/>
+                        <ComboBoxItem Content="15 seconds" Tag="15000"/>
+                        <ComboBoxItem Content="30 seconds" Tag="30000"/>
+                        <ComboBoxItem Content="Never" Tag="0"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <!-- Action Categories -->
+                <TextBlock Text="ACTIONS" FontSize="11" FontWeight="SemiBold"
+                           Foreground="#FFA6ADC8" Margin="0,18,0,6"/>
+
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                    <TextBlock Text="Max inline context actions:" Foreground="#FFCDD6F4"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="MaxInlineCombo" Width="80"
+                              SelectionChanged="MaxInline_Changed"
+                              ToolTip="How many of the type-specific actions (Open URL, Format JSON, etc.) to show as buttons on the toolbar before the rest fall back to a dropdown.">
+                        <ComboBoxItem Content="1" Tag="1"/>
+                        <ComboBoxItem Content="2" Tag="2"/>
+                        <ComboBoxItem Content="3" Tag="3"/>
+                        <ComboBoxItem Content="4" Tag="4"/>
+                        <ComboBoxItem Content="6" Tag="6"/>
+                        <ComboBoxItem Content="8" Tag="8"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <CheckBox x:Name="ShowTransformCheck" Content="Text Transforms"
+                          Foreground="#FFCDD6F4" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+                <CheckBox x:Name="ShowEncodeCheck" Content="Encode/Decode"
+                          Foreground="#FFCDD6F4" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+                <CheckBox x:Name="ShowSearchCheck" Content="Search engines"
+                          Foreground="#FFCDD6F4" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+
+                <!-- Search Language -->
+                <TextBlock Text="SEARCH LANGUAGE" FontSize="11" FontWeight="SemiBold"
+                           Foreground="#FFA6ADC8" Margin="0,18,0,6"/>
+                <StackPanel Orientation="Horizontal">
+                    <ComboBox x:Name="LanguageCombo" Width="200"
+                              SelectionChanged="Language_Changed">
+                        <ComboBoxItem Content="No filter" Tag=""/>
+                        <ComboBoxItem Content="English" Tag="en"/>
+                        <ComboBoxItem Content="Arabic" Tag="ar"/>
+                        <ComboBoxItem Content="Spanish" Tag="es"/>
+                        <ComboBoxItem Content="French" Tag="fr"/>
+                        <ComboBoxItem Content="German" Tag="de"/>
+                        <ComboBoxItem Content="Japanese" Tag="ja"/>
+                        <ComboBoxItem Content="Korean" Tag="ko"/>
+                        <ComboBoxItem Content="Chinese" Tag="zh"/>
+                        <ComboBoxItem Content="Portuguese" Tag="pt"/>
+                        <ComboBoxItem Content="Russian" Tag="ru"/>
+                        <ComboBoxItem Content="Turkish" Tag="tr"/>
+                        <ComboBoxItem Content="Hindi" Tag="hi"/>
+                        <ComboBoxItem Content="Italian" Tag="it"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <!-- Target Currency -->
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <TextBlock Text="Convert to:" Foreground="#FFCDD6F4"
+                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="CurrencyCombo" Width="120"
+                              SelectionChanged="Currency_Changed">
+                        <ComboBoxItem Content="USD" Tag="USD"/>
+                        <ComboBoxItem Content="EUR" Tag="EUR"/>
+                        <ComboBoxItem Content="GBP" Tag="GBP"/>
+                        <ComboBoxItem Content="SAR" Tag="SAR"/>
+                        <ComboBoxItem Content="AED" Tag="AED"/>
+                        <ComboBoxItem Content="KWD" Tag="KWD"/>
+                        <ComboBoxItem Content="JPY" Tag="JPY"/>
+                        <ComboBoxItem Content="CAD" Tag="CAD"/>
+                        <ComboBoxItem Content="AUD" Tag="AUD"/>
+                        <ComboBoxItem Content="CHF" Tag="CHF"/>
+                        <ComboBoxItem Content="CNY" Tag="CNY"/>
+                        <ComboBoxItem Content="INR" Tag="INR"/>
+                        <ComboBoxItem Content="BRL" Tag="BRL"/>
+                        <ComboBoxItem Content="KRW" Tag="KRW"/>
+                        <ComboBoxItem Content="TRY" Tag="TRY"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <!-- Search Engines -->
+                <TextBlock Text="SEARCH ENGINES" FontSize="11" FontWeight="SemiBold"
+                           Foreground="#FFA6ADC8" Margin="0,18,0,6"/>
+                <StackPanel x:Name="SearchEnginesPanel" Margin="0,0,0,4"/>
+
+                <!-- Add custom search engine -->
+                <Border Background="#FF2D2D3D" CornerRadius="6"
+                        Padding="10" Margin="0,6,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Add Custom Search Engine" FontSize="11"
+                                   Foreground="#FFA6ADC8" Margin="0,0,0,6"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <TextBlock Text="Name:" Foreground="#FFCDD6F4"
+                                       VerticalAlignment="Center" Width="50"/>
+                            <TextBox x:Name="CustomNameBox" Width="180"
+                                     Background="#FF1E1E2E"
+                                     Foreground="#FFCDD6F4"
+                                     BorderBrush="#FF3D3D50" Padding="4,2"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="URL:" Foreground="#FFCDD6F4"
+                                       VerticalAlignment="Center" Width="50"/>
+                            <TextBox x:Name="CustomUrlBox" Width="350"
+                                     Background="#FF1E1E2E"
+                                     Foreground="#FFCDD6F4"
+                                     BorderBrush="#FF3D3D50" Padding="4,2"/>
+                        </StackPanel>
+                        <TextBlock Text="Use {0} for query, {1} for language. Example: https://site.com/search?q={0}&amp;lang={1}"
+                                   FontSize="10" Foreground="#FFA6ADC8"
+                                   Margin="50,2,0,4" TextWrapping="Wrap"/>
+                        <Button Content="Add" HorizontalAlignment="Left" Margin="50,2,0,0"
+                                Padding="16,4" Click="AddCustomEngine_Click"
+                                Background="#FF89B4FA" Foreground="#1E1E2E"
+                                BorderThickness="0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Custom Actions -->
+                <TextBlock Text="CUSTOM ACTIONS" FontSize="11" FontWeight="SemiBold"
+                           Foreground="#FFA6ADC8" Margin="0,18,0,6"/>
+                <StackPanel x:Name="UserActionsPanel" Margin="0,0,0,4"/>
+                <Border Background="#FF2D2D3D" CornerRadius="6" Padding="10" Margin="0,6,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Add Custom Action" FontSize="11"
+                                   Foreground="#FFA6ADC8" Margin="0,0,0,6"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <TextBlock Text="Name:" Foreground="#FFCDD6F4"
+                                       VerticalAlignment="Center" Width="70"/>
+                            <TextBox x:Name="UserActionNameBox" Width="180"
+                                     Background="#FF1E1E2E" Foreground="#FFCDD6F4"
+                                     BorderBrush="#FF3D3D50" Padding="4,2"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="URL:" Foreground="#FFCDD6F4"
+                                       VerticalAlignment="Center" Width="70"/>
+                            <TextBox x:Name="UserActionUrlBox" Width="340"
+                                     Background="#FF1E1E2E" Foreground="#FFCDD6F4"
+                                     BorderBrush="#FF3D3D50" Padding="4,2"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="Action:" Foreground="#FFCDD6F4"
+                                       VerticalAlignment="Center" Width="70"/>
+                            <ComboBox x:Name="UserActionKindCombo" Width="170">
+                                <ComboBoxItem Content="Open in browser" Tag="openurl" IsSelected="True"/>
+                                <ComboBoxItem Content="Fetch &amp; show result" Tag="fetchtext"/>
+                            </ComboBox>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="Applies to:" Foreground="#FFCDD6F4"
+                                       VerticalAlignment="Center" Width="70"/>
+                            <ComboBox x:Name="UserActionTypeCombo" Width="170">
+                                <ComboBoxItem Content="Any selection" Tag="" IsSelected="True"/>
+                                <ComboBoxItem Content="URLs" Tag="Url"/>
+                                <ComboBoxItem Content="Emails" Tag="Email"/>
+                                <ComboBoxItem Content="IP addresses" Tag="IpAddress"/>
+                                <ComboBoxItem Content="File paths" Tag="FilePath"/>
+                                <ComboBoxItem Content="JSON" Tag="Json"/>
+                                <ComboBoxItem Content="UUIDs" Tag="Uuid"/>
+                            </ComboBox>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4">
+                            <TextBlock Text="JSON field:" Foreground="#FFCDD6F4"
+                                       VerticalAlignment="Center" Width="70"/>
+                            <TextBox x:Name="UserActionFieldBox" Width="170"
+                                     Background="#FF1E1E2E" Foreground="#FFCDD6F4"
+                                     BorderBrush="#FF3D3D50" Padding="4,2"/>
+                            <TextBlock Text="optional, for Fetch" FontSize="10"
+                                       Foreground="#FFA6ADC8" VerticalAlignment="Center"
+                                       Margin="6,0,0,0"/>
+                        </StackPanel>
+                        <TextBlock Text="Use {0} for the selected text. Example: https://api.github.com/users/{0}"
+                                   FontSize="10" Foreground="#FFA6ADC8"
+                                   Margin="70,2,0,4" TextWrapping="Wrap"/>
+                        <Button Content="Add" HorizontalAlignment="Left" Margin="70,2,0,0"
+                                Padding="16,4" Click="AddUserAction_Click"
+                                Background="#FF89B4FA" Foreground="#1E1E2E"
+                                BorderThickness="0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- App Profiles -->
+                <TextBlock Text="APP PROFILES" FontSize="11" FontWeight="SemiBold"
+                           Foreground="#FFA6ADC8" Margin="0,18,0,6"/>
+                <TextBlock Text="Hide specific actions when a chosen app is in the foreground."
+                           FontSize="10" Foreground="#FFA6ADC8" Margin="0,0,0,4" TextWrapping="Wrap"/>
+                <StackPanel x:Name="AppProfilesPanel" Margin="0,0,0,4"/>
+                <Button Content="Configure app profiles..." HorizontalAlignment="Left" Margin="0,2,0,0"
+                        Padding="10,2" FontSize="11" Click="ConfigureAppProfiles_Click"
+                        Background="#FF2D2D3D" Foreground="#FFCDD6F4" BorderBrush="#FF3D3D50" Cursor="Hand"/>
+
+                <!-- Excluded Apps -->
+                <TextBlock Text="EXCLUDED APPS" FontSize="11" FontWeight="SemiBold"
+                           Foreground="#FFA6ADC8" Margin="0,18,0,6"/>
+                <DockPanel Margin="0,0,0,4">
+                    <Button DockPanel.Dock="Right" Content="Add running app..."
+                            Padding="10,2" FontSize="11"
+                            Background="#FF2D2D3D" Foreground="#FFCDD6F4"
+                            BorderBrush="#FF3D3D50"
+                            Click="AddRunningApp_Click" Cursor="Hand"/>
+                    <TextBlock Text="One process name per line"
+                               FontSize="10" Foreground="#FFA6ADC8"
+                               VerticalAlignment="Center"/>
+                </DockPanel>
+                <TextBox x:Name="ExcludedAppsBox" AcceptsReturn="True" Height="80"
+                         Background="#FF2D2D3D"
+                         Foreground="#FFCDD6F4"
+                         BorderBrush="#FF3D3D50"
+                         Padding="8" FontFamily="Consolas" FontSize="12"
+                         TextChanged="ExcludedApps_Changed"/>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Grid Grid.Row="2" Margin="0,15,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" x:Name="VersionText"
+                       Foreground="#FF6C7086" FontSize="10"
+                       VerticalAlignment="Center"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Save" Padding="20,8" Margin="0,0,8,0"
+                        Background="#FF89B4FA" Foreground="#1E1E2E"
+                        BorderThickness="0" Click="Save_Click"/>
+                <Button Content="Close" Padding="20,8"
+                        Background="#FF2D2D3D"
+                        Foreground="#FFCDD6F4"
+                        BorderBrush="#FF3D3D50"
+                        Click="Close_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

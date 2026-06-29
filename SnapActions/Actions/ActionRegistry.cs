@@ -1,0 +1,307 @@
+using SnapActions.Actions.ContextActions;
+using SnapActions.Actions.TransformActions;
+using SnapActions.Detection;
+
+namespace SnapActions.Actions;
+
+public class ActionRegistry
+{
+    private readonly List<IAction> _allActions;
+
+    public ActionRegistry()
+    {
+        _allActions =
+        [
+            // Context actions
+            new OpenUrlAction(),
+            new SendEmailAction(),
+            new OpenFilePathAction(),
+            new OpenContainingFolderAction(),
+            new PreviewColorAction(),
+            new ConvertColorAction(),
+            new FormatJsonAction(),
+            new MinifyJsonAction(),
+            new FormatXmlAction(),
+            new StripTagsAction(),
+            new CalculateAction(),
+            new IpLookupAction(),
+            new DecodeBase64Action(),
+            new DecodeJwtAction(),
+            new GenerateQrAction(),
+            new GenerateUuidAction(),
+            new ConvertTimezoneAction(),
+            new UnitConvertAction(),
+            new TranslateAction(),
+            new DictionaryAction(),
+            new CurrencyConverterAction(),
+
+            // Transform actions
+            // DeleteTextAction and PastePlainTextAction live in TransformActions/ because their
+            // Category is Transform, but they're shape-wise different from the case/whitespace
+            // family below (single-effect actions, not pure text-to-text transforms). Listed
+            // first so they sort to the top of the Transform group in the toolbar.
+            new DeleteTextAction(),
+            new PastePlainTextAction(),
+
+            new CaseTransformAction("upper", "UPPERCASE", "IconUppercase", text => text.ToUpperInvariant()),
+            new CaseTransformAction("lower", "lowercase", "IconLowercase", text => text.ToLowerInvariant()),
+            new CaseTransformAction("title", "Title Case", "IconTitleCase", ToTitleCase),
+            new CaseTransformAction("camel", "camelCase", "IconCamelCase", ToCamelCase),
+            new CaseTransformAction("snake", "snake_case", "IconSnakeCase", ToSnakeCase),
+            new CaseTransformAction("kebab", "kebab-case", "IconKebabCase", ToKebabCase),
+            new CaseTransformAction("pascal", "PascalCase", "IconPascalCase", ToPascalCase),
+            new CaseTransformAction("reverse", "Reverse", "IconReverse", ReverseGraphemes),
+
+            new WhitespaceAction("trim", "Trim", text => text.Trim()),
+            new WhitespaceAction("remove_extra_spaces", "Remove Extra Spaces",
+                text => System.Text.RegularExpressions.Regex.Replace(text, @" {2,}", " ")),
+            new WhitespaceAction("sort_lines", "Sort Lines", text => SortLines(text, distinct: false)),
+            new WhitespaceAction("dedup_lines", "Remove Duplicates", text => SortLines(text, distinct: true)),
+            new WhitespaceAction("remove_linebreaks", "Remove Line Breaks",
+                text => System.Text.RegularExpressions.Regex.Replace(text, @"[\r\n]+", " ").Trim()),
+
+            // Encoding actions
+            new EncodingAction("url_encode", "URL Encode", "IconEncode",
+                text => Uri.EscapeDataString(text)),
+            new EncodingAction("url_decode", "URL Decode", "IconDecode",
+                text => Uri.UnescapeDataString(text)),
+            new EncodingAction("base64_encode", "Base64 Encode", "IconEncode",
+                text => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text))),
+            new EncodingAction("base64_decode", "Base64 Decode", "IconDecode",
+                text => { try { return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(text)); } catch { return "[Invalid Base64]"; } }),
+            new EncodingAction("html_encode", "HTML Encode", "IconEncode",
+                text => System.Net.WebUtility.HtmlEncode(text)),
+            new EncodingAction("html_decode", "HTML Decode", "IconDecode",
+                text => System.Net.WebUtility.HtmlDecode(text)),
+
+            // Wrap actions
+            new WrapAction("wrap_quotes", "Wrap \"quotes\"", "\"", "\""),
+            new WrapAction("wrap_single_quotes", "Wrap 'quotes'", "'", "'"),
+            new WrapAction("wrap_parens", "Wrap (parens)", "(", ")"),
+            new WrapAction("wrap_brackets", "Wrap [brackets]", "[", "]"),
+            new WrapAction("wrap_braces", "Wrap {braces}", "{", "}"),
+            new WrapAction("wrap_backticks", "Wrap `backticks`", "`", "`"),
+
+            // Hex / ROT13
+            new EncodingAction("hex_encode", "Hex Encode", "IconEncode",
+                text => Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(text)).ToLowerInvariant()),
+            new EncodingAction("hex_decode", "Hex Decode", "IconDecode",
+                text => { try { return System.Text.Encoding.UTF8.GetString(Convert.FromHexString(text.Trim())); } catch { return "[Invalid hex]"; } }),
+            new EncodingAction("rot13", "ROT13", "IconEncode", Rot13),
+
+            // Hash actions
+            new EncodingAction("md5", "MD5", "IconHash", text => Hash(System.Security.Cryptography.MD5.HashData, text)),
+            new EncodingAction("sha1", "SHA-1", "IconHash", text => Hash(System.Security.Cryptography.SHA1.HashData, text)),
+            new EncodingAction("sha256", "SHA-256", "IconHash", text => Hash(System.Security.Cryptography.SHA256.HashData, text)),
+            new EncodingAction("sha512", "SHA-512", "IconHash", text => Hash(System.Security.Cryptography.SHA512.HashData, text)),
+
+        ];
+    }
+
+    private static string Rot13(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (var c in text)
+        {
+            if (c is >= 'a' and <= 'z') sb.Append((char)('a' + (c - 'a' + 13) % 26));
+            else if (c is >= 'A' and <= 'Z') sb.Append((char)('A' + (c - 'A' + 13) % 26));
+            else sb.Append(c);
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// The fixed (non-search) action IDs — invariant across the process lifetime, so we
+    /// instantiate the registry once instead of rebuilding it on every call.
+    /// </summary>
+    private static readonly Lazy<IReadOnlySet<string>> _fixedActionIds = new(() =>
+    {
+        var registry = new ActionRegistry();
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var a in registry._allActions) ids.Add(a.Id);
+        return ids;
+    });
+
+    /// <summary>
+    /// All action IDs known to the registry, including the generated `search_<engine.Id>` ones.
+    /// Used by SettingsManager.PruneStaleActionIds to drop orphan entries on Load.
+    /// </summary>
+    public static IReadOnlySet<string> GetAllKnownActionIds(IEnumerable<Config.SearchEngine> engines)
+    {
+        // Reuse the cached fixed-ID set and just merge in the per-call search engine IDs. Previously
+        // every call constructed a fresh ActionRegistry — fine for the single Load-time caller but
+        // wasteful if anything else starts to use this API.
+        var ids = new HashSet<string>(_fixedActionIds.Value, StringComparer.Ordinal);
+        foreach (var e in engines) ids.Add($"search_{e.Id}");
+        foreach (var u in Config.SettingsManager.Current.UserActions) ids.Add($"user_{u.Id}");
+        return ids;
+    }
+
+    public List<ActionGroup> GetActions(string text, TextAnalysis analysis, string? appName = null)
+    {
+        var s = Config.SettingsManager.Current;
+        var groups = new List<ActionGroup>();
+        // Global disabled set, unioned with any per-app hidden actions for the foreground app.
+        var disabled = new HashSet<string>(s.DisabledActionIds, StringComparer.Ordinal);
+        if (!string.IsNullOrEmpty(appName))
+            foreach (var (app, ids) in s.AppHiddenActions)
+                if (app.Equals(appName, StringComparison.OrdinalIgnoreCase))
+                    foreach (var id in ids) disabled.Add(id);
+        var applicable = _allActions
+            .Where(a => a.CanExecute(text, analysis) && !disabled.Contains(a.Id))
+            .ToList();
+
+        var contextActions = applicable.Where(a => a.Category == ActionCategory.Context).ToList();
+
+        // User-authored recipe actions — data-driven from settings, same as the search engines.
+        foreach (var ua in s.UserActions)
+        {
+            if (!ua.Enabled) continue;
+            var action = new UserActions.UserRecipeAction(ua);
+            if (action.CanExecute(text, analysis) && !disabled.Contains(action.Id))
+                contextActions.Add(action);
+        }
+
+        if (contextActions.Count > 0)
+            groups.Add(new ActionGroup("Context", "IconContext", contextActions));
+
+        if (s.ShowTransformActions)
+        {
+            var list = applicable.Where(a => a.Category == ActionCategory.Transform).ToList();
+            if (list.Count > 0) groups.Add(new ActionGroup("Transform", "IconTransform", list));
+        }
+        if (s.ShowEncodeActions)
+        {
+            var list = applicable.Where(a => a.Category == ActionCategory.Encode).ToList();
+            if (list.Count > 0) groups.Add(new ActionGroup("Encode", "IconEncode", list));
+        }
+        if (s.ShowSearchActions && !string.IsNullOrEmpty(text.Trim()))
+        {
+            var lang = s.SearchLanguage ?? "";
+            var searchActions = s.SearchEngines
+                .Where(e => e.Enabled)
+                .Select(e => (IAction)new SearchActions.WebSearchAction(
+                    e.Id, e.Name, "IconSearch", e.UrlTemplate,
+                    e.UseLanguageFilter ? lang : "", e.LangMode))
+                .ToList();
+            if (searchActions.Count > 0)
+                groups.Add(new ActionGroup("Search", "IconSearch", searchActions));
+        }
+
+        return groups;
+    }
+
+    /// <summary>All fixed (non-search) actions as (id, name, category) — for the per-app profile
+    /// editor in Settings, which lets the user choose actions to hide by name.</summary>
+    public IEnumerable<(string Id, string Name, ActionCategory Category)> AllActionDescriptors() =>
+        _allActions.Select(a => (a.Id, a.Name, a.Category));
+
+    /// <summary>Get all actions for a category (including disabled ones) for the edit mode UI.</summary>
+    public List<IAction> GetAllActionsForCategory(ActionCategory category)
+    {
+        if (category == ActionCategory.Search)
+        {
+            // Search actions are built from settings, not from _allActions
+            var lang = Config.SettingsManager.Current.SearchLanguage ?? "";
+            return Config.SettingsManager.Current.SearchEngines
+                .Select(e => (IAction)new SearchActions.WebSearchAction(
+                    e.Id, e.Name, "IconSearch", e.UrlTemplate,
+                    e.UseLanguageFilter ? lang : "", e.LangMode))
+                .ToList();
+        }
+        return _allActions.Where(a => a.Category == category).ToList();
+    }
+
+    // Text transformation helpers
+    private static string ToTitleCase(string text) =>
+        // InvariantCulture, not CurrentCulture — Turkish (and similar) locales would otherwise
+        // turn "Hello" into "Helloİ" via the dotted-I rule, which is surprising for English text.
+        System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(
+            text.ToLowerInvariant());
+
+    // All four helpers use the *Invariant case ops, matching ToTitleCase above. The parameterless
+    // ToLower()/char.ToUpper(char) overloads are CurrentCulture-sensitive and corrupt identifiers
+    // on Turkish-family locales (the dotted/dotless-I rule), e.g. snake_case("HELLO_INDIA") would
+    // otherwise yield "hello_ındıa".
+    private static string ToCamelCase(string text)
+    {
+        var words = SplitWords(text);
+        if (words.Length == 0) return text;
+        return words[0].ToLowerInvariant() + string.Concat(words.Skip(1).Select(w =>
+            char.ToUpperInvariant(w[0]) + w[1..].ToLowerInvariant()));
+    }
+
+    private static string ToPascalCase(string text)
+    {
+        var words = SplitWords(text);
+        return string.Concat(words.Select(w => char.ToUpperInvariant(w[0]) + w[1..].ToLowerInvariant()));
+    }
+
+    private static string ToSnakeCase(string text) =>
+        string.Join('_', SplitWords(text).Select(w => w.ToLowerInvariant()));
+
+    private static string ToKebabCase(string text) =>
+        string.Join('-', SplitWords(text).Select(w => w.ToLowerInvariant()));
+
+    private static string ReverseGraphemes(string text)
+    {
+        // Iterate Unicode text elements so emoji and combining marks survive
+        var enumerator = System.Globalization.StringInfo.GetTextElementEnumerator(text);
+        var stack = new Stack<string>();
+        while (enumerator.MoveNext())
+            stack.Push((string)enumerator.Current);
+        return string.Concat(stack);
+    }
+
+    private static string Hash(Func<byte[], byte[]> hashFn, string text)
+    {
+        var bytes = hashFn(System.Text.Encoding.UTF8.GetBytes(text));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    private static string SortLines(string text, bool distinct)
+    {
+        // Detect line ending: keep \r\n if input uses it, else \n
+        var nl = text.Contains("\r\n") ? "\r\n" : "\n";
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        IEnumerable<string> seq = lines.OrderBy(l => l, StringComparer.OrdinalIgnoreCase);
+        // Match the sort comparer so "Hello" and "hello" dedupe to one entry.
+        if (distinct) seq = seq.Distinct(StringComparer.OrdinalIgnoreCase);
+        return string.Join(nl, seq);
+    }
+
+    private static string[] SplitWords(string text)
+    {
+        // Split on spaces, underscores, hyphens, dots, and camelCase boundaries.
+        // Two camel-case boundaries are recognized:
+        //   1. upper-after-lower      ("helloWorld" → "hello" | "World")
+        //   2. upper-after-upper but followed by lower ("XMLHttpRequest" → "XML" | "Http" | "Request")
+        // Without rule 2, "XMLHttpRequest" would split as "XMLHttp" + "Request".
+        var result = new List<string>();
+        var current = new System.Text.StringBuilder();
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c == ' ' || c == '_' || c == '-' || c == '.')
+            {
+                if (current.Length > 0) { result.Add(current.ToString()); current.Clear(); }
+            }
+            else if (i > 0 && char.IsUpper(c) &&
+                     (char.IsLower(text[i - 1]) ||
+                      (i + 1 < text.Length && char.IsLower(text[i + 1]))))
+            {
+                if (current.Length > 0) { result.Add(current.ToString()); current.Clear(); }
+                current.Append(c);
+            }
+            else
+            {
+                current.Append(c);
+            }
+        }
+        if (current.Length > 0) result.Add(current.ToString());
+        return result.Where(w => w.Length > 0).ToArray();
+    }
+}
+
+public record ActionGroup(string Name, string IconKey, List<IAction> Actions);

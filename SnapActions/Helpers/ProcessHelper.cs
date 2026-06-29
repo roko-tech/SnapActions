@@ -1,0 +1,162 @@
+using System.Diagnostics;
+using System.IO;
+using SnapActions.Actions;
+
+namespace SnapActions.Helpers;
+
+public static class ProcessHelper
+{
+    // Schemes we'll happily hand to the shell. javascript:, vbscript:, file:, and any custom
+    // protocol handlers can do real damage when fed text from a remote source — keep the list tight.
+    private static readonly HashSet<string> AllowedSchemes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "http", "https", "ftp", "ftps", "mailto"
+    };
+
+    public static ActionResult TryShellOpen(string uri, string successMessage = "Opened")
+    {
+        if (!IsAllowed(uri))
+            return new ActionResult(false, Message: "Refusing to open: unsupported URI scheme");
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+            return new ActionResult(true, Message: successMessage);
+        }
+        catch (Exception ex)
+        {
+            return new ActionResult(false, Message: ex.Message);
+        }
+    }
+
+    // Extensions where launching may run code — confirm with the user first.
+    private static readonly HashSet<string> RiskyExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Direct executables / scripts
+        ".exe", ".bat", ".cmd", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
+        ".msi", ".scr", ".com", ".pif", ".reg", ".lnk",
+        // Other shell-executed code paths (mshta, mmc, control-panel applets, shell command files,
+        // internet shortcuts, script components, ClickOnce, sidebar gadgets, MSI patches).
+        ".hta", ".msc", ".cpl", ".scf", ".url", ".wsc", ".sct", ".ws",
+        ".application", ".appref-ms", ".gadget", ".msp",
+        // Disk images that mount as drives (autorun/lnk inside can run on open)
+        ".iso", ".img", ".vhd", ".vhdx",
+        // Office formats that can carry macros
+        ".docm", ".dotm", ".xlsm", ".xltm", ".xlam", ".pptm", ".potm", ".ppam",
+    };
+
+    /// <summary>
+    /// Opens a local file or directory through Explorer. Validates that the path exists and
+    /// is not a remote URL — keep this distinct from the URL allow-list above.
+    /// </summary>
+    public static ActionResult TryOpenLocalPath(string path, string successMessage = "Opened")
+    {
+        if (string.IsNullOrWhiteSpace(path)) return new ActionResult(false, Message: "Empty path");
+        if (!File.Exists(path) && !Directory.Exists(path))
+            return new ActionResult(false, Message: "Path not found");
+
+        // For risky executable extensions, ask before launching. The user just selected text from
+        // somewhere — it would be bad to silently run an attacker-supplied path.
+        if (File.Exists(path))
+        {
+            // Windows strips trailing dots/spaces when launching, so "payload.hta." or
+            // "payload.hta " resolves to payload.hta — normalize before the check so they can't
+            // slip past the risky-extension gate. (Double extensions like "doc.hta" are already
+            // caught: GetExtension returns the final ".hta".)
+            var ext = Path.GetExtension(path.TrimEnd('.', ' '));
+            if (RiskyExtensions.Contains(ext))
+            {
+                var msg = $"This will execute:\n\n{path}\n\nAre you sure?";
+                // DefaultDesktopOnly forces the dialog onto the active desktop and brings it to
+                // the front — important because our toolbar is a no-activate window with no focus
+                // to inherit, so the dialog could otherwise appear behind other windows.
+                var answer = System.Windows.MessageBox.Show(msg, "Run executable?",
+                    System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning,
+                    System.Windows.MessageBoxResult.No,
+                    System.Windows.MessageBoxOptions.DefaultDesktopOnly);
+                if (answer != System.Windows.MessageBoxResult.Yes)
+                    return new ActionResult(false, Message: "Cancelled");
+            }
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            return new ActionResult(true, Message: successMessage);
+        }
+        catch (Exception ex)
+        {
+            return new ActionResult(false, Message: ex.Message);
+        }
+    }
+
+    private static bool IsAllowed(string uri)
+    {
+        if (string.IsNullOrWhiteSpace(uri)) return false;
+        return Uri.TryCreate(uri, UriKind.Absolute, out var parsed) &&
+               AllowedSchemes.Contains(parsed.Scheme);
+    }
+
+    /// <summary>
+    /// Opens Explorer at the given path. Selects the file if it exists; otherwise opens the
+    /// directory; otherwise opens the parent directory (so a missing-file path still does something).
+    /// Returns "Path not found" only when neither the path nor its parent exists.
+    /// Refuses UNC paths to a remote host — those can leak NTLM hashes via SMB auth.
+    /// </summary>
+    public static ActionResult RevealInExplorer(string path, string successMessage = "Folder opened")
+    {
+        if (string.IsNullOrWhiteSpace(path)) return new ActionResult(false, Message: "Empty path");
+
+        // \\server\share — defensive refusal. The user just selected this from somewhere; opening
+        // it triggers an SMB connection and may leak credentials to the named host.
+        if (path.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            var msg = $"Open this UNC path?\n\n{path}\n\nOpening will contact the remote server.";
+            var answer = System.Windows.MessageBox.Show(msg, "Open UNC path?",
+                System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning,
+                System.Windows.MessageBoxResult.No,
+                System.Windows.MessageBoxOptions.DefaultDesktopOnly);
+            if (answer != System.Windows.MessageBoxResult.Yes)
+                return new ActionResult(false, Message: "Cancelled");
+        }
+
+        try
+        {
+            if (File.Exists(path))
+            {
+                StartExplorer($"/select,{path}");
+                return new ActionResult(true, Message: successMessage);
+            }
+            if (Directory.Exists(path))
+            {
+                StartExplorer(path);
+                return new ActionResult(true, Message: successMessage);
+            }
+            // Fall back to the parent directory (file was deleted but folder still exists).
+            var parent = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent))
+            {
+                StartExplorer(parent);
+                return new ActionResult(true, Message: "Parent folder opened (file missing)");
+            }
+            return new ActionResult(false, Message: "Path not found");
+        }
+        catch (Exception ex)
+        {
+            return new ActionResult(false, Message: ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Launches explorer.exe with a single argument. Uses ProcessStartInfo.ArgumentList so the
+    /// path is quoted by the runtime — no interpolation into a command-line string, no chance
+    /// of an embedded character changing argument boundaries. (The path is also pre-cleaned of
+    /// quotes by CleanPath, but defense in depth.)
+    /// </summary>
+    private static void StartExplorer(string singleArg)
+    {
+        var psi = new ProcessStartInfo("explorer.exe") { UseShellExecute = false };
+        psi.ArgumentList.Add(singleArg);
+        Process.Start(psi);
+    }
+}

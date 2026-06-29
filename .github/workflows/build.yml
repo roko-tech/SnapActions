@@ -1,0 +1,33 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# Least privilege: this workflow only builds and tests, so a read-only token is all it needs.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # WPF + WinForms only resolve on Windows runners.
+    runs-on: windows-latest
+    steps:
+      # Third-party actions pinned to a commit SHA (not a mutable tag) so a compromised tag can't
+      # silently change what runs in CI. Version in the trailing comment.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore SnapActions/SnapActions.csproj
+
+      - name: Build (Release)
+        run: dotnet build SnapActions/SnapActions.csproj -c Release --no-restore
+
+      - name: Test
+        run: dotnet test SnapActions.Tests/SnapActions.Tests.csproj -c Release --logger "console;verbosity=normal"

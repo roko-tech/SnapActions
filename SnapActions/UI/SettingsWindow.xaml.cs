@@ -1,0 +1,716 @@
+using System.Reflection;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Threading;
+using SnapActions.Config;
+using CheckBox = System.Windows.Controls.CheckBox;
+using ComboBox = System.Windows.Controls.ComboBox;
+
+namespace SnapActions.UI;
+
+public partial class SettingsWindow : Window
+{
+    private bool _loading = true;
+    private Brush? _textBrush;
+    private Brush? _secondaryBrush;
+    private readonly DispatcherTimer _saveDebounce;
+
+    public SettingsWindow()
+    {
+        InitializeComponent();
+        _textBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xCD, 0xD6, 0xF4));
+        _secondaryBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xA6, 0xAD, 0xC8));
+        _textBrush.Freeze();
+        _secondaryBrush.Freeze();
+
+        // Show the version pulled from the assembly. ToString(3) drops the .0 build-revision
+        // component so "1.6.13.0" displays as "v1.6.13" — matches the csproj <Version> and
+        // the GitHub release tag.
+        var v = Assembly.GetExecutingAssembly().GetName().Version;
+        VersionText.Text = v != null ? $"v{v.ToString(3)}" : "";
+
+        // Debounce auto-save so a fast typer in the excluded-apps box doesn't trigger 30 disk writes.
+        // Save synchronously on the UI thread — settings are tiny (kilobytes) and the previous
+        // Task.Run could race with a UI mutation (List.Add etc.), throwing inside JsonSerializer
+        // and silently losing the save.
+        _saveDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _saveDebounce.Tick += (_, _) =>
+        {
+            _saveDebounce.Stop();
+            FlushPendingTextEdits();
+            SettingsManager.Save();
+        };
+
+        // Flush any pending change immediately on close so users don't lose edits.
+        // Save synchronously so it can't lose the race against process exit if the user
+        // closes Settings and then immediately Exits from the tray menu.
+        Closing += (_, _) =>
+        {
+            if (_saveDebounce.IsEnabled)
+            {
+                _saveDebounce.Stop();
+                FlushPendingTextEdits();
+                SettingsManager.Save();
+            }
+        };
+
+        // Defer heavy loading to after render, use dispatcher idle priority
+        ContentRendered += (_, _) =>
+        {
+            Dispatcher.InvokeAsync(() =>
+            {
+                LoadSettings();
+                _loading = false;
+            }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+        };
+    }
+
+    private void QueueSave()
+    {
+        if (_loading) return;
+        _saveDebounce.Stop();
+        _saveDebounce.Start();
+    }
+
+    private void LoadSettings()
+    {
+        var s = SettingsManager.Current;
+        EnabledCheck.IsChecked = s.Enabled;
+        AutoStartCheck.IsChecked = s.AutoStart;
+        ReplaceSelectionCheck.IsChecked = s.ReplaceSelectionOnTransform;
+        RestoreClipboardCheck.IsChecked = s.RestoreClipboardAfterAction;
+        OnlineLookupsCheck.IsChecked = s.AllowOnlineLookups;
+        CaptureOnCtrlCCheck.IsChecked = s.CaptureOnCtrlC;
+
+        SelectComboByTag(DismissTimeCombo, s.ToolbarDismissTimeout.ToString(), 2);
+        SelectComboByTag(ShowDelayCombo, s.ToolbarShowDelay.ToString(), 0);
+        SelectComboByTag(MultiClickCombo, s.MultiClickDelay.ToString(), 2);
+        SelectComboByTag(PasteModeCombo, PasteModeTagFor(s.PasteModeTrigger), 0);
+        SelectComboByTag(LongPressCombo, s.LongPressDuration.ToString(), 1);
+        SelectComboByTag(MaxInlineCombo, s.MaxInlineContextActions.ToString(), 3);
+        SelectComboByTag(LanguageCombo, s.SearchLanguage, 0);
+        SelectComboByTag(CurrencyCombo, s.TargetCurrency, 0);
+
+        ShowTransformCheck.IsChecked = s.ShowTransformActions;
+        ShowEncodeCheck.IsChecked = s.ShowEncodeActions;
+        ShowSearchCheck.IsChecked = s.ShowSearchActions;
+
+        BuildSearchEnginesList();
+        BuildUserActionsList();
+        BuildAppProfilesList();
+        ExcludedAppsBox.Text = string.Join("\n", s.ExcludedApps);
+    }
+
+    private static void SelectComboByTag(ComboBox combo, string tag, int fallback)
+    {
+        for (int i = 0; i < combo.Items.Count; i++)
+            if (combo.Items[i] is ComboBoxItem item && item.Tag?.ToString() == tag)
+            { combo.SelectedIndex = i; return; }
+        combo.SelectedIndex = fallback;
+    }
+
+    private void BuildSearchEnginesList()
+    {
+        SearchEnginesPanel.Children.Clear();
+        foreach (var engine in SettingsManager.Current.SearchEngines)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+
+            var cb = new CheckBox
+            {
+                Content = engine.Name, IsChecked = engine.Enabled,
+                Foreground = _textBrush, Width = 130, Tag = engine.Id
+            };
+            cb.Checked += EngineToggle_Changed;
+            cb.Unchecked += EngineToggle_Changed;
+            row.Children.Add(cb);
+
+            // "lang" checkbox: apply global language filter to this engine
+            var langCb = new CheckBox
+            {
+                Content = "lang", IsChecked = engine.UseLanguageFilter,
+                Foreground = _secondaryBrush, FontSize = 10, Tag = engine.Id,
+                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0),
+                ToolTip = "Apply the selected Search Language to this engine"
+            };
+            langCb.Checked += LangToggle_Changed;
+            langCb.Unchecked += LangToggle_Changed;
+            row.Children.Add(langCb);
+
+            if (!engine.IsBuiltIn)
+            {
+                row.Children.Add(new TextBlock
+                {
+                    Text = engine.UrlTemplate.Length > 40 ? engine.UrlTemplate[..40] + "..." : engine.UrlTemplate,
+                    FontSize = 10, Foreground = _secondaryBrush,
+                    VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0)
+                });
+
+                var delBtn = new System.Windows.Controls.Button
+                {
+                    Content = "X", Width = 22, Height = 22, FontSize = 10,
+                    Margin = new Thickness(6, 0, 0, 0),
+                    Background = System.Windows.Media.Brushes.Transparent, Foreground = _secondaryBrush,
+                    BorderThickness = new Thickness(0), Tag = engine.Id,
+                    Cursor = System.Windows.Input.Cursors.Hand
+                };
+                delBtn.Click += DeleteEngine_Click;
+                row.Children.Add(delBtn);
+            }
+
+            SearchEnginesPanel.Children.Add(row);
+        }
+    }
+
+    private void BuildUserActionsList()
+    {
+        UserActionsPanel.Children.Clear();
+        foreach (var ua in SettingsManager.Current.UserActions)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+
+            var cb = new CheckBox
+            {
+                Content = ua.Name, IsChecked = ua.Enabled,
+                Foreground = _textBrush, Width = 150, Tag = ua.Id,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            cb.Checked += UserActionToggle_Changed;
+            cb.Unchecked += UserActionToggle_Changed;
+            row.Children.Add(cb);
+
+            row.Children.Add(new TextBlock
+            {
+                Text = ua.Kind == UserActionKind.FetchText ? "fetch" : "open",
+                FontSize = 10, Foreground = _secondaryBrush,
+                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0),
+            });
+
+            var delBtn = new System.Windows.Controls.Button
+            {
+                Content = "X", Width = 22, Height = 22, FontSize = 10,
+                Margin = new Thickness(6, 0, 0, 0),
+                Background = System.Windows.Media.Brushes.Transparent, Foreground = _secondaryBrush,
+                BorderThickness = new Thickness(0), Tag = ua.Id,
+                Cursor = System.Windows.Input.Cursors.Hand,
+            };
+            delBtn.Click += DeleteUserAction_Click;
+            row.Children.Add(delBtn);
+
+            UserActionsPanel.Children.Add(row);
+        }
+    }
+
+    private void UserActionToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || sender is not CheckBox { Tag: string id }) return;
+        var ua = SettingsManager.Current.UserActions.FirstOrDefault(u => u.Id == id);
+        if (ua != null) ua.Enabled = ((CheckBox)sender).IsChecked == true;
+        QueueSave();
+    }
+
+    private void DeleteUserAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string id }) return;
+        SettingsManager.Current.UserActions.RemoveAll(u => u.Id == id);
+        BuildUserActionsList();
+        QueueSave();
+    }
+
+    private void AddUserAction_Click(object sender, RoutedEventArgs e)
+    {
+        var name = UserActionNameBox.Text.Trim();
+        var url = UserActionUrlBox.Text.Trim();
+        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(url)) return;
+
+        // Same scheme guard as custom search engines — and ProcessHelper re-checks at launch.
+        if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show("Custom action URLs must start with http:// or https://",
+                "Invalid URL", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        if (!url.Contains("{0}"))
+            url += (url.Contains('?') ? "&" : "?") + "q={0}";
+
+        var kind = (UserActionKindCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() == "fetchtext"
+            ? UserActionKind.FetchText : UserActionKind.OpenUrl;
+        var appliesTo = (UserActionTypeCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
+        var field = UserActionFieldBox.Text.Trim();
+
+        var baseId = "ua_" + name.ToLowerInvariant().Replace(' ', '_');
+        var id = baseId;
+        if (SettingsManager.Current.UserActions.Any(u => u.Id == id))
+            id = baseId + "_" + Guid.NewGuid().ToString("N")[..8];
+
+        SettingsManager.Current.UserActions.Add(new UserAction
+        {
+            Id = id, Name = name, UrlTemplate = url, Kind = kind,
+            AppliesToType = appliesTo, JsonField = field, Enabled = true,
+        });
+
+        UserActionNameBox.Text = "";
+        UserActionUrlBox.Text = "";
+        UserActionFieldBox.Text = "";
+        BuildUserActionsList();
+        QueueSave();
+    }
+
+    private void BuildAppProfilesList()
+    {
+        AppProfilesPanel.Children.Clear();
+        foreach (var (app, ids) in SettingsManager.Current.AppHiddenActions)
+        {
+            if (ids.Count == 0) continue;
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            row.Children.Add(new TextBlock
+            {
+                Text = $"{app} — {ids.Count} hidden", Foreground = _textBrush,
+                VerticalAlignment = VerticalAlignment.Center, Width = 300,
+            });
+            var appKey = app; // capture for the lambda
+            var delBtn = new System.Windows.Controls.Button
+            {
+                Content = "X", Width = 22, Height = 22, FontSize = 10, Margin = new Thickness(6, 0, 0, 0),
+                Background = System.Windows.Media.Brushes.Transparent, Foreground = _secondaryBrush,
+                BorderThickness = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand,
+            };
+            delBtn.Click += (_, _) =>
+            {
+                SettingsManager.Current.AppHiddenActions.Remove(appKey);
+                BuildAppProfilesList();
+                QueueSave();
+            };
+            row.Children.Add(delBtn);
+            AppProfilesPanel.Children.Add(row);
+        }
+    }
+
+    private static void ToggleHiddenAction(string? app, string actionId, bool hide)
+    {
+        if (string.IsNullOrEmpty(app)) return;
+        var map = SettingsManager.Current.AppHiddenActions;
+        if (!map.TryGetValue(app, out var list)) { list = new List<string>(); map[app] = list; }
+        if (hide) { if (!list.Contains(actionId)) list.Add(actionId); }
+        else list.Remove(actionId);
+        if (list.Count == 0) map.Remove(app);
+    }
+
+    private void ConfigureAppProfiles_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new System.Windows.Window
+        {
+            Title = "App profiles — hide actions per app",
+            Width = 380, Height = 480,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, Owner = this,
+            ResizeMode = ResizeMode.CanResize,
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x1E, 0x2E)),
+        };
+
+        // Apps to choose from: existing profiles + currently-running apps with a visible window.
+        var appNames = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var k in SettingsManager.Current.AppHiddenActions.Keys) appNames.Add(k);
+        try
+        {
+            var own = Environment.ProcessId;
+            foreach (var p in System.Diagnostics.Process.GetProcesses())
+            {
+                try
+                {
+                    if (p.Id == own || p.MainWindowHandle == IntPtr.Zero) continue;
+                    if (!string.IsNullOrEmpty(p.ProcessName) &&
+                        !p.ProcessName.Equals("SnapActions", StringComparison.OrdinalIgnoreCase))
+                        appNames.Add(p.ProcessName);
+                }
+                catch { }
+                finally { p.Dispose(); }
+            }
+        }
+        catch (Exception ex) { SnapActions.Helpers.Log.Warn($"Process enumeration failed: {ex.Message}"); }
+
+        var appCombo = new ComboBox { Margin = new Thickness(8) };
+        foreach (var n in appNames) appCombo.Items.Add(n);
+
+        var descriptors = new SnapActions.Actions.ActionRegistry().AllActionDescriptors()
+            .OrderBy(d => d.Category).ThenBy(d => d.Name).ToList();
+
+        var listPanel = new StackPanel { Margin = new Thickness(8) };
+
+        void RefreshChecks()
+        {
+            listPanel.Children.Clear();
+            var app = appCombo.SelectedItem as string;
+            var hidden = app != null && SettingsManager.Current.AppHiddenActions.TryGetValue(app, out var h)
+                ? new HashSet<string>(h, StringComparer.Ordinal) : new HashSet<string>();
+            foreach (var d in descriptors)
+            {
+                var c = new CheckBox
+                {
+                    Content = $"{d.Name}  ({d.Category})",
+                    IsChecked = hidden.Contains(d.Id),
+                    Foreground = _textBrush, Margin = new Thickness(0, 2, 0, 2),
+                };
+                var actionId = d.Id; // capture
+                c.Checked += (_, _) => ToggleHiddenAction(appCombo.SelectedItem as string, actionId, true);
+                c.Unchecked += (_, _) => ToggleHiddenAction(appCombo.SelectedItem as string, actionId, false);
+                listPanel.Children.Add(c);
+            }
+        }
+
+        appCombo.SelectionChanged += (_, _) => RefreshChecks();
+        if (appCombo.Items.Count > 0) appCombo.SelectedIndex = 0;
+
+        var closeBtn = new System.Windows.Controls.Button
+        {
+            Content = "Close", Padding = new Thickness(16, 4, 16, 4), Margin = new Thickness(8),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x89, 0xB4, 0xFA)),
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x1E, 0x2E)),
+            BorderThickness = new Thickness(0),
+        };
+        closeBtn.Click += (_, _) => dlg.Close();
+
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var scroll = new ScrollViewer
+        {
+            Content = listPanel,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        };
+        Grid.SetRow(appCombo, 0);
+        Grid.SetRow(scroll, 1);
+        Grid.SetRow(closeBtn, 2);
+        grid.Children.Add(appCombo);
+        grid.Children.Add(scroll);
+        grid.Children.Add(closeBtn);
+        dlg.Content = grid;
+        dlg.ShowDialog();
+
+        BuildAppProfilesList();
+        QueueSave();
+    }
+
+    private void Setting_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        var s = SettingsManager.Current;
+        s.Enabled = EnabledCheck.IsChecked == true;
+        s.ReplaceSelectionOnTransform = ReplaceSelectionCheck.IsChecked == true;
+        s.RestoreClipboardAfterAction = RestoreClipboardCheck.IsChecked == true;
+        s.AllowOnlineLookups = OnlineLookupsCheck.IsChecked == true;
+        s.CaptureOnCtrlC = CaptureOnCtrlCCheck.IsChecked == true;
+        s.ShowTransformActions = ShowTransformCheck.IsChecked == true;
+        s.ShowEncodeActions = ShowEncodeCheck.IsChecked == true;
+        s.ShowSearchActions = ShowSearchCheck.IsChecked == true;
+        QueueSave();
+    }
+
+    private void AutoStart_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        var enable = AutoStartCheck.IsChecked == true;
+        // SetAutoStart already calls Save internally. Run synchronously on the UI thread —
+        // registry I/O is sub-ms in practice, and going through Task.Run used to race with
+        // UI-thread mutations of SettingsManager.Current (JsonSerializer.Serialize iterating
+        // a List<T> that's being mutated throws InvalidOperationException).
+        SettingsManager.SetAutoStart(enable);
+    }
+
+    private void ShowDelay_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        if (ShowDelayCombo.SelectedItem is ComboBoxItem item &&
+            int.TryParse(item.Tag?.ToString(), out int ms))
+            SettingsManager.Current.ToolbarShowDelay = ms;
+        QueueSave();
+    }
+
+    private void MultiClick_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        if (MultiClickCombo.SelectedItem is ComboBoxItem item &&
+            int.TryParse(item.Tag?.ToString(), out int ms))
+            SettingsManager.Current.MultiClickDelay = ms;
+        QueueSave();
+    }
+
+    private void LongPress_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        if (LongPressCombo.SelectedItem is ComboBoxItem item &&
+            int.TryParse(item.Tag?.ToString(), out int ms))
+            SettingsManager.Current.LongPressDuration = ms;
+        QueueSave();
+    }
+
+    // Match the tag values declared in SettingsWindow.xaml (also the lowercase form
+    // PasteModeTriggerJsonConverter writes to settings.json — keeps both spellings in sync).
+    private static string PasteModeTagFor(PasteModeTrigger trigger) => trigger switch
+    {
+        PasteModeTrigger.DoubleClick => "doubleclick",
+        PasteModeTrigger.Off => "off",
+        _ => "longpress",
+    };
+
+    private void PasteMode_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        if (PasteModeCombo.SelectedItem is ComboBoxItem item)
+        {
+            SettingsManager.Current.PasteModeTrigger = item.Tag?.ToString() switch
+            {
+                "doubleclick" => PasteModeTrigger.DoubleClick,
+                "off" => PasteModeTrigger.Off,
+                _ => PasteModeTrigger.LongPress,
+            };
+        }
+        QueueSave();
+    }
+
+    private void MaxInline_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        if (MaxInlineCombo.SelectedItem is ComboBoxItem item &&
+            int.TryParse(item.Tag?.ToString(), out int n))
+            SettingsManager.Current.MaxInlineContextActions = n;
+        QueueSave();
+    }
+
+    private void DismissTime_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        if (DismissTimeCombo.SelectedItem is ComboBoxItem item &&
+            int.TryParse(item.Tag?.ToString(), out int ms))
+            SettingsManager.Current.ToolbarDismissTimeout = ms;
+        QueueSave();
+    }
+
+    private void Language_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        if (LanguageCombo.SelectedItem is ComboBoxItem item)
+            SettingsManager.Current.SearchLanguage = item.Tag?.ToString() ?? "";
+        QueueSave();
+    }
+
+    private void Currency_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading) return;
+        if (CurrencyCombo.SelectedItem is ComboBoxItem item)
+            SettingsManager.Current.TargetCurrency = item.Tag?.ToString() ?? "USD";
+        QueueSave();
+    }
+
+    private void EngineToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || sender is not CheckBox { Tag: string id }) return;
+        var engine = SettingsManager.Current.SearchEngines.FirstOrDefault(en => en.Id == id);
+        if (engine != null) engine.Enabled = ((CheckBox)sender).IsChecked == true;
+        QueueSave();
+    }
+
+    private void LangToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || sender is not CheckBox { Tag: string id }) return;
+        var engine = SettingsManager.Current.SearchEngines.FirstOrDefault(en => en.Id == id);
+        if (engine != null) engine.UseLanguageFilter = ((CheckBox)sender).IsChecked == true;
+        QueueSave();
+    }
+
+    private void DeleteEngine_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string id }) return;
+        SettingsManager.Current.SearchEngines.RemoveAll(en => en.Id == id);
+        BuildSearchEnginesList();
+        QueueSave();
+    }
+
+    private void AddCustomEngine_Click(object sender, RoutedEventArgs e)
+    {
+        var name = CustomNameBox.Text.Trim();
+        var url = CustomUrlBox.Text.Trim();
+        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(url)) return;
+
+        // Validate URL — only http/https allowed, must be a parseable absolute URL.
+        if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show("Custom search engine URLs must start with http:// or https://",
+                "Invalid URL", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        // {0} placeholder is the URL-encoded query — accept it as a placeholder during validation.
+        var probeUrl = url.Replace("{0}", "test").Replace("{1}", "en");
+        if (!Uri.TryCreate(probeUrl, UriKind.Absolute, out _))
+        {
+            MessageBox.Show("Custom search engine URL is not valid.",
+                "Invalid URL", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (!url.Contains("{0}"))
+            url += (url.Contains('?') ? "&" : "?") + "q={0}";
+
+        var baseId = "custom_" + name.ToLowerInvariant().Replace(' ', '_');
+        var id = baseId;
+        if (SettingsManager.Current.SearchEngines.Any(en => en.Id == id))
+            id = baseId + "_" + Guid.NewGuid().ToString("N")[..8];
+
+        SettingsManager.Current.SearchEngines.Add(new SearchEngine
+        {
+            Id = id, Name = name, UrlTemplate = url,
+            Enabled = true, IsBuiltIn = false
+        });
+
+        CustomNameBox.Text = "";
+        CustomUrlBox.Text = "";
+        BuildSearchEnginesList();
+        QueueSave();
+    }
+
+    private void ExcludedApps_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_loading) return;
+        // Don't mutate Current.ExcludedApps per-keystroke; defer to the debounce tick so we only
+        // build one new list per save cycle. FlushPendingTextEdits does the actual assignment.
+        QueueSave();
+    }
+
+    /// <summary>
+    /// Push any text-box-backed settings (currently just ExcludedApps) into SettingsManager.Current
+    /// just before a Save. Called from both the debounce tick and the window-close handler so a
+    /// close-before-debounce-fires path still persists the user's edits.
+    /// </summary>
+    private void FlushPendingTextEdits()
+    {
+        SettingsManager.Current.ExcludedApps = ExcludedAppsBox.Text
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(a => a.Trim()).Where(a => a.Length > 0).ToList();
+    }
+
+    // Settings auto-save on every change; this button is now an explicit "save now" if the user
+    // wants to force-flush before any debounce timer fires. Synchronous so the user can be sure
+    // it's persisted by the time the click handler returns.
+    private void Save_Click(object sender, RoutedEventArgs e)
+    {
+        _saveDebounce.Stop();
+        FlushPendingTextEdits();
+        SettingsManager.Save();
+    }
+
+    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void AddRunningApp_Click(object sender, RoutedEventArgs e)
+    {
+        // List currently-running processes that have a visible main window — typing process
+        // names into the textbox by hand is error-prone (case, spelling, .exe vs not).
+        var picker = new System.Windows.Window
+        {
+            Title = "Pick an app to exclude",
+            Width = 320, Height = 420,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.CanResize,
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x1E, 0x2E)),
+        };
+        var list = new System.Windows.Controls.ListBox
+        {
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2D, 0x2D, 0x3D)),
+            Foreground = _textBrush,
+            BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3D, 0x3D, 0x50)),
+            FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+            Margin = new Thickness(8),
+        };
+
+        try
+        {
+            var ownPid = Environment.ProcessId;
+            var existing = new HashSet<string>(SettingsManager.Current.ExcludedApps,
+                StringComparer.OrdinalIgnoreCase);
+            var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in System.Diagnostics.Process.GetProcesses())
+            {
+                try
+                {
+                    if (p.Id == ownPid) continue;
+                    if (p.MainWindowHandle == IntPtr.Zero) continue;
+                    var name = p.ProcessName; // already without .exe
+                    if (string.IsNullOrEmpty(name)) continue;
+                    if (existing.Contains(name)) continue;
+                    if (name.Equals("SnapActions", StringComparison.OrdinalIgnoreCase)) continue;
+                    names.Add(name);
+                }
+                catch { /* access denied on system processes — skip */ }
+                finally { p.Dispose(); }
+            }
+            foreach (var n in names) list.Items.Add(n);
+        }
+        catch (Exception ex)
+        {
+            SnapActions.Helpers.Log.Warn($"Process enumeration failed: {ex.Message}");
+        }
+
+        list.MouseDoubleClick += (_, _) =>
+        {
+            if (list.SelectedItem is string s) AddExcludedAppName(s);
+            picker.Close();
+        };
+
+        var addBtn = new System.Windows.Controls.Button
+        {
+            Content = "Add", Padding = new Thickness(16, 4, 16, 4),
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x89, 0xB4, 0xFA)),
+            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x1E, 0x2E)),
+            BorderThickness = new Thickness(0),
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        addBtn.Click += (_, _) =>
+        {
+            if (list.SelectedItem is string s) AddExcludedAppName(s);
+            picker.Close();
+        };
+        var cancelBtn = new System.Windows.Controls.Button
+        {
+            Content = "Cancel", Padding = new Thickness(16, 4, 16, 4),
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2D, 0x2D, 0x3D)),
+            Foreground = _textBrush,
+            BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3D, 0x3D, 0x50)),
+        };
+        cancelBtn.Click += (_, _) => picker.Close();
+
+        var buttonRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(8, 0, 8, 8),
+        };
+        buttonRow.Children.Add(addBtn);
+        buttonRow.Children.Add(cancelBtn);
+
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetRow(list, 0);
+        Grid.SetRow(buttonRow, 1);
+        grid.Children.Add(list);
+        grid.Children.Add(buttonRow);
+        picker.Content = grid;
+        picker.ShowDialog();
+    }
+
+    private void AddExcludedAppName(string name)
+    {
+        var current = ExcludedAppsBox.Text;
+        // Already-newline-terminated content (either \n or \r\n) doesn't need a leading separator.
+        // The TextChanged handler splits on '\n', so CRLF endings would otherwise leave a trailing \r
+        // attached to the previous entry.
+        bool endsWithNewline = current.EndsWith('\n') || current.EndsWith("\r\n", StringComparison.Ordinal);
+        var sep = string.IsNullOrEmpty(current) || endsWithNewline ? "" : "\n";
+        ExcludedAppsBox.Text = current + sep + name;
+        // The TextChanged handler will pick this up and queue a save.
+    }
+}

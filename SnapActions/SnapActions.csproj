@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>SnapActions</AssemblyName>
+    <RootNamespace>SnapActions</RootNamespace>
+    <Version>2.0.2</Version>
+    <!-- We're WPF-primary (WinForms is only NotifyIcon). The manifest's PerMonitorV2 declaration
+         is what the OS reads at process startup. WinForms' WFO0003 wants its own DPI hook. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Embed the icon so single-file publish can load it from the assembly -->
+    <Resource Include="app.ico"/>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Test project needs to call internal helpers like WebSearchAction.BuildUrl -->
+    <InternalsVisibleTo Include="SnapActions.Tests"/>
+  </ItemGroup>
+
+</Project>
