@@ -28,6 +28,8 @@ Select  a sentence                    →  Translate, Dictionary, Search
 
 In editable text fields, transforms apply in-place: select text → click `Aa` → `lowercase` / `UPPERCASE` / `camelCase` / `snake_case` / etc. To bring up a paste menu without an existing selection, **long-press** the left mouse button (500 ms by default) inside any text input — or switch the trigger to double-click (on an empty editable field), or off, in Settings.
 
+Prefer an explicit trigger? Turn on **Capture on Ctrl+C** in Settings — then copying text the normal way also pops the toolbar for it, with no synthetic keystroke and no clipboard clearing.
+
 When an action writes to the clipboard, a "Copied to clipboard" toast confirms it before the toolbar fades.
 
 ## What it detects
@@ -53,7 +55,7 @@ Detection runs entirely in-process — no network calls, classification under 1 
 
 ## Inline popups
 
-Translate, Dictionary, and Currency Converter open small popups near the cursor with results from MyMemory, dictionaryapi.dev, and open.er-api.com (all over HTTPS).
+Translate, Dictionary, and Currency Converter open small popups near the cursor with results from MyMemory, dictionaryapi.dev, and open.er-api.com (all over HTTPS). The first time you use one, SnapActions asks before anything is sent — toggle it anytime via **Allow online lookups** in Settings.
 
 Popups stay open until you press **Esc**, click the **X**, click **Copy**, click anywhere outside, or trigger another lookup (which replaces the current popup). They never auto-dismiss on cursor-leave.
 
@@ -82,6 +84,8 @@ URL · Base64 · HTML · Hex · ROT13 · MD5 / SHA-1 / SHA-256 / SHA-512 (under 
 - **Hide** an action: edit mode, left-click to toggle visibility.
 - **Reorder** pinned actions: drag them on the toolbar, or right-click → Move Left/Right.
 - **Reorder** search engines: edit mode in the Search submenu, use ▲ ▼ arrows.
+- **Custom actions**: Settings → Custom Actions — build your own from a URL template (`{0}` = the selection) that either opens in the browser or fetches and shows the result (optionally a single JSON field). Scope it to any detected type or all selections.
+- **Per-app profiles**: Settings → App Profiles — hide specific actions when a chosen app is in the foreground.
 - **Settings**: double-click the tray icon. All settings auto-save.
 
 | Setting | Options | Default |
@@ -89,6 +93,7 @@ URL · Base64 · HTML · Hex · ROT13 · MD5 / SHA-1 / SHA-256 / SHA-512 (under 
 | Toolbar show delay | Instant, 100 ms – 1 s | Instant |
 | Multi-click delay | Instant, 100 – 400 ms | 200 ms |
 | Paste mode trigger | Long-press / Double-click / Off | Long-press |
+| Capture on Ctrl+C | On / Off | Off |
 | Long-press duration | 300 ms – 1 s | 500 ms |
 | Auto-dismiss after | 3 / 5 / 8 / 15 / 30 s, Never | 8 s |
 | Replace selection on transform | On / Off | On |
@@ -96,6 +101,7 @@ URL · Base64 · HTML · Hex · ROT13 · MD5 / SHA-1 / SHA-256 / SHA-512 (under 
 | Max inline context actions | 1 / 2 / 3 / 4 / 6 / 8 (rest fall into `…` overflow) | 4 |
 | Search language | 13+ languages or no filter | No filter |
 | Target currency | 15 (USD, EUR, SAR, GBP, JPY, …) | USD |
+| Allow online lookups (Translate / Dictionary / Currency) | On / Off | Off — asks on first use |
 | Action categories | Transform / Encode / Search | All on |
 | Excluded apps | Process names — use **Add running app...** to pick from running processes | Password managers (KeePass, 1Password, Bitwarden, Dashlane, Enpass, LastPass, RoboForm, NordPass, ProtonPass, Keeper) |
 
@@ -106,7 +112,7 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 ## Privacy
 
 - **Detection is local.** All detectors run in-process. No network calls for detection.
-- **Inline cloud popups.** Translate, Dictionary, and Currency Converter send the selected text to MyMemory, dictionaryapi.dev, and open.er-api.com over HTTPS — the SnapActions process makes the request and shows the result inline.
+- **Inline cloud popups (opt-in).** Translate, Dictionary, and Currency Converter send the selected text to MyMemory, dictionaryapi.dev, and open.er-api.com over HTTPS — the SnapActions process makes the request and shows the result inline. These run only after you allow online lookups; you're asked the first time, and any custom "fetch" action you add is gated the same way.
 - **Browser-handoff actions.** QR Code (api.qrserver.com) and IP Lookup (ipinfo.io) open a URL containing your selection in your default browser; SnapActions itself never makes the request. Web search engines work the same way.
 - **Everything else stays local.** Format/minify, transform, encode/decode, hash, color/unit/timezone/JWT/Base64 — none of these touch the network.
 - **Password managers excluded by default.** No toolbar appears when the foreground process is a known password manager. Add your own via Settings → Excluded apps.
@@ -123,7 +129,7 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 2. **UI Automation `TextPattern.GetSelection`** on the focused element (walking up to 6 parents to find the document). Still no keystrokes — reads the selection from the accessibility tree. Covers Chrome, Edge, and most Electron apps. Slower than WM_COPY (50–500 ms in apps where a11y isn't already loaded) but quiet — apps with global key hooks (h5player, AutoHotkey, IMEs, game overlays) never see a synthetic key for this path.
 3. **Ctrl+Insert** via `SendInput` — last resort for apps where neither WM_COPY nor UIA work (Java Swing, some older Edge contexts, certain custom Electron renderers). Insert, not C, so browser extensions that hook letter keys don't see it. If a specific app still misbehaves on the synthetic key, add its process name to **Settings → Excluded apps** to suppress capture there entirely.
 
-The user's clipboard is snapshotted across all formats before any of this and restored after, with `null` snapshots distinguished from empty-clipboard snapshots so transient errors don't wipe the user's data.
+**The clipboard is never cleared.** SnapActions snapshots it (the round-trippable formats — text, HTML, RTF, CSV, file drops, bitmaps), then watches the clipboard *sequence number* to tell whether a capture step actually wrote to it, and restores the prior contents only if nothing else has touched it since. So a gesture that captures nothing leaves the clipboard completely untouched, a copy you make in another app mid-capture is never clobbered, and the restore is guarded so a transient error or app shutdown can't wipe your data.
 
 **Editable-field detection.** Transforms and paste-mode use a multi-layer check:
 - **Win32 caret presence** — covers Notepad and other native text controls
@@ -134,7 +140,7 @@ The user's clipboard is snapshotted across all formats before any of this and re
 
 **Foreground-shift-safe paste.** When an action pastes back into the user's app (transforms in editable fields, long-press paste-mode), the foreground HWND is snapshotted at click time and the paste is aborted if focus moved between click and `SimulatePaste` — so an Alt-Tab during the click window can't redirect the paste into the wrong app.
 
-**When the toolbar appears (and when it doesn't).** Mouse-up after a drag, double/triple-click, or long-press *can* trigger the toolbar — but seven gates have to agree before it shows. In order:
+**When the toolbar appears (and when it doesn't).** Mouse-up after a drag, double/triple-click, or long-press *can* trigger the toolbar — but several gates have to agree before it shows. In order:
 
 1. **NCHITTEST gate** (mouse-down) — clicks on a window's title bar, resize border, or native scrollbar are dropped before tracking even starts. The hook can't tell those drags from a text-selection drag at the OS level, so we ask the receiving window via `WM_NCHITTEST`.
 2. **Scrollbar-edge heuristic** (mouse-up) — a drag with both endpoints within ~25 px of the right (or left, in RTL layouts) edge AND primarily vertical is treated as a custom-scrollbar drag (Chrome, VS Code, Slack, Electron apps). Same with bottom edge + horizontal motion.
@@ -156,7 +162,7 @@ dotnet test SnapActions.Tests/SnapActions.Tests.csproj
 For the single-file release exe:
 
 ```bash
-cd SnapActions/SnapActions
+cd SnapActions
 build.bat
 ```
 
@@ -164,7 +170,7 @@ Output: `bin\publish\SnapActions.exe` (~74 MB, includes .NET runtime, no install
 
 ## Tests & CI
 
-214 xUnit tests cover every detector, the math evaluator, unit converter, color conversion (alpha preservation, hue normalization, CSS Color Module 4), the locale-agnostic number parser, all transform / encode / wrap actions, hash known-vectors, action `CanExecute` predicates, registry ID consistency, and `WebSearchAction.BuildUrl` substitution paths.
+289 xUnit tests cover every detector, the math evaluator (including the recursion-depth guard), unit converter, color conversion (alpha preservation, hue normalization, CSS Color Module 4), the locale-agnostic number parser, all transform / encode / wrap actions, hash known-vectors, action `CanExecute` predicates, registry ID consistency, `WebSearchAction.BuildUrl` substitution, and the custom-action / per-app-profile logic.
 
 GitHub Actions runs build + tests on every push and PR — see [`.github/workflows/build.yml`](.github/workflows/build.yml).
 
