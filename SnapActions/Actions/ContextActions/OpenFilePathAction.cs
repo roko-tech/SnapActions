@@ -37,9 +37,10 @@ public class OpenContainingFolderAction : IAction
         // Require an absolute path before falling back to the parent directory — otherwise a
         // selection like "..\foo" would walk up to wherever our process's working dir resolves.
         if (!System.IO.Path.IsPathFullyQualified(path)) return false;
-        // For UNC paths skip the Exists probe (which would trigger SMB and could block the UI
-        // dispatcher). Show the action; let RevealInExplorer prompt the user before connecting.
-        if (path.StartsWith(@"\\", StringComparison.Ordinal)) return true;
+        // Skip the Exists probe when it could block the UI dispatcher — UNC paths (SMB) and
+        // mapped network / optical drive letters alike. Show the action; RevealInExplorer prompts
+        // before contacting a UNC host, and a click on a dead mapped drive is at least user-initiated.
+        if (!Detection.Detectors.FilePathDetector.IsProbeSafe(path)) return true;
         // File exists, dir exists, OR parent dir exists (so we can reveal a missing file's folder).
         return File.Exists(path) || Directory.Exists(path) ||
                Directory.Exists(System.IO.Path.GetDirectoryName(path));

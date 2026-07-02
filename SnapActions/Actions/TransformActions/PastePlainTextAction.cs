@@ -19,6 +19,12 @@ public class PastePlainTextAction : IAction
 
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
+        // Check BEFORE touching the clipboard: if focus moved since the toolbar appeared, the
+        // paste would land in the wrong app — and aborting after the clipboard swap would have
+        // replaced the user's rich clipboard for nothing.
+        if (!ForegroundGuard.StillValid())
+            return new ActionResult(false, Message: "Focus moved — paste cancelled");
+
         try
         {
             // Snapshot the original IDataObject (which may include RTF/HTML in addition to plain

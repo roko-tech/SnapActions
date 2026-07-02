@@ -41,7 +41,13 @@ public static class TextCapture
         System.Windows.DataFormats.Bitmap,
     };
 
-    public static async Task<string?> CaptureSelectedTextAsync()
+    /// <summary>
+    /// Captures the current selection. <paramref name="isDrag"/> distinguishes a drag gesture
+    /// (strongest selection intent — both the I-beam and drag-distance gates agreed) from a
+    /// multi-click; <paramref name="allowSyntheticKeys"/> is false for quiet-only captures
+    /// (<see cref="CaptureAggressiveness.Quiet"/>) where a Ctrl+Insert must never be injected.
+    /// </summary>
+    public static async Task<string?> CaptureSelectedTextAsync(bool isDrag, bool allowSyntheticKeys)
     {
         // Skip if a capture is already running — the caller will simply not show a toolbar this round.
         if (!await _captureLock.WaitAsync(0))
@@ -51,18 +57,21 @@ public static class TextCapture
         }
         try
         {
-            // UIA pre-gate. Three outcomes:
-            //   HasText  — there is a real text selection; use it, skip the whole clipboard dance.
-            //   Suppress — UIA *definitively* says no selection (TextPattern present but degenerate,
-            //              or focus is on a non-text item like an Explorer file). Bail out.
-            //   Unknown  — UIA can't tell (no TextPattern, exception, shallow tree). Fall through.
-            // Why the pipeline used to fire SelectionLikely on a double-click in Explorer or a
-            // double-click on a desktop icon: WM_COPY succeeds against those (copies the filename
-            // or item text) even though no *text* is selected. The Suppress branch kills that path
-            // for any app that exposes either TextPattern or item-selection patterns.
+            // UIA pre-gate. Outcomes:
+            //   HasText            — a real text selection; use it, skip the whole clipboard dance.
+            //   SuppressItemElement — focus is a non-text item (Explorer file, desktop icon, list
+            //                         row). Bail out: WM_COPY against those "succeeds" by copying
+            //                         the filename/item text even though no text is selected.
+            //   EmptyTextPattern   — TextPattern present but reports no selection. NOT definitive:
+            //                         some providers return empty selections even when the user
+            //                         clearly has text selected (the same app class Ctrl+Insert
+            //                         exists for), so DecidePlan continues with a restricted
+            //                         cascade instead of bailing out — see that method.
+            //   Unknown            — UIA can't tell (no TextPattern, exception, shallow tree).
             // Skip UIA entirely for apps whose accessibility provider is known to hang/misbehave in
             // TextPattern — go straight to the clipboard path for them.
             bool skipUia = UiaSkipApps.Contains(ForegroundApp.GetActiveProcessName() ?? "");
+            var outcome = SelectionProbeOutcome.Unknown;
             if (!skipUia)
             {
                 // Bounded (RunBoundedUiaAsync) so a wedged provider can't hang here and permanently
@@ -70,17 +79,24 @@ public static class TextCapture
                 var probe = await RunBoundedUiaAsync(
                     ProbeSelectionViaUIA(),
                     new SelectionProbe(SelectionProbeOutcome.Unknown, null, "UIA pre-gate timed out"));
-                switch (probe.Outcome)
+                if (probe.Outcome == SelectionProbeOutcome.HasText)
                 {
-                    case SelectionProbeOutcome.HasText:
-                        SnapActions.Helpers.Log.Info($"UIA pre-gate returned text ({probe.Text!.Length} chars) — skipping clipboard pipeline");
-                        return probe.Text;
-                    case SelectionProbeOutcome.Suppress:
-                        SnapActions.Helpers.Log.Info($"UIA pre-gate suppressed capture: {probe.Reason}");
-                        return null;
-                    // case SelectionProbeOutcome.Unknown: fall through
+                    SnapActions.Helpers.Log.Info($"UIA pre-gate returned text ({probe.Text!.Length} chars) — skipping clipboard pipeline");
+                    return probe.Text;
                 }
+                outcome = probe.Outcome;
+                if (outcome == SelectionProbeOutcome.SuppressItemElement)
+                {
+                    SnapActions.Helpers.Log.Info($"UIA pre-gate suppressed capture: {probe.Reason}");
+                    return null;
+                }
+                if (outcome == SelectionProbeOutcome.EmptyTextPattern)
+                    SnapActions.Helpers.Log.Info($"UIA pre-gate saw an empty TextPattern ({probe.Reason}) — continuing with restricted cascade");
             }
+
+            var plan = DecidePlan(outcome, isDrag, allowSyntheticKeys);
+            if (skipUia) plan = plan with { RunUia = false };
+            if (!plan.RunWmCopy && !plan.RunUia && !plan.RunKeystroke) return null;
 
             // No-clear capture. We do NOT wipe the
             // clipboard first. Instead we snapshot it and detect whether each copy step actually
@@ -95,28 +111,31 @@ public static class TextCapture
             try
             {
                 // Try WM_COPY first (no keyboard events). A sequence-number change means it landed.
-                CopyViaWindowMessage();
-                await Task.Delay(20);
                 string? text = null;
-                uint seqNow = SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber();
-                if (seqNow != seqBefore)
+                if (plan.RunWmCopy)
                 {
-                    changed = true;
-                    seqAfterCopy = seqNow;
-                    text = await ReadClipboard();
+                    CopyViaWindowMessage();
+                    await Task.Delay(20);
+                    uint seqNow = SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber();
+                    if (seqNow != seqBefore)
+                    {
+                        changed = true;
+                        seqAfterCopy = seqNow;
+                        text = await ReadClipboard();
+                    }
                 }
 
                 // Then UI Automation — reads the selection from the accessibility tree without firing
                 // any keystrokes or touching the clipboard; walks up parents for browser/Electron
                 // panes. Bounded so a wedged provider can't hang and hold the capture lock.
-                if (string.IsNullOrEmpty(text) && !skipUia)
+                if (string.IsNullOrEmpty(text) && plan.RunUia)
                     text = await RunBoundedUiaAsync(CopyViaUIA(), null);
 
                 // Last resort: Ctrl+Insert. Some apps respond to neither WM_COPY nor UIA (VS Code's
                 // editor, older Edge tabs, Java Swing). Wait for the user to release Shift/Alt first
                 // (a held modifier would turn our chord into Ctrl+Shift+Insert etc. and copy nothing),
                 // then detect the result by the clipboard sequence number.
-                if (string.IsNullOrEmpty(text))
+                if (string.IsNullOrEmpty(text) && plan.RunKeystroke)
                 {
                     await WaitForModifierKeysReleasedAsync();
                     uint seqBeforeKbd = SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber();
@@ -291,13 +310,47 @@ public static class TextCapture
     {
         /// <summary>UIA gave us the selected text directly — use it and skip the clipboard pipeline.</summary>
         HasText,
-        /// <summary>UIA definitively said no selection (empty TextPattern, or a non-text item). Suppress.</summary>
-        Suppress,
+        /// <summary>The focused element is a non-text item (Explorer file, desktop icon, list row).
+        /// Definitive — capture must not run (WM_COPY would copy the item's name).</summary>
+        SuppressItemElement,
+        /// <summary>A TextPattern was found but reported an empty selection. Usually means "no
+        /// selection", but some providers lie (report empty despite a real selection), so this is
+        /// a restriction signal, not a hard stop — see <see cref="DecidePlan"/>.</summary>
+        EmptyTextPattern,
         /// <summary>UIA couldn't determine. Fall through to WM_COPY / Ctrl+Insert.</summary>
         Unknown,
     }
 
     internal readonly record struct SelectionProbe(SelectionProbeOutcome Outcome, string? Text, string? Reason);
+
+    /// <summary>Which capture layers a given gesture may run. Produced by <see cref="DecidePlan"/>.</summary>
+    internal readonly record struct CapturePlan(bool RunWmCopy, bool RunUia, bool RunKeystroke);
+
+    /// <summary>
+    /// Pure policy: probe outcome × gesture → which layers run. The balance being struck:
+    /// <list type="bullet">
+    ///   <item><b>EmptyTextPattern + drag</b> — full cascade (keystroke allowed). A drag that
+    ///     passed the I-beam and distance gates is the strongest possible selection signal; a
+    ///     provider reporting "empty" against it is exactly the lying-provider class the
+    ///     Ctrl+Insert fallback exists for. If there genuinely is no selection, Ctrl+Insert
+    ///     copies nothing and the sequence number stays put — self-gating.</item>
+    ///   <item><b>EmptyTextPattern + multi-click</b> — WM_COPY only. Double-click is the gesture
+    ///     most prone to non-text false positives, so no synthetic keystroke; but WM_COPY is
+    ///     silent and a no-op when nothing is selected, so lying providers that answer it still
+    ///     get their toolbar. UIA is skipped — the probe just walked the same tree and came back
+    ///     empty.</item>
+    ///   <item><b>Unknown</b> — normal cascade, capped by the caller's aggressiveness (a quiet
+    ///     capture never injects keys regardless of outcome).</item>
+    /// </list>
+    /// (HasText / SuppressItemElement are resolved before planning.)
+    /// </summary>
+    internal static CapturePlan DecidePlan(SelectionProbeOutcome outcome, bool isDrag, bool allowSyntheticKeys) =>
+        outcome switch
+        {
+            SelectionProbeOutcome.SuppressItemElement => new(false, false, false),
+            SelectionProbeOutcome.EmptyTextPattern => new(true, false, isDrag && allowSyntheticKeys),
+            _ => new(true, true, allowSyntheticKeys),
+        };
 
     /// <summary>
     /// Item-style control types that are NOT text. When the focused element is one of these
@@ -321,10 +374,12 @@ public static class TextCapture
     /// </summary>
     /// <remarks>
     /// Three UIA-based gates were tried and removed across v1.6.5–1.6.12 because they over-
-    /// suppressed legitimate selections. This one is more conservative: it only suppresses
-    /// when UIA gives a *definitive* answer — TextPattern explicitly empty, or a clearly non-
-    /// text item element. Anything ambiguous (no TextPattern, exception, shallow tree)
-    /// returns Unknown, which leaves the existing WM_COPY → Ctrl+Insert fallback intact.
+    /// suppressed legitimate selections. This one is more conservative: only a clearly non-text
+    /// item element (SuppressItemElement) is a hard stop. An explicitly-empty TextPattern is a
+    /// *restriction* signal (EmptyTextPattern), not a stop — some providers report an empty
+    /// selection even when the user clearly has text selected, so <see cref="DecidePlan"/> keeps
+    /// a reduced cascade alive for it. Anything ambiguous (no TextPattern, exception, shallow
+    /// tree) returns Unknown, which leaves the full WM_COPY → Ctrl+Insert fallback intact.
     /// </remarks>
     internal static async Task<SelectionProbe> ProbeSelectionViaUIA()
     {
@@ -374,7 +429,7 @@ public static class TextCapture
                 }
 
                 if (sawAnyTextPattern)
-                    return new SelectionProbe(SelectionProbeOutcome.Suppress,
+                    return new SelectionProbe(SelectionProbeOutcome.EmptyTextPattern,
                         null, "TextPattern present but selection is empty");
 
                 // Layer C: no TextPattern anywhere up the walk. Check the originally-focused
@@ -389,7 +444,7 @@ public static class TextCapture
                     bool hasItemPattern = originalFocused.TryGetCurrentPattern(
                         SelectionItemPattern.Pattern, out _);
                     if (isItemType && hasItemPattern)
-                        return new SelectionProbe(SelectionProbeOutcome.Suppress,
+                        return new SelectionProbe(SelectionProbeOutcome.SuppressItemElement,
                             null, $"focused element is {ct.ProgrammaticName} with SelectionItemPattern");
                 }
                 catch { /* couldn't read ControlType — fall through to Unknown */ }

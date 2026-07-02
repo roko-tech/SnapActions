@@ -10,8 +10,12 @@ public class TranslateAction : IAction
     public string IconKey => "IconTransform";
     public ActionCategory Category => ActionCategory.Context;
 
+    // PlainText only — URLs, JSON, UUIDs, JWTs etc. aren't translatable prose, and offering
+    // Translate for every short selection just crowded the toolbar for typed selections.
+    // (Dictionary applies the same gate.)
     public bool CanExecute(string text, TextAnalysis analysis) =>
-        !string.IsNullOrWhiteSpace(text) && text.Length <= 500;
+        !string.IsNullOrWhiteSpace(text) && text.Length <= 500
+        && analysis.Type == TextType.PlainText;
 
     public ActionResult Execute(string text, TextAnalysis analysis)
     {

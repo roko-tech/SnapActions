@@ -15,6 +15,11 @@ public class DeleteTextAction : IAction
 
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
+        // VK_DELETE is destructive in whatever app has focus — never send it if focus moved
+        // since the toolbar appeared (same guard as every paste path).
+        if (!Core.ForegroundGuard.StillValid())
+            return new ActionResult(false, Message: "Focus moved — delete cancelled");
+
         var inputs = new NativeMethods.INPUT[]
         {
             NativeMethods.MakeKeyInput(0x2E, false), // VK_DELETE down

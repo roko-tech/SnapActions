@@ -112,6 +112,13 @@ public class MouseHook : IDisposable
     public event Action<POINT>? LongPress;
     public event Action<POINT>? MouseDown;
 
+    /// <summary>
+    /// Static mirror of <see cref="MouseDown"/> for subscribers that don't hold the hook instance
+    /// (same pattern as <see cref="KeyboardHook.EscPressed"/>). ResultPopup uses it for instant
+    /// click-outside dismissal instead of polling. Fires on the hook thread — marshal before WPF.
+    /// </summary>
+    public static event Action<POINT>? GlobalMouseDown;
+
     public MouseHook()
     {
         _hookProc = HookCallback;
@@ -189,7 +196,9 @@ public class MouseHook : IDisposable
     private void OnMultiClickTimer(object? sender, EventArgs e)
     {
         _multiClickTimer?.Stop();
-        if (_clickCount >= 2)
+        // Deferred non-client gate — double-clicking a title bar (maximize) or border must not
+        // read as a selection. See the WM_LBUTTONDOWN note for why this runs at fire time.
+        if (_clickCount >= 2 && IsClickOnClientArea(_lastClickPoint))
         {
             try { SelectionLikely?.Invoke(_lastClickPoint, SelectionTrigger.MultiClick); }
             catch (Exception ex) { Log.Warn($"SelectionLikely (multi-click) handler threw: {ex.Message}"); }
@@ -209,6 +218,13 @@ public class MouseHook : IDisposable
         if (LooksLikeScrollbarPosition(_mouseDownPoint))
         {
             Log.Info($"Suppressed long-press: hold at ({_mouseDownPoint.X},{_mouseDownPoint.Y}) is in the scrollbar slop region");
+            return;
+        }
+        // Deferred non-client gate — holding the button on a title bar / border must not summon
+        // paste mode. See the WM_LBUTTONDOWN note for why this runs at fire time.
+        if (!IsClickOnClientArea(_mouseDownPoint))
+        {
+            Log.Info($"Suppressed long-press: hold at ({_mouseDownPoint.X},{_mouseDownPoint.Y}) is on a non-client area");
             return;
         }
         _longPressFired = true;
@@ -242,20 +258,14 @@ public class MouseHook : IDisposable
             var pt = ReadPoint(lParam);
             try { MouseDown?.Invoke(pt); }
             catch (Exception ex) { Log.Warn($"MouseDown handler threw: {ex.Message}"); }
+            try { GlobalMouseDown?.Invoke(pt); }
+            catch (Exception ex) { Log.Warn($"GlobalMouseDown handler threw: {ex.Message}"); }
 
-            // Skip drag-tracking when the click landed on a non-client area (title bar, border,
-            // scrollbar, etc.). Without this, dragging a window's title bar fires SelectionLikely
-            // on mouse-up — the hook can't tell that motion from text-selection drag — and the
-            // toolbar appears with whatever stale selection happened to be in the foreground app.
-            // The MouseDown event still fires above, so a click-outside-toolbar still hides any
-            // already-visible toolbar.
-            if (!IsClickOnClientArea(pt))
-            {
-                Log.Info($"Suppressed: WM_LBUTTONDOWN at ({pt.X},{pt.Y}) is on a non-client area (title bar / border / scrollbar)");
-                _isTracking = false;
-                _longPressTimer?.Stop();
-                return;
-            }
+            // NOTE: the non-client (NCHITTEST) gate used to run right here, on EVERY mouse-down
+            // system-wide — a synchronous cross-process SendMessageTimeout (bounded 50 ms) that
+            // delayed click delivery to a busy target. It now runs at gesture-fire time instead
+            // (drag mouse-up, multi-click fire, long-press fire), so only candidate selection
+            // gestures pay for it. See IsClickOnClientArea.
 
             _mouseDownPoint = pt;
             _mouseDownTicks = Environment.TickCount64;
@@ -306,6 +316,15 @@ public class MouseHook : IDisposable
                     Log.Info($"Suppressed: drag from ({_mouseDownPoint.X},{_mouseDownPoint.Y}) to ({up.X},{up.Y}) looks like a scrollbar drag");
                     return;
                 }
+                // Deferred non-client gate (cheap geometric check above runs first): a drag that
+                // STARTED on a title bar / border / native scrollbar is a window drag, not a
+                // text selection. Checked here instead of at mouse-down so only real candidate
+                // gestures pay the cross-process NCHITTEST round-trip.
+                if (!IsClickOnClientArea(_mouseDownPoint))
+                {
+                    Log.Info($"Suppressed: drag started at ({_mouseDownPoint.X},{_mouseDownPoint.Y}) on a non-client area (title bar / border / scrollbar)");
+                    return;
+                }
                 try { SelectionLikely?.Invoke(up, SelectionTrigger.Drag); }
                 catch (Exception ex) { Log.Warn($"SelectionLikely (drag) handler threw: {ex.Message}"); }
                 _clickCount = 0;
@@ -326,7 +345,7 @@ public class MouseHook : IDisposable
                         // Instant: fire once on the first multi-click in the cluster.
                         // Subsequent clicks within the 500ms window are ignored so a triple-click
                         // doesn't fire SelectionLikely twice.
-                        if (_clickCount == 2)
+                        if (_clickCount == 2 && IsClickOnClientArea(up))
                         {
                             try { SelectionLikely?.Invoke(up, SelectionTrigger.MultiClick); }
                             catch (Exception ex) { Log.Warn($"SelectionLikely (instant double-click) handler threw: {ex.Message}"); }
@@ -439,7 +458,7 @@ public class MouseHook : IDisposable
     /// <summary>
     /// True when a click at <paramref name="pt"/> (screen coords) lands inside the client area
     /// of the window beneath. Anything else (title bar, scrollbar, resize border) is a window
-    /// drag, not a text-selection drag, and shouldn't enable our tracking.
+    /// drag, not a text-selection drag — called at gesture-fire time to suppress it.
     /// </summary>
     /// <remarks>
     /// SendMessageTimeout is bounded by SMTO_ABORTIFHUNG + 50ms so a wedged target can't lock

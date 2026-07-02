@@ -22,7 +22,11 @@ public class CalculateAction : IAction
             if (double.IsNaN(result) || double.IsInfinity(result))
                 return new ActionResult(false, Message: "Result is not a finite number");
 
-            if (result % 1 == 0 && result >= long.MinValue && result <= long.MaxValue)
+            // Strict '<' on the upper bound: (double)long.MaxValue rounds UP to 2^63, so "<="
+            // admits 2^63 itself and the saturating cast then truncates it to long.MaxValue —
+            // "2^63" displayed as ...807 instead of ...808 (verified on .NET 9). long.MinValue
+            // (-2^63) is exactly representable, so ">=" is safe on the lower bound.
+            if (result % 1 == 0 && result >= long.MinValue && result < (double)long.MaxValue)
                 formatted = ((long)result).ToString(System.Globalization.CultureInfo.InvariantCulture);
             else
                 formatted = result.ToString("G15", System.Globalization.CultureInfo.InvariantCulture);

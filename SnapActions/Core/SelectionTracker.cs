@@ -32,14 +32,14 @@ public class SelectionTracker
     private IntPtr _foregroundAtMouseDown;
 
     /// <summary>
-    /// Whether the cursor was the system text (I-beam) cursor at the most recent mouse-down.
-    /// Sampled at press time because that's the reliable moment: a press that starts a selection
-    /// lands directly on text. By the time a click cluster resolves (double/triple-click go through
-    /// the multi-click delay timer) a live cursor read can miss the I-beam — the app may swap the
-    /// cursor over the new selection, or the pointer drifts off the word. Written and read on the
-    /// hook thread (OnMouseDown and the pre-dispatch part of OnSelectionLikely both run there).
+    /// The cursor shape at the most recent mouse-down. Sampled at press time because that's the
+    /// reliable moment: a press that starts a selection lands directly on text. By the time a
+    /// click cluster resolves (double/triple-click go through the multi-click delay timer) a live
+    /// cursor read can miss the I-beam — the app may swap the cursor over the new selection, or
+    /// the pointer drifts off the word. Written and read on the hook thread (OnMouseDown and the
+    /// pre-dispatch part of OnSelectionLikely both run there).
     /// </summary>
-    private bool _mouseDownWasTextCursor;
+    private CursorKind _mouseDownCursor = CursorKind.Unreadable;
 
     public SelectionTracker()
     {
@@ -138,8 +138,8 @@ public class SelectionTracker
         // Quick checks only — no WPF access from hook thread
         if (IsSelfFocused()) { _mouseHook.CancelTracking(); return; }
 
-        // Sample the cursor shape now, while the press is on its target — see _mouseDownWasTextCursor.
-        _mouseDownWasTextCursor = CursorShape.IsTextCursor();
+        // Sample the cursor shape now, while the press is on its target — see _mouseDownCursor.
+        _mouseDownCursor = CursorShape.Classify();
 
         // Snapshot foreground HWND before the click-triggered action runs. The low-level mouse
         // hook fires before the OS dispatches WM_LBUTTONDOWN to the target, so any double-click
@@ -157,14 +157,17 @@ public class SelectionTracker
     /// <summary>
     /// Selection-likely pipeline (gates, in order):
     /// <list type="number">
-    ///   <item>MouseHook.NCHITTEST gate (mouse-down) — rejects clicks on title bars / borders /
-    ///         native scrollbars before tracking even starts.</item>
-    ///   <item>MouseHook.LooksLikeScrollbarDrag (mouse-up) — rejects perpendicular drags along
-    ///         the right/left/bottom edges (custom scrollbars in Chrome/Electron/etc.).</item>
+    ///   <item>MouseHook.LooksLikeScrollbarDrag + NCHITTEST gate (gesture-fire time) — rejects
+    ///         perpendicular edge drags (custom scrollbars in Chrome/Electron/etc.) and gestures
+    ///         that started on a title bar / border / native scrollbar.</item>
+    ///   <item>This method's cursor gate — I-beam at press or release → full capture; a known
+    ///         non-text system cursor at both → suppress; a custom (unclassifiable) cursor →
+    ///         quiet capture, no synthetic keystrokes (see CursorShape.DecideCaptureAggressiveness).</item>
     ///   <item>This method's pre-checks: self-PID, debounce, Enabled, IsPointInside (toolbar
     ///         self-click), ExcludedApps.</item>
-    ///   <item>TextCapture.WM_COPY then unconditional Ctrl+Insert fallback if WM_COPY returned
-    ///         empty. Empty captured text aborts here — except when the trigger was a
+    ///   <item>TextCapture's probe-planned cascade (WM_COPY → UIA → Ctrl+Insert; see
+    ///         TextCapture.DecidePlan for how the probe outcome, trigger, and aggressiveness
+    ///         restrict it). Empty captured text aborts here — except when the trigger was a
     ///         multi-click AND <see cref="PasteModeTrigger.DoubleClick"/> is configured, in
     ///         which case empty text falls through to paste mode if the cursor is over an
     ///         editable input.</item>
@@ -175,11 +178,11 @@ public class SelectionTracker
     ///   • atDownTask (mouse-down UIA) — removed v1.6.12, blocks selections in apps with shallow UIA trees
     /// The lesson from those: UIA's TextPattern coverage is too inconsistent across apps to be
     /// a *required* gate (false negatives broke legitimate selections).
-    /// TextCapture.ProbeSelectionViaUIA (the new gate inside the pipeline below) avoids that
-    /// trap because it only acts on *definitive* answers: it suppresses when UIA confirms an
-    /// empty selection or a non-text item type, and falls through to WM_COPY otherwise — so
-    /// the historical false-negative apps (Java Swing, some Edge, custom Electron) still work
-    /// via the clipboard path.
+    /// TextCapture.ProbeSelectionViaUIA (the gate inside the pipeline below) avoids that trap:
+    /// only a clearly non-text item element is a hard stop; an empty TextPattern merely
+    /// restricts the cascade (some providers report empty despite a real selection — the
+    /// lying-provider class), and everything ambiguous falls through to the clipboard path —
+    /// so the historical false-negative apps (Java Swing, some Edge, custom Electron) work.
     /// Paste-mode triggers (long-press or double-click) still use IsTextInputAtPoint at the cursor —
     /// paste mode showing on a button or scrollbar is worse than the same false-positive cost there.
     /// </summary>
@@ -187,19 +190,20 @@ public class SelectionTracker
     {
         if (IsSelfFocused()) return;
 
-        // I-beam cursor gate. The OS shows the text (I-beam) cursor only when the pointer is over
+        // Cursor gate. The OS shows the text (I-beam) cursor only when the pointer is over
         // selectable text, so it's the most universal "was this gesture on text?" signal — more
-        // reliable across apps than UIA TextPattern. Pass if the cursor was the I-beam at mouse-down
-        // (the press landed on text) OR right now (the gesture ended on text): drag-select satisfies
-        // the second, double/triple-click the first. A non-text gesture — dragging a file / window /
-        // slider, clicking a button, double-clicking an icon — is an I-beam at neither point, so it's
-        // dropped here before any clipboard or keystroke work. That's both why the toolbar stops
-        // appearing on non-text gestures and why those gestures stop interfering with other apps.
-        // Permissive on uncertainty (see CursorShape.IsTextCursor) so touch / hidden-cursor
-        // selections still work. Checked before the debounce so a suppressed gesture doesn't burn it.
-        if (!_mouseDownWasTextCursor && !CursorShape.IsTextCursor())
+        // reliable across apps than UIA TextPattern. I-beam at mouse-down (the press landed on
+        // text) or right now (the gesture ended on text) → full capture; a positively-identified
+        // non-text system cursor (arrow, hand, resize, …) at BOTH points → suppressed before any
+        // clipboard or keystroke work; a custom cursor we can't classify → quiet capture only
+        // (WM_COPY + UIA, never a synthetic keystroke), because some apps draw their own I-beam
+        // and used to lose the toolbar entirely here. Unreadable cursors (touch, full-screen)
+        // stay fully permissive. See CursorShape.DecideCaptureAggressiveness.
+        // Checked before the debounce so a suppressed gesture doesn't burn it.
+        var aggressiveness = CursorShape.DecideCaptureAggressiveness(_mouseDownCursor, CursorShape.Classify());
+        if (aggressiveness == null)
         {
-            SnapActions.Helpers.Log.Info($"Suppressed selection at ({cursorPos.X},{cursorPos.Y}): cursor was not the text I-beam at press or release");
+            SnapActions.Helpers.Log.Info($"Suppressed selection at ({cursorPos.X},{cursorPos.Y}): cursor was a known non-text shape at press and release");
             return;
         }
 
@@ -222,7 +226,9 @@ public class SelectionTracker
 
                 var editableTask = Task.Run(() => ForegroundApp.IsEditableFieldFocused());
 
-                var text = await TextCapture.CaptureSelectedTextAsync();
+                var text = await TextCapture.CaptureSelectedTextAsync(
+                    isDrag: trigger == MouseHook.SelectionTrigger.Drag,
+                    allowSyntheticKeys: aggressiveness == CaptureAggressiveness.Full);
                 if (string.IsNullOrWhiteSpace(text))
                 {
                     // Double-click on an empty editable input is the configured paste-mode

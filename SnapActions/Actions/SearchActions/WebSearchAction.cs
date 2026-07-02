@@ -61,6 +61,14 @@ public partial class WebSearchAction(string id, string name, string iconKey, str
             // Trailing empty-valued params get cleaned up too.
             url = EmptyParamRegex().Replace(url, "");
             url = url.TrimEnd('&', '?');
+            // Dropping a leading "?param" (e.g. a template with ?hl={1} before &q={0}) leaves the
+            // first surviving param glued on with '&' — ".../search&q=x", which browsers read as a
+            // path segment. Promote the first '&' back to '?' so the URL stays well-formed.
+            if (!url.Contains('?') && url.Contains('&'))
+            {
+                int amp = url.IndexOf('&');
+                url = $"{url[..amp]}?{url[(amp + 1)..]}";
+            }
         }
         return url;
     }

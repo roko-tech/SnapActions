@@ -89,10 +89,11 @@ public partial class ToolbarWindow
             return;
         }
 
-        // Open popup in hover-preview mode: empty submenu panel, empty title row.
+        // Open popup in hover-preview mode: empty submenu panel, empty title row, no gear.
         _hoverPreviewMode = true;
         SubMenuPanel.Children.Clear();
         SubMenuTitle.Text = "";
+        GearButton.Visibility = Visibility.Collapsed;
         UpdatePreviewBand(action);
         SubMenuPopup.IsOpen = true;
         StartDismissTimer();
@@ -140,6 +141,7 @@ public partial class ToolbarWindow
             // the preview band — which lives inside it — is visible.
             SubMenuPanel.Children.Clear();
             SubMenuTitle.Text = "";
+            GearButton.Visibility = Visibility.Collapsed;
             SubMenuPopup.IsOpen = true;
         }
         SetSwatch(null);
@@ -156,6 +158,7 @@ public partial class ToolbarWindow
         {
             SubMenuPanel.Children.Clear();
             SubMenuTitle.Text = "Error";
+            GearButton.Visibility = Visibility.Collapsed;
             SubMenuPopup.IsOpen = true;
         }
         PreviewText.Text = message;
@@ -166,5 +169,12 @@ public partial class ToolbarWindow
         if (_generation == gen) HideToolbar();
     }
 
-    private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "...";
+    // Internal for tests. Backs up one UTF-16 unit when the cut would split a surrogate pair,
+    // so an emoji straddling the limit doesn't render as a lone-surrogate "�".
+    internal static string Truncate(string s, int max)
+    {
+        if (s.Length <= max) return s;
+        if (max > 0 && char.IsHighSurrogate(s[max - 1])) max--;
+        return s[..max] + "...";
+    }
 }

@@ -58,13 +58,10 @@ public partial class ToolbarWindow
             }
             if (willPaste)
             {
-                // Snapshot the foreground window before we tear down our toolbar — if focus has
-                // moved (e.g. the user Alt-Tabbed in the few hundred ms since the click), abort
-                // rather than paste into the wrong app.
-                IntPtr expected = NativeMethods.GetForegroundWindow();
+                // Abort if focus moved since the toolbar was shown (an Alt-Tab before or after
+                // the click) rather than paste into the wrong app.
                 HideToolbar();
-                IntPtr current = NativeMethods.GetForegroundWindow();
-                if (current == expected || current == IntPtr.Zero)
+                if (ForegroundGuard.StillValid())
                     TextCapture.SimulatePaste();
                 return;
             }
@@ -114,6 +111,9 @@ public partial class ToolbarWindow
 
     private void GearButton_Click(object sender, RoutedEventArgs e)
     {
+        // No edit mode without a real category (overflow / hover-preview popups) — toggling it
+        // there used to blank the popup because RebuildCurrentSubMenu can't rebuild those lists.
+        if (_currentSubMenuCategory == null) return;
         _editMode = !_editMode;
         RebuildCurrentSubMenu();
     }
@@ -206,6 +206,8 @@ public partial class ToolbarWindow
     {
         SubMenuPanel.Children.Clear();
         ResetPreview();
+        // Only real category submenus support edit mode; overflow / hover-preview popups hide the gear.
+        GearButton.Visibility = _currentSubMenuCategory != null ? Visibility.Visible : Visibility.Collapsed;
 
         if (_editMode && Registry != null && _currentSubMenuCategory != null)
         {
@@ -241,6 +243,7 @@ public partial class ToolbarWindow
         SubMenuPanel.Children.Clear();
         ResetPreview();
         SubMenuTitle.Text = "Paste As";
+        GearButton.Visibility = Visibility.Visible; // real Transform category — edit mode works here
 
         if (Registry != null)
         {

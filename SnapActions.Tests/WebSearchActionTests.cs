@@ -71,6 +71,25 @@ public class WebSearchActionTests
         Assert.Equal("https://example.com/?q=test", action.BuildUrl("test"));
     }
 
+    [Fact]
+    public void BuildUrl_LangUrlMode_EmptyLang_LangParamFirst_RepairsQuestionMark()
+    {
+        // Custom engine with the {1} param FIRST: dropping "?hl={1}" used to leave
+        // ".../search&q=test" — the '&' glued the query onto the path and browsers read it as a
+        // path segment. The first '&' must be promoted back to '?'.
+        var action = new WebSearchAction("c", "Custom", "icon",
+            "https://example.com/search?hl={1}&q={0}", "", LangMode.Url);
+        Assert.Equal("https://example.com/search?q=test", action.BuildUrl("test"));
+    }
+
+    [Fact]
+    public void BuildUrl_LangUrlMode_EmptyLang_MultipleLeadingLangParams_RepairsQuestionMark()
+    {
+        var action = new WebSearchAction("c", "Custom", "icon",
+            "https://example.com/search?lr=lang_{1}&hl={1}&q={0}", "", LangMode.Url);
+        Assert.Equal("https://example.com/search?q=test", action.BuildUrl("test"));
+    }
+
     // ── LangMode.Query (Twitter-style) ──────────────────────────
 
     [Fact]

@@ -18,7 +18,6 @@ public partial class ResultPopup : Window
     private double _screenX, _screenY;
     private string _title = "";
     private Func<HttpClient, System.Threading.CancellationToken, Task<string>>? _fetch;
-    private readonly System.Windows.Threading.DispatcherTimer _checkTimer;
     private System.Threading.CancellationTokenSource _cts = new();
 
     // Track the currently-open popup so a new translation/dictionary lookup replaces the prior
@@ -44,26 +43,25 @@ public partial class ResultPopup : Window
                 new IntPtr(style.ToInt64() | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW));
         };
 
-        // Esc dismissal goes through the global keyboard hook (no polling latency).
-        // The polling timer below now only watches for click-outside, which still needs polling
-        // because WS_EX_NOACTIVATE means we don't receive focus / capture events.
+        // Esc dismissal goes through the global keyboard hook, click-outside through the global
+        // mouse hook — both event-driven. The previous 120 ms polling timer could miss a fast
+        // click entirely (typical click ≈ 85 ms) and added dismiss latency. WS_EX_NOACTIVATE
+        // means we never get focus/capture events of our own, hence the global hooks.
         SnapActions.Core.KeyboardHook.EscPressed += OnGlobalEsc;
+        SnapActions.Core.MouseHook.GlobalMouseDown += OnGlobalMouseDown;
+    }
 
-        _checkTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
-        _checkTimer.Tick += (_, _) =>
+    private void OnGlobalMouseDown(SnapActions.Core.MouseHook.POINT pt)
+    {
+        // Hook fires on its own thread; marshal to UI before reading window bounds.
+        Application.Current?.Dispatcher.InvokeAsync(() =>
         {
             if (_closed) return;
-            // Left mouse button currently down? If so, check whether the cursor is outside our
-            // bounds — if it is, the user is clicking somewhere else and we should dismiss.
-            if ((GetAsyncKeyState(0x01) & 0x8000) != 0)
-            {
-                NativeMethods.GetCursorPos(out var pt);
-                double l = Left * _dpi, t = Top * _dpi;
-                double r = l + ActualWidth * _dpi, b = t + ActualHeight * _dpi;
-                if (pt.X < l || pt.X > r || pt.Y < t || pt.Y > b)
-                    SafeClose();
-            }
-        };
+            double l = Left * _dpi, t = Top * _dpi;
+            double r = l + ActualWidth * _dpi, b = t + ActualHeight * _dpi;
+            if (pt.X < l || pt.X > r || pt.Y < t || pt.Y > b)
+                SafeClose();
+        });
     }
 
     private void OnGlobalEsc()
@@ -79,15 +77,13 @@ public partial class ResultPopup : Window
     private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
     private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
-    [DllImport("user32.dll")]
-    private static extern short GetAsyncKeyState(int vKey);
 
     private void SafeClose()
     {
         if (_closed) return;
         _closed = true;
-        _checkTimer.Stop();
         try { SnapActions.Core.KeyboardHook.EscPressed -= OnGlobalEsc; } catch { }
+        try { SnapActions.Core.MouseHook.GlobalMouseDown -= OnGlobalMouseDown; } catch { }
         try { _cts.Cancel(); } catch { }
         try { _cts.Dispose(); } catch { }
         if (ReferenceEquals(_current, this)) _current = null;
@@ -136,7 +132,6 @@ public partial class ResultPopup : Window
             Show();
             ClampToScreen();
             // Topmost is already declared in XAML; no Activate() call so the user's app keeps focus.
-            _checkTimer.Start();
 
             await RunFetchAsync();
         }

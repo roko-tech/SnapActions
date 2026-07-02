@@ -151,6 +151,12 @@ public partial class ToolbarWindow : Window
         // New show — invalidate any in-flight post-delay continuations from the previous selection.
         _generation++;
 
+        // Snapshot the app the toolbar is being shown FOR. Every synthetic-input path (paste,
+        // paste-plain, delete) verifies focus hasn't moved since — this also covers an Alt-Tab
+        // that happens between the toolbar appearing and the button click, which the old
+        // click-time-only snapshot missed.
+        ForegroundGuard.Arm();
+
         // Cancel any pending hide from a previous fade-out
         var fadeOut = (Storyboard)FindResource("FadeOut");
         fadeOut.Stop(this);
@@ -313,13 +319,10 @@ public partial class ToolbarWindow : Window
 
     private void PasteButton_Click(object sender, RoutedEventArgs e)
     {
-        // Match the action-click paste flow: snapshot the foreground HWND first, run synchronously,
-        // and abort if focus shifted between click and paste (rare, but Alt-Tab during the click
-        // window would otherwise paste into the wrong app).
-        IntPtr expected = NativeMethods.GetForegroundWindow();
+        // Abort if focus moved since the toolbar was shown (Alt-Tab before OR after the click)
+        // — otherwise the paste lands in whatever app grabbed the foreground.
         HideToolbar();
-        IntPtr current = NativeMethods.GetForegroundWindow();
-        if (current == expected || current == IntPtr.Zero)
+        if (ForegroundGuard.StillValid())
             TextCapture.SimulatePaste();
     }
 

@@ -68,6 +68,7 @@ public partial class ToolbarWindow
         SubMenuPanel.Children.Clear();
         ResetPreview();
         SubMenuTitle.Text = "More actions";
+        GearButton.Visibility = Visibility.Collapsed; // no edit mode for the ad-hoc overflow list
         foreach (var a in actions)
             SubMenuPanel.Children.Add(CreateSubMenuButton(a, false));
         SubMenuPopup.IsOpen = true;

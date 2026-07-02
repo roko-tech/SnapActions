@@ -73,7 +73,7 @@ URL · Base64 · HTML · Hex · ROT13 · MD5 / SHA-1 / SHA-256 / SHA-512 (under 
 
 13 built-in engines — 9 enabled by default (Google, Bing, DuckDuckGo, YouTube, Twitter/X, Reddit, GitHub, StackOverflow, Wikipedia) and 4 opt-in (Amazon, IMDb, npm, NuGet — toggle in Settings).
 
-- **Per-engine language filter** — apply the global Search Language only to engines where you want it
+- **Per-engine language filter** — apply the global Language only to engines where you want it
 - **Twitter/X** uses `lang:xx` in the search query (works across Top/Latest)
 - **Wikipedia** switches subdomain by language code
 - **Custom engines** via URL templates: `{0}` is the URL-encoded query, `{1}` is the language code
@@ -99,7 +99,7 @@ URL · Base64 · HTML · Hex · ROT13 · MD5 / SHA-1 / SHA-256 / SHA-512 (under 
 | Replace selection on transform | On / Off | On |
 | Restore previous clipboard after copy action | On / Off | Off |
 | Max inline context actions | 1 / 2 / 3 / 4 / 6 / 8 (rest fall into `…` overflow) | 4 |
-| Search language | 13+ languages or no filter | No filter |
+| Language (search filter + Translate/Dictionary target) | 13+ languages or no filter | No filter |
 | Target currency | 15 (USD, EUR, SAR, GBP, JPY, …) | USD |
 | Allow online lookups (Translate / Dictionary / Currency) | On / Off | Off — asks on first use |
 | Action categories | Transform / Encode / Search | All on |
@@ -138,15 +138,15 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 
 **Per-monitor DPI throughout.** Toolbar positioning, hit-testing, and the sub-menu popup each look up the DPI of the monitor they're rendering on, including when the popup spills onto a different-DPI monitor than the toolbar.
 
-**Foreground-shift-safe paste.** When an action pastes back into the user's app (transforms in editable fields, long-press paste-mode), the foreground HWND is snapshotted at click time and the paste is aborted if focus moved between click and `SimulatePaste` — so an Alt-Tab during the click window can't redirect the paste into the wrong app.
+**Foreground-shift-safe synthetic input.** Every path that injects input back into the user's app — transforms in editable fields, long-press paste-mode, Paste Plain Text, Delete — snapshots the foreground HWND when the toolbar *appears* and aborts if focus has moved by injection time. An Alt-Tab before or after the button click can't redirect a paste (or a destructive Delete keystroke) into the wrong app.
 
 **When the toolbar appears (and when it doesn't).** Mouse-up after a drag, double/triple-click, or long-press *can* trigger the toolbar — but several gates have to agree before it shows. In order:
 
-1. **NCHITTEST gate** (mouse-down) — clicks on a window's title bar, resize border, or native scrollbar are dropped before tracking even starts. The hook can't tell those drags from a text-selection drag at the OS level, so we ask the receiving window via `WM_NCHITTEST`.
+1. **NCHITTEST gate** (gesture-fire time) — gestures that started on a window's title bar, resize border, or native scrollbar are dropped. The hook can't tell those drags from a text-selection drag at the OS level, so we ask the receiving window via `WM_NCHITTEST` — deferred to fire time so only candidate selection gestures (not every click system-wide) pay the cross-process round-trip.
 2. **Scrollbar-edge heuristic** (mouse-up) — a drag with both endpoints within ~25 px of the right (or left, in RTL layouts) edge AND primarily vertical is treated as a custom-scrollbar drag (Chrome, VS Code, Slack, Electron apps). Same with bottom edge + horizontal motion.
-3. **I-beam cursor gate** (mouse-down + mouse-up) — the toolbar only engages when the OS text (I-beam) cursor was showing at mouse-down *or* when the gesture ends. Dragging a file, window, or slider, clicking a button, or double-clicking an icon is an I-beam at neither point, so it's dropped before any clipboard or keystroke work. This is the OS's own "pointer is over selectable text" signal — more universal than UIA TextPattern, and the single biggest reason the bar stops appearing (and stops interfering) on non-text gestures. Permissive when the cursor can't be read (touch, full-screen) so real selections still show.
+3. **Cursor-shape gate** (mouse-down + mouse-up) — the OS shows the text (I-beam) cursor over selectable text, which is more universal than UIA TextPattern. I-beam at either point → full capture. A positively identified non-text system cursor (arrow, hand, resize, wait, …) at *both* points — dragging a file, window, or slider, clicking a button, double-clicking an icon — is dropped before any clipboard or keystroke work. A *custom* cursor we can't classify (some apps draw their own I-beam) falls back to quiet capture: WM_COPY and UIA may run, but no synthetic keystroke is ever injected. Permissive when the cursor can't be read (touch, full-screen) so real selections still show.
 4. **Excluded-app + self-PID checks** — anything in your Settings → Excluded apps list never sees a toolbar, and clicks on SnapActions's own toolbar are ignored.
-5. **Three-layer text capture** — described above. Synthetic Ctrl+Insert only fires when both quieter mechanisms (WM_COPY and UIA TextPattern) come back empty.
+5. **Probe-planned three-layer capture** — described above. A UIA probe first classifies the moment: a non-text item (Explorer file, desktop icon, list row) stops capture outright; a TextPattern that reports *no selection* restricts the cascade — WM_COPY still runs silently, and the synthetic Ctrl+Insert stays available only for drag gestures (some accessibility providers report an empty selection even when text really is selected, and a drag that passed the cursor gate is the strongest signal they're wrong). Otherwise the full WM_COPY → UIA → Ctrl+Insert cascade runs, with the keystroke only as last resort.
 
 If a suppression case is misbehaving in your app, check the log file (`%AppData%\SnapActions\logs\YYYY-MM-DD.log`) — every gate that fires writes a line with the cursor position and reason. As an escape hatch, add the app's process name to **Settings → Excluded apps**.
 
@@ -170,7 +170,7 @@ Output: `bin\publish\SnapActions.exe` (~74 MB, includes .NET runtime, no install
 
 ## Tests & CI
 
-289 xUnit tests cover every detector, the math evaluator (including the recursion-depth guard), unit converter, color conversion (alpha preservation, hue normalization, CSS Color Module 4), the locale-agnostic number parser, all transform / encode / wrap actions, hash known-vectors, action `CanExecute` predicates, registry ID consistency, `WebSearchAction.BuildUrl` substitution, and the custom-action / per-app-profile logic.
+319 xUnit tests cover every detector, the math evaluator (including the recursion-depth guard), unit converter, color conversion (alpha preservation, hue normalization, CSS Color Module 4), the locale-agnostic number parser, all transform / encode / wrap actions, hash known-vectors, action `CanExecute` predicates, registry ID consistency, `WebSearchAction.BuildUrl` substitution, the capture-gate policies (probe-outcome plans, cursor-shape aggressiveness, probe-safe drive detection), and the custom-action / per-app-profile logic.
 
 GitHub Actions runs build + tests on every push and PR — see [`.github/workflows/build.yml`](.github/workflows/build.yml).
 

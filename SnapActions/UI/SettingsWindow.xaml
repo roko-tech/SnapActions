@@ -149,9 +149,11 @@
                           Foreground="#FFCDD6F4" Margin="0,4"
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>
 
-                <!-- Search Language -->
-                <TextBlock Text="SEARCH LANGUAGE" FontSize="11" FontWeight="SemiBold"
-                           Foreground="#FFA6ADC8" Margin="0,18,0,6"/>
+                <!-- Language (search filter + translate/dictionary target) -->
+                <TextBlock Text="LANGUAGE" FontSize="11" FontWeight="SemiBold"
+                           Foreground="#FFA6ADC8" Margin="0,18,0,2"/>
+                <TextBlock Text="Filters search results, and sets the Translate / Dictionary target."
+                           FontSize="10" Foreground="#FFA6ADC8" Margin="0,0,0,6" TextWrapping="Wrap"/>
                 <StackPanel Orientation="Horizontal">
                     <ComboBox x:Name="LanguageCombo" Width="200"
                               SelectionChanged="Language_Changed">
