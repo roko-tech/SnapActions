@@ -25,15 +25,18 @@ public static class SettingsManager
         }
         catch (Exception ex)
         {
-            // Don't silently overwrite a corrupted settings file — back it up so the user can recover.
+            // Don't silently overwrite a corrupted settings file — MOVE it aside so the user can
+            // recover it AND the next launch starts clean. A copy would leave the corrupt bytes
+            // in place: every subsequent launch re-fails the load and spawns another .broken-*
+            // backup until something happens to call Save.
             try
             {
                 if (File.Exists(SettingsFile))
                 {
                     var stamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
                     var backup = SettingsFile + $".broken-{stamp}";
-                    File.Copy(SettingsFile, backup, overwrite: true);
-                    SnapActions.Helpers.Log.Error($"Settings load failed; backed up to {backup}", ex);
+                    File.Move(SettingsFile, backup, overwrite: true);
+                    SnapActions.Helpers.Log.Error($"Settings load failed; corrupted file moved to {backup}", ex);
                 }
             }
             catch { /* best effort */ }

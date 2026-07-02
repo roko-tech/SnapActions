@@ -122,6 +122,10 @@ public partial class ToolbarWindow : Window
         TypeBadge.Visibility = Visibility.Collapsed;
 
         PositionAndShow(x, y);
+
+        // Open the Paste As options right away (PositionAndShow closed the popup). Empty
+        // clipboard leaves just the plain V button, same as before.
+        if (!string.IsNullOrEmpty(_selectedText)) ShowPasteAsMenu();
     }
 
     /// <summary>Only show transform/encode buttons when text is in an editable field.</summary>

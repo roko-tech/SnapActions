@@ -229,12 +229,22 @@ public partial class ToolbarWindow
         StartDismissTimer();
     }
 
-    // ── Paste button hover: show transform options as sub-menu ───
+    // ── Paste As sub-menu (paste mode) ───────────────────────────
 
+    // Re-opens the menu if the user closed it and hovers the paste button again.
     private void PasteButton_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
     {
         if (!_isPasteMode || string.IsNullOrEmpty(_selectedText)) return;
+        ShowPasteAsMenu();
+    }
 
+    /// <summary>
+    /// Builds and opens the "Paste As" submenu (transforms + encodes applied to the clipboard
+    /// text). Opened immediately when paste mode shows — it's paste mode's only content, and
+    /// when hovering the bare V button was the sole way in, nothing hinted the options existed.
+    /// </summary>
+    private void ShowPasteAsMenu()
+    {
         // Build a submenu with: Plain paste + all transform actions on clipboard text
         _currentSubMenuGroup = "Paste As";
         _currentSubMenuCategory = ActionCategory.Transform;

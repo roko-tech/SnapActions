@@ -9,6 +9,7 @@ public static class TextCapture
     private const int INPUT_KEYBOARD = 1;
     private const ushort VK_SHIFT = 0x10;
     private const ushort VK_CONTROL = 0x11;
+    private const ushort VK_MENU = 0x12;    // Alt
     private const ushort VK_INSERT = 0x2D;  // Ctrl+Insert = Copy / Shift+Insert = Paste
     private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
     private const uint KEYEVENTF_KEYUP = 0x0002;
@@ -104,8 +105,18 @@ public static class TextCapture
             // gesture that copies nothing leaves the clipboard completely untouched — no Clear, no
             // restore — so it's invisible to other apps / clipboard managers, and the user's data is
             // never momentarily absent (the old Clear()-first window could wipe it on a fault).
-            uint seqBefore = SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber();
-            var saved = await Application.Current.Dispatcher.InvokeAsync(SnapshotClipboard);
+            // Snapshot first, then read the sequence number in the same dispatcher slice, so the
+            // pair is consistent. Reading the number before the (dispatcher-marshalled) snapshot
+            // left a gap: an external clipboard write landing in it made the WM_COPY seq check
+            // "detect" a copy that never happened, and the toolbar showed the other process's
+            // clipboard content as the selection.
+            uint seqBefore = 0;
+            var saved = await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                var snap = SnapshotClipboard();
+                seqBefore = SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber();
+                return snap;
+            });
             bool changed = false;
             uint seqAfterCopy = 0; // sequence number right after OUR copy landed — for a safe restore
             try
@@ -137,7 +148,7 @@ public static class TextCapture
                 // then detect the result by the clipboard sequence number.
                 if (string.IsNullOrEmpty(text) && plan.RunKeystroke)
                 {
-                    await WaitForModifierKeysReleasedAsync();
+                    await WaitForModifierKeysReleasedAsync(VK_SHIFT, VK_MENU);
                     uint seqBeforeKbd = SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber();
                     CopyViaKeyboard();
                     for (int i = 0; i < 25; i++)
@@ -152,6 +163,12 @@ public static class TextCapture
                             if (!string.IsNullOrEmpty(text)) break;
                         }
                     }
+                    // The keystroke is fire-and-forget: an app that services the copy AFTER this
+                    // watch window replaces the user's clipboard once we've already concluded
+                    // "nothing copied" — no toolbar shown, and the finally-block restore skipped
+                    // because `changed` stayed false. Schedule one late re-check to undo that.
+                    if (!changed && saved != null)
+                        ScheduleLateCopyRestore(seqBeforeKbd, saved);
                 }
 
                 return text;
@@ -206,21 +223,53 @@ public static class TextCapture
     }
 
     /// <summary>
-    /// Waits up to ~300 ms for the user to release Shift/Alt before we inject the synthetic Ctrl+Insert.
-    /// A held modifier at gesture end (e.g. Shift+drag to
-    /// extend a selection) would otherwise turn our chord into Ctrl+Shift+Insert etc., which copies
-    /// nothing in many apps. Ctrl is fine — we press it ourselves.
+    /// Waits up to ~300 ms for the user to release the given modifier keys before we inject a
+    /// synthetic chord. A modifier still held at gesture end (Shift+drag to extend a selection,
+    /// Ctrl+drag for a discontiguous one) would otherwise corrupt the chord — Ctrl+Insert into
+    /// Ctrl+Shift+Insert, Shift+Insert into Ctrl+Shift+Insert — which copies/pastes nothing in
+    /// many apps. Callers pass only the keys that corrupt THEIR chord; the chord's own modifier
+    /// is pressed by us and harmless if also physically held.
     /// </summary>
-    private static async Task WaitForModifierKeysReleasedAsync()
+    private static async Task WaitForModifierKeysReleasedAsync(params int[] vkeys)
     {
-        const int VK_SHIFT = 0x10, VK_MENU = 0x12; // Alt
         for (int i = 0; i < 15; i++)
         {
-            bool held = (SnapActions.Helpers.NativeMethods.GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0
-                     || (SnapActions.Helpers.NativeMethods.GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+            bool held = false;
+            foreach (var vk in vkeys)
+            {
+                if ((SnapActions.Helpers.NativeMethods.GetAsyncKeyState(vk) & 0x8000) != 0)
+                {
+                    held = true;
+                    break;
+                }
+            }
             if (!held) return;
             await Task.Delay(20);
         }
+    }
+
+    // How long after the 250 ms keystroke watch window to re-check for a copy that landed late.
+    // One second covers heavily-loaded apps; the check is a scheduled dispatcher callback, not a
+    // held lock.
+    private const int LateCopyRestoreDelayMs = 1000;
+
+    /// <summary>
+    /// Restores the pre-capture snapshot if our synthetic copy landed AFTER the watch window.
+    /// "Exactly one clipboard write since right before our keystroke" (sequence number advanced
+    /// by one) identifies that late copy; more than one means the user copied something
+    /// themselves — leave it alone. Also skipped while another capture is in flight (its own
+    /// snapshot/restore owns the clipboard dance now). The seq check and the restore share one
+    /// dispatcher slice, so no other UI-thread clipboard work can interleave.
+    /// </summary>
+    private static void ScheduleLateCopyRestore(uint seqBeforeKbd, Dictionary<string, object> saved)
+    {
+        _ = Application.Current.Dispatcher.InvokeAsync(async () =>
+        {
+            await Task.Delay(LateCopyRestoreDelayMs);
+            if (_captureLock.CurrentCount == 0) return;
+            if (SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber() == seqBeforeKbd + 1)
+                RestoreClipboard(saved);
+        });
     }
 
     /// <summary>
@@ -540,9 +589,27 @@ public static class TextCapture
     /// <summary>
     /// Send Shift+Insert (canonical paste). We deliberately don't use Ctrl+V — browser extensions
     /// like h5player hook letter keys, which is the same reason capture uses Ctrl+Insert.
+    /// Fire-and-forget wrapper over <see cref="SimulatePasteAsync"/> for callers with nothing to
+    /// sequence after the paste.
     /// </summary>
     public static void SimulatePaste()
     {
+        _ = SimulatePasteAsync();
+    }
+
+    /// <summary>
+    /// Waits for physically-held Ctrl/Alt to be released first — a held Ctrl (e.g. after a
+    /// Ctrl+drag discontiguous selection) would turn our chord into Ctrl+Shift+Insert, which
+    /// isn't paste in most apps; the copy path already waits out the same failure class. Shift
+    /// is the chord's own modifier, so a held Shift is harmless. Because an Alt-Tab is exactly
+    /// a case where the wait engages (Alt is down), the foreground guard is re-checked after it
+    /// so the paste can't be redirected into the newly focused app. No modifier held (the common
+    /// case) means zero added latency: the wait returns before its first await.
+    /// </summary>
+    public static async Task SimulatePasteAsync()
+    {
+        await WaitForModifierKeysReleasedAsync(VK_CONTROL, VK_MENU);
+        if (!ForegroundGuard.StillValid()) return;
         SendInput((uint)ShiftInsertInputs.Length, ShiftInsertInputs, InputSize);
     }
 

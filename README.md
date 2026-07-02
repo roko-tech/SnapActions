@@ -2,11 +2,11 @@
 
 A free, open-source smart text-selection toolbar for Windows. Select text anywhere and a small toolbar appears with the right actions for what you selected — no limits, no subscription.
 
-![.NET 9](https://img.shields.io/badge/.NET-9.0-purple) ![WPF](https://img.shields.io/badge/WPF-Windows-blue) ![License](https://img.shields.io/badge/License-MIT-green) ![build](https://img.shields.io/github/actions/workflow/status/roko-tech/SnapActions/build.yml?branch=master)
+![.NET 10](https://img.shields.io/badge/.NET-10.0-purple) ![WPF](https://img.shields.io/badge/WPF-Windows-blue) ![License](https://img.shields.io/badge/License-MIT-green) ![build](https://img.shields.io/github/actions/workflow/status/roko-tech/SnapActions/build.yml?branch=master)
 
 ## Install
 
-**[Download SnapActions.exe](https://github.com/roko-tech/SnapActions/releases/latest)** — single file (~74 MB, includes .NET runtime), no installer.
+**[Download SnapActions.exe](https://github.com/roko-tech/SnapActions/releases/latest)** — single file (~75 MB, includes .NET runtime), no installer.
 
 Requires Windows 10 version 19041 or higher. Run the exe; a tray icon appears. That's it.
 
@@ -166,7 +166,7 @@ cd SnapActions
 build.bat
 ```
 
-Output: `bin\publish\SnapActions.exe` (~74 MB, includes .NET runtime, no install required).
+Output: `bin\publish\SnapActions.exe` (~75 MB, includes .NET runtime, no install required).
 
 ## Tests & CI
 

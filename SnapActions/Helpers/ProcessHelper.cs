@@ -52,6 +52,10 @@ public static class ProcessHelper
     public static ActionResult TryOpenLocalPath(string path, string successMessage = "Opened")
     {
         if (string.IsNullOrWhiteSpace(path)) return new ActionResult(false, Message: "Empty path");
+        // Today unreachable in practice — the detector never sets exists=true for UNC paths, so
+        // the Open action isn't offered for them — but that guarantee lives two files away. The
+        // File.Exists below already contacts the remote host, so keep the sink self-defending.
+        if (!ConfirmUncPath(path)) return new ActionResult(false, Message: "Cancelled");
         if (!File.Exists(path) && !Directory.Exists(path))
             return new ActionResult(false, Message: "Path not found");
 
@@ -90,6 +94,26 @@ public static class ProcessHelper
         }
     }
 
+    /// <summary>
+    /// \\server\share — defensive confirmation. The user just selected this path from somewhere;
+    /// even an existence check on it triggers an SMB connection and may leak the user's NTLM
+    /// hash to the named host, so ask before ANY touch. Non-UNC paths pass through. Shared by
+    /// every entry point that can receive a UNC path so the guarantee is local to the sink, not
+    /// dependent on callers' detector gates.
+    /// </summary>
+    private static bool ConfirmUncPath(string path)
+    {
+        if (!path.StartsWith(@"\\", StringComparison.Ordinal)) return true;
+        var msg = $"Open this UNC path?\n\n{path}\n\nOpening will contact the remote server.";
+        // DefaultDesktopOnly forces the dialog onto the active desktop and brings it to the
+        // front — our toolbar is a no-activate window with no focus to inherit.
+        var answer = System.Windows.MessageBox.Show(msg, "Open UNC path?",
+            System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning,
+            System.Windows.MessageBoxResult.No,
+            System.Windows.MessageBoxOptions.DefaultDesktopOnly);
+        return answer == System.Windows.MessageBoxResult.Yes;
+    }
+
     private static bool IsAllowed(string uri)
     {
         if (string.IsNullOrWhiteSpace(uri)) return false;
@@ -107,18 +131,7 @@ public static class ProcessHelper
     {
         if (string.IsNullOrWhiteSpace(path)) return new ActionResult(false, Message: "Empty path");
 
-        // \\server\share — defensive refusal. The user just selected this from somewhere; opening
-        // it triggers an SMB connection and may leak credentials to the named host.
-        if (path.StartsWith(@"\\", StringComparison.Ordinal))
-        {
-            var msg = $"Open this UNC path?\n\n{path}\n\nOpening will contact the remote server.";
-            var answer = System.Windows.MessageBox.Show(msg, "Open UNC path?",
-                System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning,
-                System.Windows.MessageBoxResult.No,
-                System.Windows.MessageBoxOptions.DefaultDesktopOnly);
-            if (answer != System.Windows.MessageBoxResult.Yes)
-                return new ActionResult(false, Message: "Cancelled");
-        }
+        if (!ConfirmUncPath(path)) return new ActionResult(false, Message: "Cancelled");
 
         try
         {

@@ -70,6 +70,11 @@ public static class KeyboardHook
 
     public static void Uninstall()
     {
+        // Never installed — nothing to tear down. The duplicate-instance startup path shuts down
+        // before Install runs; without this guard its OnExit would burn the full 2 s _hookReady
+        // timeout and log a misleading "didn't become ready" warning.
+        if (_hookThread == null) return;
+
         if (!_hookReady.Wait(2000))
             Log.Warn("Keyboard hook didn't become ready within 2s; tearing down anyway");
 

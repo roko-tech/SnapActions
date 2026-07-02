@@ -44,7 +44,12 @@ public partial class App : Application
             args.Handled = true; // keep app alive
         };
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
             Log.Error("Unhandled background exception", args.ExceptionObject as Exception);
+            // The process is terminating: drain the log queue now or the crash line above may
+            // never reach disk (the writer is a background thread).
+            Log.Shutdown();
+        };
         TaskScheduler.UnobservedTaskException += (_, args) =>
         {
             Log.Error("Unobserved task exception", args.Exception);
@@ -97,6 +102,7 @@ public partial class App : Application
             try { _mutex?.ReleaseMutex(); } catch { /* not owned */ }
         }
         _mutex?.Dispose();
+        Log.Shutdown(); // last — flushes everything the teardown above logged
         base.OnExit(e);
     }
 }

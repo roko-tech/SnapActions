@@ -164,6 +164,10 @@ public class MouseHook : IDisposable
 
     public void Uninstall()
     {
+        // Never installed — nothing to tear down (Dispose() also routes here); skip the
+        // _hookReady wait that would otherwise burn its full 2 s timeout.
+        if (_hookThread == null) return;
+
         // Wait for the hook thread to finish initializing before tearing it down — otherwise
         // we may try to call InvokeAsync on a null dispatcher and leak the hook.
         if (!_hookReady.Wait(2000))

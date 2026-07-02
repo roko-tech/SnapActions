@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- net9.0-windows because the main project uses WPF; referencing it transitively brings
+    <!-- net10.0-windows because the main project uses WPF; referencing it transitively brings
          in WPF assemblies, which only resolve on the -windows TFM. -->
-    <TargetFramework>net9.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>

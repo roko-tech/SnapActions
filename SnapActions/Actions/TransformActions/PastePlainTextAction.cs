@@ -36,14 +36,18 @@ public class PastePlainTextAction : IAction
             // Set plain text only, paste, then restore the original IDataObject after the paste
             // settles so subsequent paste-into-Word operations still see the rich formatting.
             Clipboard.SetText(plain, System.Windows.TextDataFormat.UnicodeText);
-            TextCapture.SimulatePaste();
+            var pasteTask = TextCapture.SimulatePasteAsync();
 
             if (original != null)
             {
                 // Give the target app a moment to process the paste before we swap the clipboard
-                // back. 200 ms is comfortably longer than typical paste handlers.
+                // back. 200 ms is comfortably longer than typical paste handlers — but the paste
+                // itself can be briefly deferred while a physically-held Ctrl/Alt is released, so
+                // wait on it first or the restore could beat the paste and Shift+Insert would
+                // deliver the restored rich clipboard instead of the plain text.
                 Application.Current.Dispatcher.InvokeAsync(async () =>
                 {
+                    try { await pasteTask; } catch { }
                     await Task.Delay(200);
                     try
                     {
