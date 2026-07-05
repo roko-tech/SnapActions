@@ -91,7 +91,7 @@ public static class TextCapture
                 // Bounded (RunBoundedUiaAsync) so a wedged provider can't hang here and permanently
                 // hold the capture lock.
                 var probe = await RunBoundedUiaAsync(
-                    ProbeSelectionViaUIA(cursorX, cursorY),
+                    ProbeSelectionViaUIA(cursorX, cursorY, preferKeystroke: allowSyntheticKeys),
                     new SelectionProbe(SelectionProbeOutcome.Unknown, null, "UIA pre-gate timed out"));
                 if (probe.Outcome == SelectionProbeOutcome.HasText)
                 {
@@ -471,15 +471,17 @@ public static class TextCapture
     /// a reduced cascade alive for it. Anything ambiguous (no TextPattern, exception, shallow
     /// tree) returns Unknown, which leaves the full WM_COPY → Ctrl+Insert fallback intact.
     ///
-    /// <paramref name="cursorX"/>/<paramref name="cursorY"/> are the gesture point, used only to
-    /// rescue the item-suppress branch: some containers are items that ALSO hold selectable text
-    /// (X/Twitter exposes each feed tweet as a ListItem+SelectionItemPattern, and focus lands on
-    /// that container, not the text — so the upward walk from focus misses the tweet's own text).
-    /// Before suppressing an item we read the selection from the element UNDER THE CURSOR, where
-    /// the user is actually selecting; a real text selection there is a text selection, not a bare
-    /// item selection. An Explorer file row / desktop icon has none, so it still suppresses.
+    /// <paramref name="cursorX"/>/<paramref name="cursorY"/> are the gesture point, used to read the
+    /// selection from the element UNDER THE CURSOR when the walk from focus finds nothing — some
+    /// containers hold selectable text but focus lands on the container (X/Twitter exposes each feed
+    /// tweet as a ListItem, focused, not the text). That under-cursor read is skipped when
+    /// <paramref name="preferKeystroke"/> is set (a drag / Full capture, where the Ctrl+Insert
+    /// keystroke is available): GetSelection() misreads bidirectional (mixed LTR/RTL) selections —
+    /// FromPoint lands on an adjacent Arabic run and returns its text, not the selected Latin word —
+    /// whereas the keystroke copies exactly what the browser shows selected. So the rescue is only a
+    /// fallback for gestures with no keystroke (ambiguous multi-click / quiet custom-cursor capture).
     /// </remarks>
-    internal static async Task<SelectionProbe> ProbeSelectionViaUIA(int cursorX, int cursorY)
+    internal static async Task<SelectionProbe> ProbeSelectionViaUIA(int cursorX, int cursorY, bool preferKeystroke)
     {
         return await Task.Run(() =>
         {
@@ -535,10 +537,21 @@ public static class TextCapture
                 // (a ListItem — or, inconsistently, a plain group), not the text, so the upward walk
                 // from focus misses the tweet's own text, which sits right under the cursor. Covers
                 // both the item case AND the plain-Unknown case.
-                var atPoint = TryReadSelectionAtPoint(cursorX, cursorY);
-                if (!string.IsNullOrEmpty(atPoint))
-                    return new SelectionProbe(SelectionProbeOutcome.HasText, atPoint,
-                        "rescued selection under cursor");
+                // Read the selection from the element UNDER THE CURSOR — X/Twitter focuses the tweet
+                // container, not the text, so the walk from focus missed it. BUT GetSelection() is
+                // unreliable for bidirectional (mixed LTR/RTL) content: FromPoint lands on an adjacent
+                // Arabic run and returns ITS text, not the visually-selected Latin word (confirmed:
+                // a "literacy" drag read back 8 Arabic chars). So use this rescue ONLY when the
+                // reliable Ctrl+Insert keystroke isn't available (an ambiguous multi-click, or a quiet
+                // custom-cursor capture). When it IS available — a drag or a Full capture — we skip the
+                // rescue and let the keystroke copy exactly what the browser shows selected.
+                if (!preferKeystroke)
+                {
+                    var atPoint = TryReadSelectionAtPoint(cursorX, cursorY);
+                    if (!string.IsNullOrEmpty(atPoint))
+                        return new SelectionProbe(SelectionProbeOutcome.HasText, atPoint,
+                            "rescued selection under cursor");
+                }
 
                 // Layer C: check the originally-focused element for non-text item patterns —
                 // Explorer file rows, desktop icons, list-box rows. SelectionItemPattern means

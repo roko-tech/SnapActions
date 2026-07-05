@@ -292,9 +292,16 @@ public partial class ResultPopup : Window
             DateTime.UtcNow - cached.fetched < TranslationCacheTtl)
             return cached.text;
 
+        // Prefer an explicit source language inferred from the text's script over MyMemory's
+        // "autodetect": autodetect is unreliable on short/mixed strings and sometimes resolves to
+        // the TARGET language, which fails with "PLEASE SELECT TWO DISTINCT LANGUAGES" (e.g. the
+        // English word "literacy" selected with an Arabic target). We only override when the text's
+        // script differs from the target's — then the source definitely isn't the target — and fall
+        // back to autodetect for same-script text so MyMemory can still tell e.g. French from Spanish.
+        var source = DetectSourceLang(text, to);
         // Pipe is not a legal URI character per RFC 3986 — encode the whole langpair value so
         // we don't depend on the server's lenient URL parser.
-        var langpair = Uri.EscapeDataString($"autodetect|{to}");
+        var langpair = Uri.EscapeDataString($"{source}|{to}");
         var url = $"https://api.mymemory.translated.net/get?q={Uri.EscapeDataString(text)}&langpair={langpair}";
         string json;
         try { json = await http.GetStringAsync(url, ct); }
@@ -309,6 +316,11 @@ public partial class ResultPopup : Window
                 .GetProperty("translatedText")
                 .GetString();
             var result = System.Net.WebUtility.HtmlDecode(translated ?? "Translation not available");
+            // MyMemory echoes this sentinel in translatedText when the source it used equals the
+            // target. With script-based source detection that now mostly means the selection really
+            // is already in the target language — show that, not the raw API shout. Not cached.
+            if (result.Contains("SELECT TWO DISTINCT LANGUAGES", StringComparison.OrdinalIgnoreCase))
+                return $"Text appears to already be in {to.ToUpperInvariant()}.";
             _translationCache[cacheKey] = (DateTime.UtcNow, result);
             return result;
         }
@@ -318,6 +330,66 @@ public partial class ResultPopup : Window
             return "Translation not available";
         }
     }
+
+    private enum Script { Unknown, Latin, Arabic, Cyrillic, Hebrew, Greek, Cjk }
+
+    /// <summary>
+    /// The MyMemory source language to request for <paramref name="text"/> given the target
+    /// <paramref name="to"/>. Returns an explicit code (en/ar/ru/he/el) ONLY when the text's
+    /// dominant script differs from the target's — where autodetect could wrongly return the
+    /// target — and "autodetect" otherwise (same script, ambiguous CJK, or no letters), letting
+    /// MyMemory distinguish languages that share a script. Internal for tests.
+    /// </summary>
+    internal static string DetectSourceLang(string text, string to)
+    {
+        var textScript = DominantScript(text);
+        if (textScript == Script.Unknown || textScript == Script.Cjk) return "autodetect";
+        if (textScript == ScriptOfLanguage(to)) return "autodetect";
+        return textScript switch
+        {
+            Script.Latin => "en",
+            Script.Arabic => "ar",
+            Script.Cyrillic => "ru",
+            Script.Hebrew => "he",
+            Script.Greek => "el",
+            _ => "autodetect",
+        };
+    }
+
+    private static Script DominantScript(string text)
+    {
+        int latin = 0, arabic = 0, cyrillic = 0, hebrew = 0, greek = 0, cjk = 0;
+        foreach (var ch in text)
+        {
+            if (!char.IsLetter(ch)) continue; // ignore digits, punctuation, whitespace, symbols
+            if (ch <= 'ɏ') latin++;                                  // Basic Latin + Latin-1/Ext-A/B
+            else if (ch is >= '؀' and <= 'ۿ') arabic++;         // Arabic
+            else if (ch is >= 'Ѐ' and <= 'ӿ') cyrillic++;       // Cyrillic
+            else if (ch is >= '֐' and <= '׿') hebrew++;         // Hebrew
+            else if (ch is >= 'Ͱ' and <= 'Ͽ') greek++;          // Greek
+            else if (ch is (>= '一' and <= '鿿')                  // Han
+                        or (>= '぀' and <= 'ヿ')                  // Hiragana / Katakana
+                        or (>= '가' and <= '힯')) cjk++;          // Hangul
+        }
+        int max = Math.Max(latin, Math.Max(arabic, Math.Max(cyrillic, Math.Max(hebrew, Math.Max(greek, cjk)))));
+        if (max == 0) return Script.Unknown;
+        if (max == cjk) return Script.Cjk;
+        if (max == arabic) return Script.Arabic;
+        if (max == cyrillic) return Script.Cyrillic;
+        if (max == hebrew) return Script.Hebrew;
+        if (max == greek) return Script.Greek;
+        return Script.Latin;
+    }
+
+    private static Script ScriptOfLanguage(string lang) => (lang ?? "").ToLowerInvariant() switch
+    {
+        "ar" or "fa" or "ur" => Script.Arabic,
+        "ru" or "uk" or "bg" or "sr" => Script.Cyrillic,
+        "he" or "iw" => Script.Hebrew,
+        "el" => Script.Greek,
+        "ja" or "zh" or "zh-cn" or "zh-tw" or "ko" => Script.Cjk,
+        _ => Script.Latin, // en, es, fr, de, it, pt, … and anything unrecognized
+    };
 
     private static readonly HashSet<string> DictionarySupportedLanguages = new(StringComparer.OrdinalIgnoreCase)
     {
