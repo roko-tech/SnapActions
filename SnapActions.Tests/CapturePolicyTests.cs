@@ -66,6 +66,78 @@ public class CapturePolicyTests
         Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: true, RunKeystroke: true), plan);
     }
 
+    [Fact]
+    public void Plan_AmbiguousMultiClick_Unknown_RunsNothing()
+    {
+        // Arrow/hand + multi-click (NOT a drag) + no keystroke: UIA can't confirm text, so withhold
+        // everything — a double-click is the ambiguous gesture we stay cautious on, and a WM_COPY on
+        // a text-bearing item could pop a spurious toolbar.
+        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.Unknown,
+            isDrag: false, allowSyntheticKeys: false, ambiguousCursor: true);
+        Assert.Equal(new TextCapture.CapturePlan(false, false, false), plan);
+    }
+
+    [Fact]
+    public void Plan_AmbiguousDrag_Unknown_RunsKeystrokeCascade()
+    {
+        // THE X/Twitter feed fix: an arrow/hand DRAG (strong selection signal) whose text UIA can't
+        // see runs the full cascade including the Ctrl+Insert keystroke (the caller sets keys=true
+        // for it). Self-gating: no selection ⇒ nothing copied ⇒ no toolbar.
+        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.Unknown,
+            isDrag: true, allowSyntheticKeys: true, ambiguousCursor: true);
+        Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: true, RunKeystroke: true), plan);
+    }
+
+    [Fact]
+    public void Plan_AmbiguousDrag_ItemSuppress_IsOverriddenToKeystrokeCascade()
+    {
+        // A feed tweet is a ListItem+SelectionItemPattern that HOLDS selectable text; an ambiguous
+        // drag over it must not hard-stop on the item signal — run the self-gating keystroke cascade.
+        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.SuppressItemElement,
+            isDrag: true, allowSyntheticKeys: true, ambiguousCursor: true);
+        Assert.Equal(new TextCapture.CapturePlan(true, true, true), plan);
+    }
+
+    [Fact]
+    public void Plan_ItemSuppress_NonAmbiguous_StillRunsNothing()
+    {
+        // A genuine Explorer/desktop item (not an ambiguous drag) still hard-stops before any capture.
+        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.SuppressItemElement,
+            isDrag: true, allowSyntheticKeys: true, ambiguousCursor: false);
+        Assert.Equal(new TextCapture.CapturePlan(false, false, false), plan);
+    }
+
+    [Fact]
+    public void Plan_AmbiguousDrag_ItemSuppress_ShellGated_RunsNothing()
+    {
+        // Explorer / file-manager exclusion: the caller clears allowSyntheticKeys there, which
+        // disables the item-suppress override — so a file row still hard-stops and no Ctrl+Insert
+        // fires to copy files or downgrade a pending Ctrl+X cut. (ambiguous drag, but keys=false.)
+        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.SuppressItemElement,
+            isDrag: true, allowSyntheticKeys: false, ambiguousCursor: true);
+        Assert.Equal(new TextCapture.CapturePlan(false, false, false), plan);
+    }
+
+    [Fact]
+    public void Plan_AmbiguousCursor_EmptyTextPattern_KeepsWmCopy()
+    {
+        // The feed's lying-provider path must survive: arrow/hand + EmptyTextPattern keeps WM_COPY
+        // (never a keystroke under a quiet/ambiguous capture). Only the Unknown outcome is withheld.
+        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.EmptyTextPattern,
+            isDrag: true, allowSyntheticKeys: false, ambiguousCursor: true);
+        Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: false, RunKeystroke: false), plan);
+    }
+
+    [Fact]
+    public void Plan_NonAmbiguousCursor_Unknown_KeepsWmCopyFallback()
+    {
+        // A custom-cursor quiet capture (Unknown cursor KIND, not ambiguous) keeps the WM_COPY
+        // fallback — custom-I-beam editors/terminals that expose no UIA TextPattern rely on it.
+        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.Unknown,
+            isDrag: true, allowSyntheticKeys: false, ambiguousCursor: false);
+        Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: true, RunKeystroke: false), plan);
+    }
+
     // ── CursorShape.DecideCaptureAggressiveness ─────────────────────────────
 
     [Theory]
@@ -77,10 +149,53 @@ public class CapturePolicyTests
         Assert.Equal(CaptureAggressiveness.Full, CursorShape.DecideCaptureAggressiveness(down, up));
 
     [Fact]
-    public void Cursor_KnownNonTextAtBothPoints_Suppresses()
+    public void Cursor_HardNonTextAtBothPoints_Suppresses()
     {
-        // Drag-a-file / click-a-button / resize: positively identified non-text cursors.
+        // Genuine resize / wait / crosshair / no-drop drags: positively identified HARD non-text
+        // cursors. Still bail before any capture. NOTE: this no longer covers arrow/hand — those
+        // are AmbiguousNonText now and get a quiet capture (see below).
         Assert.Null(CursorShape.DecideCaptureAggressiveness(CursorKind.KnownNonText, CursorKind.KnownNonText));
+    }
+
+    // ── The X/Twitter-feed / App-Store fix: arrow & hand no longer hard-suppress ──
+
+    [Fact]
+    public void Cursor_AmbiguousAtBothPoints_FallsBackToQuietCapture()
+    {
+        // THE regression pin for this fix. Arrow/hand at press AND release used to hard-suppress
+        // (return null), silently killing selections over click-to-open web text — X/Twitter feed
+        // tweets, App Store descriptions styled cursor:default. Now a quiet capture: UIA reads the
+        // selection, and (Quiet) no synthetic keystroke is ever injected on the arrow/hand target.
+        Assert.Equal(CaptureAggressiveness.Quiet,
+            CursorShape.DecideCaptureAggressiveness(CursorKind.AmbiguousNonText, CursorKind.AmbiguousNonText));
+    }
+
+    [Theory]
+    [InlineData(CursorKind.KnownNonText, CursorKind.AmbiguousNonText)]
+    [InlineData(CursorKind.AmbiguousNonText, CursorKind.KnownNonText)]
+    public void Cursor_MixedHardAndAmbiguous_FallsBackToQuietCapture(CursorKind down, CursorKind up) =>
+        // Intentional: ONLY both-hard suppresses. A resize drag that clips an arrow region falls to
+        // Quiet (a silent no-op — no text is selected) rather than widening suppression back onto
+        // the arrow/hand family this fix rescues.
+        Assert.Equal(CaptureAggressiveness.Quiet, CursorShape.DecideCaptureAggressiveness(down, up));
+
+    [Theory]
+    [InlineData(CursorKind.TextIBeam, CursorKind.AmbiguousNonText)]
+    [InlineData(CursorKind.AmbiguousNonText, CursorKind.TextIBeam)]
+    [InlineData(CursorKind.Unreadable, CursorKind.AmbiguousNonText)]
+    [InlineData(CursorKind.AmbiguousNonText, CursorKind.Unreadable)]
+    public void Cursor_IBeamOrUnreadableBeatsAmbiguous(CursorKind down, CursorKind up) =>
+        // I-beam / Unreadable still short-circuit ahead of any ambiguous logic — the opened-tweet
+        // path (I-beam → Full, keystroke fallback available) is untouched.
+        Assert.Equal(CaptureAggressiveness.Full, CursorShape.DecideCaptureAggressiveness(down, up));
+
+    [Fact]
+    public void IsAmbiguousBothPoints_TrueOnlyForArrowHandAtBothEnds()
+    {
+        Assert.True(CursorShape.IsAmbiguousBothPoints(CursorKind.AmbiguousNonText, CursorKind.AmbiguousNonText));
+        Assert.False(CursorShape.IsAmbiguousBothPoints(CursorKind.AmbiguousNonText, CursorKind.Unknown));
+        Assert.False(CursorShape.IsAmbiguousBothPoints(CursorKind.Unknown, CursorKind.Unknown));       // custom cursor
+        Assert.False(CursorShape.IsAmbiguousBothPoints(CursorKind.TextIBeam, CursorKind.AmbiguousNonText));
     }
 
     [Theory]
@@ -102,12 +217,16 @@ public class CapturePolicyTests
     [Fact]
     public void ClassifyHandle_RecognizesSharedSystemCursors()
     {
-        var ibeam = LoadCursor(IntPtr.Zero, 32513); // IDC_IBEAM
-        var arrow = LoadCursor(IntPtr.Zero, 32512); // IDC_ARROW
-        var hand = LoadCursor(IntPtr.Zero, 32649);  // IDC_HAND
+        var ibeam = LoadCursor(IntPtr.Zero, 32513);  // IDC_IBEAM
+        var arrow = LoadCursor(IntPtr.Zero, 32512);  // IDC_ARROW  — Ambiguous (sits over selectable web text)
+        var hand = LoadCursor(IntPtr.Zero, 32649);   // IDC_HAND   — Ambiguous (click-to-open web text)
+        var sizeWE = LoadCursor(IntPtr.Zero, 32644); // IDC_SIZEWE — hard non-text (resize)
+        var wait = LoadCursor(IntPtr.Zero, 32514);   // IDC_WAIT   — hard non-text (busy)
         Assert.Equal(CursorKind.TextIBeam, CursorShape.ClassifyHandle(ibeam));
-        Assert.Equal(CursorKind.KnownNonText, CursorShape.ClassifyHandle(arrow));
-        Assert.Equal(CursorKind.KnownNonText, CursorShape.ClassifyHandle(hand));
+        Assert.Equal(CursorKind.AmbiguousNonText, CursorShape.ClassifyHandle(arrow));
+        Assert.Equal(CursorKind.AmbiguousNonText, CursorShape.ClassifyHandle(hand));
+        Assert.Equal(CursorKind.KnownNonText, CursorShape.ClassifyHandle(sizeWE));
+        Assert.Equal(CursorKind.KnownNonText, CursorShape.ClassifyHandle(wait));
     }
 
     [Fact]

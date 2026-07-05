@@ -200,12 +200,20 @@ public class SelectionTracker
         // and used to lose the toolbar entirely here. Unreadable cursors (touch, full-screen)
         // stay fully permissive. See CursorShape.DecideCaptureAggressiveness.
         // Checked before the debounce so a suppressed gesture doesn't burn it.
-        var aggressiveness = CursorShape.DecideCaptureAggressiveness(_mouseDownCursor, CursorShape.Classify());
+        var upCursor = CursorShape.Classify();
+        var aggressiveness = CursorShape.DecideCaptureAggressiveness(_mouseDownCursor, upCursor);
         if (aggressiveness == null)
         {
-            SnapActions.Helpers.Log.Info($"Suppressed selection at ({cursorPos.X},{cursorPos.Y}): cursor was a known non-text shape at press and release");
+            // Now only fires for hard non-text cursors (resize/wait/…). The kinds are logged so a
+            // future "why didn't the toolbar show" is diagnosable — the old message named no cursor,
+            // which is what made the arrow-vs-hand-vs-resize investigation hard.
+            SnapActions.Helpers.Log.Info($"Suppressed selection at ({cursorPos.X},{cursorPos.Y}): cursor was a hard non-text shape at press and release ({_mouseDownCursor}/{upCursor})");
             return;
         }
+        // Arrow/hand at both ends: real web text still yields UIA HasText/EmptyTextPattern, but an
+        // Explorer row seen during a UIA timeout (outcome Unknown) must not fall to WM_COPY (which
+        // would copy the filename). See CaptureSelectedTextAsync / DecidePlan.
+        bool ambiguousCursor = CursorShape.IsAmbiguousBothPoints(_mouseDownCursor, upCursor);
 
         long now = Environment.TickCount64;
         if (now - _lastShowTicks < DebounceMs) return;
@@ -226,9 +234,21 @@ public class SelectionTracker
 
                 var editableTask = Task.Run(() => ForegroundApp.IsEditableFieldFocused());
 
+                bool isDragTrigger = trigger == MouseHook.SelectionTrigger.Drag;
+                // Allow the synthetic Ctrl+Insert for a Full capture (I-beam/Unreadable) OR for a
+                // DRAG under the ambiguous arrow/hand cursor. The keystroke is the only reliable way
+                // to read a Chromium selection UIA can't see (X/Twitter feed), and a drag — unlike a
+                // click — is a strong selection signal; it stays self-gating (nothing selected ⇒
+                // nothing copied). An ambiguous multi-click still gets no keystroke. Withheld in
+                // Explorer / file managers: there Ctrl+Insert copies FILES and could downgrade a
+                // pending cut — and the browser-feed case this exists for never lands there.
+                bool allowKeys = aggressiveness == CaptureAggressiveness.Full
+                                 || (ambiguousCursor && isDragTrigger && !ForegroundApp.IsFileManagerFocused());
                 var text = await TextCapture.CaptureSelectedTextAsync(
-                    isDrag: trigger == MouseHook.SelectionTrigger.Drag,
-                    allowSyntheticKeys: aggressiveness == CaptureAggressiveness.Full);
+                    isDrag: isDragTrigger,
+                    allowSyntheticKeys: allowKeys,
+                    ambiguousCursor: ambiguousCursor,
+                    cursorX: cursorPos.X, cursorY: cursorPos.Y);
                 if (string.IsNullOrWhiteSpace(text))
                 {
                     // Double-click on an empty editable input is the configured paste-mode

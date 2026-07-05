@@ -94,6 +94,19 @@ public static class ForegroundApp
     };
 
     /// <summary>
+    /// True when the foreground app is Explorer / the desktop / a known file manager — a shell
+    /// item container where a synthetic Ctrl+Insert would copy FILES (CF_HDROP), not text, and
+    /// could silently downgrade a pending Ctrl+X cut to a copy on the clipboard restore. Used to
+    /// withhold the ambiguous-cursor drag keystroke there; the browser-feed selection fix it exists
+    /// for never targets these apps. (Same process set as the double-click paste-mode reject.)
+    /// </summary>
+    public static bool IsFileManagerFocused()
+    {
+        var name = GetActiveProcessName();
+        return name != null && NoDoubleClickPasteModeProcesses.Contains(name);
+    }
+
+    /// <summary>
     /// Item-like control types that definitively are NOT text inputs. Used as an early-reject in
     /// the strict editable check so a folder-row / list-row focus after a double-click action
     /// can't pass via some side pattern.

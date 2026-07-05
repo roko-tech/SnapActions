@@ -12,8 +12,18 @@ public enum CursorKind
 {
     /// <summary>The shared system I-beam — the pointer is over selectable text.</summary>
     TextIBeam,
-    /// <summary>A known non-text system cursor (arrow, hand, resize, wait, …) — definitely not text.</summary>
+    /// <summary>An <b>unambiguous</b> non-text system cursor — resize (size-all/NS/WE/…), wait,
+    /// crosshair, no-drop, help, up-arrow, app-starting. These mean the pointer is dragging /
+    /// resizing / busy, never selecting text, so a gesture bracketed by them at both ends is
+    /// suppressed outright.</summary>
     KnownNonText,
+    /// <summary>The default <b>arrow</b> or the link <b>hand</b>. Both are non-text system cursors,
+    /// but — unlike the resize/wait family — they routinely sit over genuinely selectable text in
+    /// web and Electron content (a click-to-open tweet, an App Store description styled
+    /// <c>cursor: default</c>). So they are NOT treated as proof-of-non-text: a gesture under them
+    /// gets a quiet capture (UIA read, never a synthetic keystroke) and the UIA layer decides.
+    /// See <see cref="CursorShape.DecideCaptureAggressiveness"/>.</summary>
+    AmbiguousNonText,
     /// <summary>A custom cursor we can't identify. Some apps draw their own I-beam, so this is
     /// NOT evidence against text — see <see cref="CursorShape.DecideCaptureAggressiveness"/>.</summary>
     Unknown,
@@ -43,18 +53,26 @@ public static class CursorShape
     // shared handle, not the handle value, so the cache survives scheme switches.
     private static readonly IntPtr SystemIBeam = LoadCursor(IntPtr.Zero, IDC_IBEAM);
 
-    // Every other standard system cursor. A match here means the pointer is positively over a
-    // non-text target (arrow, link hand, resize edge, busy, …). A cursor matching NONE of the
-    // shared handles is some app's custom cursor — which may well be a custom I-beam (editors,
-    // terminals, themed apps), so it must not be treated as "not text"; it classifies Unknown
-    // and the pipeline falls back to quiet capture instead of suppressing outright.
-    private static readonly IntPtr[] KnownNonTextCursors = BuildKnownNonTextCursors();
+    // Unambiguous non-text cursors: a match means the pointer is positively dragging / resizing /
+    // busy — never selecting text. A gesture bracketed by these at both ends is suppressed.
+    // Deliberately EXCLUDES arrow and hand (see AmbiguousNonTextCursors): those two are non-text
+    // shapes that nonetheless commonly overlay selectable web/Electron text, so treating them as
+    // proof-of-non-text was suppressing real selections (X/Twitter feed, App Store pages).
+    private static readonly IntPtr[] HardNonTextCursors = LoadCursors(
+        // IDC_WAIT, IDC_CROSS, IDC_UPARROW, IDC_SIZENWSE, IDC_SIZENESW, IDC_SIZEWE, IDC_SIZENS,
+        // IDC_SIZEALL, IDC_NO, IDC_APPSTARTING, IDC_HELP
+        [32514, 32515, 32516, 32642, 32643, 32644, 32645, 32646, 32648, 32650, 32651]);
 
-    private static IntPtr[] BuildKnownNonTextCursors()
+    // The default arrow and the link hand. Non-text system cursors, but they sit over selectable
+    // text constantly in browsers/Electron (click-to-open tweets, cards styled cursor:default /
+    // cursor:pointer). Classified Ambiguous so the pipeline attempts a quiet UIA capture instead
+    // of suppressing — a custom cursor matching NONE of the shared handles stays Unknown.
+    private static readonly IntPtr[] AmbiguousNonTextCursors = LoadCursors(
+        // IDC_ARROW, IDC_HAND
+        [32512, 32649]);
+
+    private static IntPtr[] LoadCursors(int[] ids)
     {
-        // IDC_ARROW, IDC_WAIT, IDC_CROSS, IDC_UPARROW, IDC_SIZENWSE, IDC_SIZENESW, IDC_SIZEWE,
-        // IDC_SIZENS, IDC_SIZEALL, IDC_NO, IDC_HAND, IDC_APPSTARTING, IDC_HELP
-        int[] ids = [32512, 32514, 32515, 32516, 32642, 32643, 32644, 32645, 32646, 32648, 32649, 32650, 32651];
         var handles = new List<IntPtr>(ids.Length);
         foreach (var id in ids)
         {
@@ -78,8 +96,10 @@ public static class CursorShape
     internal static CursorKind ClassifyHandle(IntPtr hCursor)
     {
         if (hCursor == SystemIBeam) return CursorKind.TextIBeam;
-        foreach (var known in KnownNonTextCursors)
-            if (hCursor == known) return CursorKind.KnownNonText;
+        foreach (var hard in HardNonTextCursors)
+            if (hCursor == hard) return CursorKind.KnownNonText;
+        foreach (var ambiguous in AmbiguousNonTextCursors)
+            if (hCursor == ambiguous) return CursorKind.AmbiguousNonText;
         return CursorKind.Unknown;
     }
 
@@ -90,14 +110,21 @@ public static class CursorShape
     ///   <item>I-beam at either point → full cascade (the press or the release was on text).</item>
     ///   <item>Unreadable at either point → full cascade — matches the long-standing permissive
     ///         rule for touch / hidden-cursor selections (no signal must never suppress).</item>
-    ///   <item>Known non-text cursor at BOTH points → suppress. This is the drag-a-file /
-    ///         click-a-button / resize case the gate exists for, and it only fires on positive
-    ///         identification of standard system cursors.</item>
-    ///   <item>Anything else (a custom cursor somewhere, no I-beam seen) → quiet capture:
-    ///         WM_COPY + UIA may run, synthetic keystrokes may not. Custom I-beams (editors,
-    ///         terminals, themed apps) get their toolbar back; custom game/canvas cursors get,
-    ///         at worst, a silent no-op probe.</item>
+    ///   <item><b>Hard</b> non-text cursor (resize / wait / crosshair / no-drop / …) at BOTH points
+    ///         → suppress. This is the resize-a-window / drag-a-thing / busy case: those gestures
+    ///         never select text, so bail before any capture work.</item>
+    ///   <item>Everything else → quiet capture: UIA may run, synthetic keystrokes may not. This now
+    ///         includes the <b>arrow / hand</b> (<see cref="CursorKind.AmbiguousNonText"/>) case —
+    ///         previously a hard suppress, which silently killed real selections over click-to-open
+    ///         web text. A quiet capture lets the UIA layer read the selection while guaranteeing no
+    ///         stray keystroke lands on a button / canvas. Custom I-beams (editors, terminals) and
+    ///         custom game cursors (<see cref="CursorKind.Unknown"/>) behave as before.</item>
     /// </list>
+    /// Mixed pairs — a hard non-text cursor at one end and arrow/hand (or unknown) at the other,
+    /// e.g. a resize drag that clips an arrow region — intentionally fall through to Quiet rather
+    /// than suppress. Those gestures select no text, so a quiet capture is a silent no-op; keeping
+    /// the hard-suppress to the unambiguous BOTH-hard case avoids widening suppression onto the
+    /// arrow/hand family the fix is meant to rescue.
     /// </summary>
     internal static CaptureAggressiveness? DecideCaptureAggressiveness(CursorKind atDown, CursorKind atUp)
     {
@@ -106,6 +133,18 @@ public static class CursorShape
         if (atDown == CursorKind.KnownNonText && atUp == CursorKind.KnownNonText) return null;
         return CaptureAggressiveness.Quiet;
     }
+
+    /// <summary>
+    /// True when the cursor was the ambiguous arrow/hand at BOTH sample points. The capture layer
+    /// uses this to withhold WM_COPY when UIA can't confirm a text selection (outcome Unknown):
+    /// arrow/hand + no UIA text is almost always a genuine non-text item (an Explorer row seen
+    /// during a UIA timeout), and WM_COPY there would copy the item's name and pop a spurious
+    /// toolbar — the false positive the old hard-suppress prevented. Real web text always yields
+    /// HasText/EmptyTextPattern (never Unknown), so the selection fix is unaffected; custom-cursor
+    /// (Unknown-kind) quiet captures keep their WM_COPY fallback because they are not ambiguous.
+    /// </summary>
+    internal static bool IsAmbiguousBothPoints(CursorKind atDown, CursorKind atUp) =>
+        atDown == CursorKind.AmbiguousNonText && atUp == CursorKind.AmbiguousNonText;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct CURSORINFO
