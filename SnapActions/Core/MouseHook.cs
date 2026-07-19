@@ -82,6 +82,7 @@ public class MouseHook : IDisposable
     private POINT _mouseDownPoint;
     private long _mouseDownTicks;
     private bool _isTracking;
+    private bool _cancelMouseDownTracking;
 
     // Long-press: fires on dedicated dispatcher, not UI thread
     private Dispatcher? _hookDispatcher;
@@ -192,9 +193,18 @@ public class MouseHook : IDisposable
     {
         // CancelTracking is always called from the hook thread (from MouseHook events fired
         // synchronously inside ProcessMouseEvent), so DispatcherTimer.Stop is safe to call directly.
+        _cancelMouseDownTracking = true;
         _isTracking = false;
         _longPressTimer?.Stop();
         _multiClickTimer?.Stop();
+    }
+
+    internal static bool IsProcessWindowAtPoint(POINT pt, uint processId)
+    {
+        IntPtr hwnd = WindowFromPoint(pt);
+        if (hwnd == IntPtr.Zero) return false;
+        GetWindowThreadProcessId(hwnd, out uint windowProcessId);
+        return windowProcessId == processId;
     }
 
     private void OnMultiClickTimer(object? sender, EventArgs e)
@@ -260,10 +270,12 @@ public class MouseHook : IDisposable
         if (msg == WM_LBUTTONDOWN)
         {
             var pt = ReadPoint(lParam);
+            _cancelMouseDownTracking = false;
             try { MouseDown?.Invoke(pt); }
             catch (Exception ex) { Log.Warn($"MouseDown handler threw: {ex.Message}"); }
             try { GlobalMouseDown?.Invoke(pt); }
             catch (Exception ex) { Log.Warn($"GlobalMouseDown handler threw: {ex.Message}"); }
+            if (_cancelMouseDownTracking) return;
 
             // NOTE: the non-client (NCHITTEST) gate used to run right here, on EVERY mouse-down
             // system-wide — a synchronous cross-process SendMessageTimeout (bounded 50 ms) that
@@ -515,6 +527,10 @@ public class MouseHook : IDisposable
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(
+        IntPtr hWnd, out uint lpdwProcessId);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

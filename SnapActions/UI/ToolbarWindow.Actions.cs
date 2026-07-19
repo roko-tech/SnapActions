@@ -17,9 +17,37 @@ public partial class ToolbarWindow
     private async void ActionButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: IAction action }) return;
+        int actionGeneration = _generation;
+        if (!TryStartToolbarAction(out var operation)) return;
         ActionResult result;
-        try { result = action.Execute(_selectedText, _analysis); }
+        try
+        {
+            if (action is IOperationAction operationAction)
+            {
+                result = operation.TryClaim()
+                    ? await operationAction.ExecuteAsync(
+                        _selectedText, _analysis, operation)
+                    : new ActionResult(
+                        false, Message: "Selection changed — action cancelled");
+            }
+            else
+            {
+                ActionResult? claimedResult = null;
+                bool started = operation.TryCommit(() =>
+                {
+                    claimedResult = action.Execute(_selectedText, _analysis);
+                    return true;
+                });
+                result = started
+                    ? claimedResult!
+                    : new ActionResult(
+                        false, Message: "Selection changed — action cancelled");
+            }
+        }
         catch (Exception ex) { result = new ActionResult(false, Message: $"Error: {ex.Message}"); }
+
+        // A newer selection reshowed the singleton toolbar while a targeted action was awaiting.
+        if (_generation != actionGeneration) return;
 
         if (!result.Success && !string.IsNullOrEmpty(result.Message))
         {
@@ -37,38 +65,121 @@ public partial class ToolbarWindow
             bool willPaste = _isPasteMode || (_isEditable && Config.SettingsManager.Current.ReplaceSelectionOnTransform
                                               && action.Category == ActionCategory.Transform);
 
-            // Snapshot the previous clipboard BEFORE we overwrite it, so we can restore it
-            // if the user has opted into the restore-after-copy setting.
-            IDataObject? previous = null;
-            if (!willPaste && Config.SettingsManager.Current.RestoreClipboardAfterAction)
-            {
-                try { previous = Clipboard.GetDataObject(); }
-                catch { previous = null; }
-            }
-
-            // The Windows clipboard frequently throws transient ExternalException/COMException
-            // when another process briefly holds it. Without this guard the throw would propagate
-            // through async void to DispatcherUnhandledException, which logs noise but keeps the
-            // app alive. We also must not paste in paste-mode if the write failed — that would
-            // paste whatever stale content is currently on the clipboard.
-            if (!TrySetClipboardText(result.ResultText))
-            {
-                await ShowFailureAndHide("Couldn't write to clipboard — try again");
-                return;
-            }
+            // Modifier waits and both target checks happen before the clipboard write. This closes
+            // the old window where an Alt-Tab could cancel paste only after the result had already
+            // replaced the user's clipboard.
             if (willPaste)
             {
-                // Abort if focus moved since the toolbar was shown (an Alt-Tab before or after
-                // the click) rather than paste into the wrong app.
+                bool prepared = await TextCapture.PreparePasteAsync(operation);
+                if (_generation != actionGeneration) return;
+                if (!prepared)
+                {
+                    await ShowFailureAndHide("Focus moved — paste cancelled");
+                    return;
+                }
+            }
+
+            // Snapshot before any paste (for rollback on a final target/input failure), and before
+            // ordinary copy when the user explicitly enabled restore-after-copy.
+            bool restoreAfterCopy = !willPaste
+                                    && Config.SettingsManager.Current.RestoreClipboardAfterAction;
+            TextCapture.ClipboardSnapshot? previous = null;
+            if (willPaste || restoreAfterCopy)
+            {
+                previous = TextCapture.SnapshotClipboard();
+                if (previous == null)
+                {
+                    await ShowFailureAndHide("Clipboard formats couldn't be preserved safely");
+                    return;
+                }
+                if (!TextCapture.CanStartClipboardWrite(
+                        previous, TextCapture.ObserveClipboard()))
+                {
+                    await ShowFailureAndHide("Clipboard changed — action cancelled");
+                    return;
+                }
+            }
+
+            TextCapture.ClipboardObservation? written = null;
+            bool writeSucceeded;
+            if (previous != null)
+            {
+                written = await TextCapture.TrySetClipboardTextForOperationAsync(
+                    operation,
+                    previous,
+                    result.ResultText,
+                    requireExactTarget: willPaste);
+                writeSucceeded = written != null;
+            }
+            else
+            {
+                // An ordinary explicit copy does not target the foreground app, but it still
+                // belongs to this operation: a newer selection must suppress the stale write.
+                writeSucceeded = TextCapture.TryCommitClipboardMutation(
+                    operation,
+                    () => TrySetClipboardText(result.ResultText));
+            }
+
+            if (_generation != actionGeneration)
+            {
+                if (previous != null && written is { } supersededWrite)
+                {
+                    if (willPaste)
+                        TextCapture.RestoreClipboardIfUnchanged(
+                            previous, supersededWrite);
+                    else
+                        ScheduleClipboardRestore(previous, supersededWrite);
+                }
+                return;
+            }
+            if (!writeSucceeded)
+            {
+                await ShowFailureAndHide(
+                    "Clipboard changed or couldn't be written — action cancelled");
+                return;
+            }
+
+            if (willPaste)
+            {
+                var expectedClipboard = written!.Value;
+                var pasteOutcome = await TextCapture.TrySimulatePasteAsync(
+                    operation, expectedClipboard);
+                if (pasteOutcome.Status
+                    == TextCapture.InputInjectionStatus.Partial)
+                {
+                    bool restored =
+                        TextCapture.CanRollbackAfterPartialPaste(pasteOutcome)
+                        && previous != null
+                        && written is { } partialWrite
+                        && TextCapture.RestoreClipboardIfUnchanged(
+                            previous, partialWrite);
+                    if (_generation != actionGeneration) return;
+                    await ShowFailureAndHide(
+                        restored
+                            ? "Windows rejected the paste shortcut after the held key was safely released"
+                            : pasteOutcome.CleanupSucceeded
+                                ? "Windows accepted only part of the paste shortcut; clipboard restoration was skipped for safety"
+                            : "Windows accepted part of the paste shortcut and key release was incomplete");
+                    return;
+                }
+                if (pasteOutcome.Status
+                    != TextCapture.InputInjectionStatus.Succeeded)
+                {
+                    if (previous != null && written is { } failedWrite)
+                        TextCapture.RestoreClipboardIfUnchanged(previous, failedWrite);
+                    if (_generation != actionGeneration) return;
+                    await ShowFailureAndHide("Focus moved — paste cancelled");
+                    return;
+                }
+                if (_generation != actionGeneration) return;
                 HideToolbar();
-                if (ForegroundGuard.StillValid())
-                    TextCapture.SimulatePaste();
                 return;
             }
             // Plain copy-to-clipboard path: flash a confirmation so the user knows it happened.
             int gen = _generation;
             await ShowCopiedToast();
-            if (previous != null) ScheduleClipboardRestore(previous, result.ResultText);
+            if (previous != null && written is { } acceptedWrite)
+                ScheduleClipboardRestore(previous, acceptedWrite);
             // A new selection during the toast reshowed the toolbar — leave it up.
             if (_generation != gen) return;
         }
@@ -78,22 +189,18 @@ public partial class ToolbarWindow
     /// <summary>
     /// Restore the snapshot to the clipboard ~3 seconds after we wrote our action's result.
     /// Long enough that the user has had time to Alt-Tab + Ctrl+V somewhere; short enough that
-    /// the restore isn't surprising. Best-effort: if Clipboard.SetDataObject throws because the
-    /// snapshot wrapper's source COM data is gone, we just leave the action result in place.
+    /// the restore isn't surprising. The exact accepted sequence and owner must still match, so
+    /// another copy of even identical text is never overwritten.
     /// </summary>
-    private static void ScheduleClipboardRestore(IDataObject snapshot, string? ourResult)
+    private static void ScheduleClipboardRestore(
+        TextCapture.ClipboardSnapshot snapshot,
+        TextCapture.ClipboardObservation acceptedWrite)
     {
         Application.Current.Dispatcher.InvokeAsync(async () =>
         {
             await Task.Delay(3000);
-            try
-            {
-                // Only restore if OUR action result is still on the clipboard. If the user copied
-                // something else in those 3s, restoring the old snapshot would clobber their data.
-                if (Clipboard.ContainsText() && Clipboard.GetText() == ourResult)
-                    Clipboard.SetDataObject(snapshot, copy: true);
-            }
-            catch (Exception ex) { Log.Warn($"Clipboard restore failed: {ex.Message}"); }
+            if (!TextCapture.RestoreClipboardIfUnchanged(snapshot, acceptedWrite))
+                Log.Info("Clipboard restore skipped because ownership changed");
         }, DispatcherPriority.Background);
     }
 

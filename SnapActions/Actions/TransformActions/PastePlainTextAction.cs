@@ -5,7 +5,7 @@ using SnapActions.Detection;
 
 namespace SnapActions.Actions.TransformActions;
 
-public class PastePlainTextAction : IAction
+public class PastePlainTextAction : IAction, IOperationAction
 {
     public string Id => "paste_plain";
     public string Name => "Paste Plain Text";
@@ -18,48 +18,73 @@ public class PastePlainTextAction : IAction
     }
 
     public ActionResult Execute(string text, TextAnalysis analysis)
+        => new(false, Message: "Paste requires a current selection target");
+
+    async Task<ActionResult> IOperationAction.ExecuteAsync(
+        string text, TextAnalysis analysis, SelectionOperation operation)
     {
-        // Check BEFORE touching the clipboard: if focus moved since the toolbar appeared, the
-        // paste would land in the wrong app — and aborting after the clipboard swap would have
-        // replaced the user's rich clipboard for nothing.
-        if (!ForegroundGuard.StillValid())
+        // Wait out physical modifiers and validate the immutable target before touching clipboard
+        // data. If focus changes during the wait, the user's rich clipboard remains untouched.
+        if (!await TextCapture.PreparePasteAsync(operation))
             return new ActionResult(false, Message: "Focus moved — paste cancelled");
 
         try
         {
-            // Snapshot the original IDataObject (which may include RTF/HTML in addition to plain
-            // text) so the user's rich clipboard isn't lost just because they pasted as plain.
-            var original = Clipboard.GetDataObject();
-            var plain = Clipboard.GetText();
+            var original = TextCapture.SnapshotClipboard();
+            if (original == null)
+                return new ActionResult(
+                    false, Message: "Clipboard formats couldn't be preserved safely");
+
+            string? plain = original.Data.TryGetValue(
+                System.Windows.DataFormats.UnicodeText, out var unicode)
+                ? unicode as string
+                : original.Data.TryGetValue(System.Windows.DataFormats.Text, out var ansi)
+                    ? ansi as string
+                    : null;
             if (string.IsNullOrEmpty(plain)) return new ActionResult(false, Message: "Clipboard empty");
 
-            // Set plain text only, paste, then restore the original IDataObject after the paste
-            // settles so subsequent paste-into-Word operations still see the rich formatting.
-            Clipboard.SetText(plain, System.Windows.TextDataFormat.UnicodeText);
-            var pasteTask = TextCapture.SimulatePasteAsync();
+            if (!await operation.CanInjectInputAsync())
+                return new ActionResult(false, Message: "Focus moved — paste cancelled");
+            if (!TextCapture.CanStartClipboardWrite(
+                    original, TextCapture.ObserveClipboard()))
+                return new ActionResult(false, Message: "Clipboard changed — paste cancelled");
 
-            if (original != null)
+            var written = await TextCapture.TrySetClipboardTextForOperationAsync(
+                operation,
+                original,
+                plain,
+                requireExactTarget: true);
+            if (written == null)
+                return new ActionResult(false, Message: "Clipboard changed — paste cancelled");
+
+            var pasteOutcome = await TextCapture.TrySimulatePasteAsync(
+                operation, written.Value);
+            if (pasteOutcome.Status == TextCapture.InputInjectionStatus.Partial)
             {
-                // Give the target app a moment to process the paste before we swap the clipboard
-                // back. 200 ms is comfortably longer than typical paste handlers — but the paste
-                // itself can be briefly deferred while a physically-held Ctrl/Alt is released, so
-                // wait on it first or the restore could beat the paste and Shift+Insert would
-                // deliver the restored rich clipboard instead of the plain text.
-                Application.Current.Dispatcher.InvokeAsync(async () =>
-                {
-                    try { await pasteTask; } catch { }
-                    await Task.Delay(200);
-                    try
-                    {
-                        // Only restore if the clipboard still holds the plain text we put there.
-                        // If it changed in the interim (the user copied something else, or pasted
-                        // into an app that re-set the clipboard), restoring would clobber their data.
-                        if (Clipboard.ContainsText() && Clipboard.GetText() == plain)
-                            Clipboard.SetDataObject(original, copy: true);
-                    }
-                    catch { }
-                }, DispatcherPriority.Background);
+                if (TextCapture.CanRollbackAfterPartialPaste(pasteOutcome))
+                    TextCapture.RestoreClipboardIfUnchanged(
+                        original, written.Value);
+                return new ActionResult(
+                    false,
+                    Message: TextCapture.CanRollbackAfterPartialPaste(pasteOutcome)
+                        ? "Windows rejected the paste shortcut after the held key was safely released"
+                        : pasteOutcome.CleanupSucceeded
+                            ? "Windows accepted only part of the paste shortcut; clipboard restoration was skipped for safety"
+                        : "Windows accepted part of the paste shortcut and key release was incomplete");
             }
+            if (pasteOutcome.Status != TextCapture.InputInjectionStatus.Succeeded)
+            {
+                TextCapture.RestoreClipboardIfUnchanged(original, written.Value);
+                return new ActionResult(false, Message: "Focus moved — paste cancelled");
+            }
+
+            // Give the target time to consume the plain text, then restore only while the exact
+            // sequence and clipboard owner from our write are unchanged.
+            _ = Application.Current.Dispatcher.InvokeAsync(async () =>
+            {
+                await Task.Delay(200);
+                TextCapture.RestoreClipboardIfUnchanged(original, written.Value);
+            }, DispatcherPriority.Background);
 
             return new ActionResult(true, Message: "Pasted as plain text");
         }

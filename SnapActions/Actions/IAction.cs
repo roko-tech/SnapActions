@@ -19,3 +19,13 @@ public interface IAction
     /// </summary>
     bool IsPreviewSafe => false;
 }
+
+/// <summary>
+/// Implemented only by actions that can mutate the focused application. They require the
+/// immutable selection operation; the ordinary IAction entry point must fail closed.
+/// </summary>
+internal interface IOperationAction
+{
+    Task<ActionResult> ExecuteAsync(
+        string text, TextAnalysis analysis, Core.SelectionOperation operation);
+}

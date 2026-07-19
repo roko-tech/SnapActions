@@ -11,29 +11,46 @@ public static class TextCapture
     private const ushort VK_CONTROL = 0x11;
     private const ushort VK_MENU = 0x12;    // Alt
     private const ushort VK_INSERT = 0x2D;  // Ctrl+Insert = Copy / Shift+Insert = Paste
+    private const ushort VK_DELETE = 0x2E;
     private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint WM_COPY = 0x0301;
     private const uint SMTO_ABORTIFHUNG = 0x0002;
     private const uint WM_COPY_TIMEOUT_MS = 100;
+    private const uint CF_BITMAP = 2;
+    private const uint CF_METAFILEPICT = 3;
+    private const uint CF_PALETTE = 9;
+    private const uint CF_UNICODETEXT = 13;
+    private const uint CF_ENHMETAFILE = 14;
+    private const uint CF_OWNERDISPLAY = 0x0080;
+    private const uint CF_DSPBITMAP = 0x0082;
+    private const uint CF_DSPMETAFILEPICT = 0x0083;
+    private const uint CF_DSPENHMETAFILE = 0x008E;
+    private const uint CF_PRIVATEFIRST = 0x0200;
+    private const uint CF_PRIVATELAST = 0x02FF;
+    private const uint CF_GDIOBJFIRST = 0x0300;
+    private const uint CF_GDIOBJLAST = 0x03FF;
+    private const uint GMEM_MOVEABLE = 0x0002;
 
-    private static readonly INPUT[] CtrlInsertInputs = BuildExtendedInsertCombo(VK_CONTROL);
-    private static readonly INPUT[] ShiftInsertInputs = BuildExtendedInsertCombo(VK_SHIFT);
+    private static readonly KeyStroke[] CtrlInsertInputs = BuildExtendedInsertCombo(VK_CONTROL);
+    private static readonly KeyStroke[] ShiftInsertInputs = BuildExtendedInsertCombo(VK_SHIFT);
+    private static readonly KeyStroke[] DeleteInputs =
+    [
+        new(VK_DELETE, KeyUp: false, Extended: true),
+        new(VK_DELETE, KeyUp: true, Extended: true),
+    ];
     private static readonly int InputSize = Marshal.SizeOf<INPUT>();
+    private static IntPtr _clipboardOwnerWindow;
 
-    // Serialize captures so two rapid selections can't interleave snapshot/restore and corrupt
-    // the clipboard. Acquired non-blocking via WaitAsync(0): if another capture is in flight we
-    // drop this round entirely rather than queueing — the SelectionTracker debounce already
-    // gates us at 250 ms and a captured-but-deferred selection would be stale by the time it ran.
+    // Serialize captures so rapid selections can't interleave snapshot/restore and corrupt the
+    // clipboard. Contenders queue, then validate their immutable operation after acquisition:
+    // stale captures exit while the newest one is allowed to proceed.
     private static readonly System.Threading.SemaphoreSlim _captureLock = new(1, 1);
 
-    // Clipboard formats we can faithfully snapshot and put back. Everything else is deliberately
-    // skipped: arbitrary OLE / app-specific formats serialize through the (removed-on-.NET-9)
-    // BinaryFormatter path when RestoreClipboard flushes with copy:true, which throws and can drop
-    // the WHOLE clipboard. Text/HTML/RTF/CSV are strings, FileDrop is string[], Bitmap is OLE-
-    // rendered — all round-trip without BinaryFormatter. (Trade-off: an exotic-format-only
-    // clipboard isn't preserved across a capture. The fuller fix is to stop clearing the clipboard
-    // entirely (an event-driven, no-clear capture), which is a larger change.)
+    // Clipboard formats we can faithfully snapshot and put back. Arbitrary OLE / app-specific
+    // formats may require the removed-on-.NET-9 BinaryFormatter path when flushed with copy:true.
+    // If even one advertised format is outside this set, the snapshot is incomplete and every
+    // clipboard-mutating capture fallback is disabled; UIA may still capture without mutation.
     private static readonly HashSet<string> RoundTrippableFormats = new(StringComparer.Ordinal)
     {
         System.Windows.DataFormats.UnicodeText, System.Windows.DataFormats.Text,
@@ -41,6 +58,525 @@ public static class TextCapture
         System.Windows.DataFormats.CommaSeparatedValue, System.Windows.DataFormats.FileDrop,
         System.Windows.DataFormats.Bitmap,
     };
+
+    internal readonly record struct ClipboardFormatRead(
+        string Format, bool ReadSucceeded, bool HasValue);
+
+    internal readonly record struct ClipboardObservation(
+        uint Sequence, IntPtr OwnerWindow, uint OwnerProcessId);
+
+    internal enum ClipboardMutationOwnership
+    {
+        None,
+        Owned,
+        Ambiguous,
+    }
+
+    internal enum InputInjectionStatus
+    {
+        Rejected,
+        Succeeded,
+        Partial,
+    }
+
+    internal readonly record struct InputInjectionOutcome(
+        InputInjectionStatus Status,
+        bool CleanupSucceeded = true,
+        uint AcceptedCount = 0);
+
+    internal readonly record struct KeyStroke(
+        ushort VirtualKey,
+        bool KeyUp,
+        bool Extended);
+
+    internal sealed record ClipboardSnapshot(
+        Dictionary<string, object> Data, ClipboardObservation Observation);
+
+    private readonly record struct NativeClipboardWriteResult(
+        bool Success, bool NeedsRollback, ClipboardObservation Observation);
+
+    private sealed class NativeClipboardFormatBackup(uint format, IntPtr handle)
+    {
+        internal uint Format { get; } = format;
+        internal IntPtr Handle { get; set; } = handle;
+    }
+
+    private sealed class NativeClipboardWritePreparation(
+        IntPtr ownerWindow,
+        IntPtr textHandle,
+        List<NativeClipboardFormatBackup> backups)
+    {
+        internal IntPtr OwnerWindow { get; } = ownerWindow;
+        internal IntPtr TextHandle { get; set; } = textHandle;
+        internal List<NativeClipboardFormatBackup> Backups { get; } = backups;
+    }
+
+    internal static void SetClipboardOwnerWindow(IntPtr hwnd) =>
+        Interlocked.Exchange(ref _clipboardOwnerWindow, hwnd);
+
+    internal static bool IsCompleteSnapshot(
+        ClipboardObservation before,
+        ClipboardObservation after,
+        IEnumerable<ClipboardFormatRead> reads) =>
+        before.Sequence != 0
+        && before == after
+        && reads.All(read =>
+            RoundTrippableFormats.Contains(read.Format)
+            && read.ReadSucceeded
+            && read.HasValue);
+
+    internal static ClipboardMutationOwnership ClassifyClipboardMutation(
+        ClipboardObservation before,
+        ClipboardObservation after,
+        bool requestDelivered,
+        uint expectedOwnerProcessId,
+        bool targetStillValid)
+    {
+        bool expectedOwner = after.OwnerWindow != IntPtr.Zero
+                             && after.OwnerProcessId != 0
+                             && after.OwnerProcessId == expectedOwnerProcessId;
+        if (after.Sequence == before.Sequence)
+        {
+            // Delayed rendering can transfer clipboard ownership before Windows increments the
+            // sequence. An expected new owner is sufficient to read and trigger rendering.
+            return requestDelivered
+                   && targetStillValid
+                   && expectedOwner
+                   && after.OwnerWindow != before.OwnerWindow
+                ? ClipboardMutationOwnership.Owned
+                : ClipboardMutationOwnership.None;
+        }
+
+        return requestDelivered
+               && unchecked(after.Sequence - before.Sequence) == 1
+               && targetStillValid
+               && expectedOwner
+            ? ClipboardMutationOwnership.Owned
+            : ClipboardMutationOwnership.Ambiguous;
+    }
+
+    /// <summary>
+    /// Classifies a write performed while OpenClipboard was held continuously from the
+    /// pre-write observation through <paramref name="after"/>. Under that precondition, an
+    /// arbitrary sequence jump cannot hide an interleaved external producer.
+    /// </summary>
+    internal static ClipboardMutationOwnership ClassifyLockedClipboardWrite(
+        ClipboardObservation before,
+        ClipboardObservation after,
+        uint writerProcessId)
+    {
+        bool expectedOwner = after.OwnerWindow != IntPtr.Zero
+                             && after.OwnerProcessId != 0
+                             && after.OwnerProcessId == writerProcessId;
+        if (after.Sequence == before.Sequence)
+        {
+            return expectedOwner && after.OwnerWindow != before.OwnerWindow
+                ? ClipboardMutationOwnership.Owned
+                : ClipboardMutationOwnership.None;
+        }
+
+        return expectedOwner
+            ? ClipboardMutationOwnership.Owned
+            : ClipboardMutationOwnership.Ambiguous;
+    }
+
+    internal static bool CanAcceptClosedClipboardWrite(
+        ClipboardObservation before,
+        ClipboardObservation after,
+        IntPtr writerWindow,
+        uint writerProcessId,
+        bool clipboardClosed) =>
+        clipboardClosed
+        && after.OwnerWindow == writerWindow
+        && after.OwnerProcessId == writerProcessId
+        && ClassifyLockedClipboardWrite(before, after, writerProcessId)
+           == ClipboardMutationOwnership.Owned;
+
+    internal static bool CanRestoreClipboard(
+        ClipboardObservation acceptedWrite, ClipboardObservation current) =>
+        acceptedWrite.Sequence != 0
+        && acceptedWrite == current;
+
+    internal static bool ContinuesOwnedClipboard(
+        ClipboardObservation accepted,
+        ClipboardObservation current,
+        uint expectedOwnerProcessId) =>
+        accepted.OwnerWindow != IntPtr.Zero
+        && current.Sequence != 0
+        && current.OwnerWindow == accepted.OwnerWindow
+        && current.OwnerProcessId == expectedOwnerProcessId;
+
+    internal static bool CanStartClipboardWrite(
+        ClipboardSnapshot snapshot, ClipboardObservation current) =>
+        snapshot.Observation.Sequence != 0
+        && snapshot.Observation == current;
+
+    internal static bool TryClaimClipboardMutationAtBoundary(
+        SelectionOperation operation,
+        ClipboardObservation expected,
+        ClipboardObservation current) =>
+        CanRestoreClipboard(expected, current)
+        && operation.TryClaim();
+
+    internal static bool CanInjectAtBoundary(
+        bool operationCurrent,
+        ForegroundTarget expectedTarget,
+        ForegroundTarget currentTarget,
+        ClipboardObservation? expectedClipboard,
+        ClipboardObservation currentClipboard) =>
+        operationCurrent
+        && ForegroundGuard.HasSufficientInputIdentity(expectedTarget)
+        && ForegroundGuard.Matches(expectedTarget, currentTarget)
+        && (expectedClipboard == null
+            || CanRestoreClipboard(expectedClipboard.Value, currentClipboard));
+
+    internal static bool CanRollbackAfterPartialPaste(
+        InputInjectionOutcome outcome) =>
+        outcome.Status == InputInjectionStatus.Partial
+        && outcome.CleanupSucceeded
+        && outcome.AcceptedCount < 2;
+
+    internal static ClipboardObservation ObserveClipboard()
+    {
+        uint sequenceBefore =
+            SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber();
+        IntPtr owner = GetClipboardOwner();
+        uint ownerProcessId = 0;
+        if (owner != IntPtr.Zero)
+            GetWindowThreadProcessId(owner, out ownerProcessId);
+        IntPtr ownerAfter = GetClipboardOwner();
+        uint sequenceAfter =
+            SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber();
+        if (sequenceBefore == 0
+            || sequenceBefore != sequenceAfter
+            || owner != ownerAfter
+            || (owner != IntPtr.Zero && ownerProcessId == 0))
+            return default;
+        return new ClipboardObservation(
+            sequenceAfter, ownerAfter, ownerProcessId);
+    }
+
+    /// <summary>
+    /// Writes paste/action text only while the operation is current and the exact pre-write
+    /// clipboard observation still holds after OpenClipboard has excluded external writers.
+    /// </summary>
+    internal static async Task<ClipboardObservation?> TrySetClipboardTextForOperationAsync(
+        SelectionOperation operation,
+        ClipboardSnapshot snapshot,
+        string text,
+        bool requireExactTarget)
+    {
+        var preparation = TryPrepareNativeClipboardWrite(
+            snapshot.Observation, text);
+        if (preparation == null) return null;
+
+        NativeClipboardWriteResult nativeResult = default;
+        try
+        {
+            bool Commit(ForegroundTarget? currentTarget)
+            {
+                if (!operation.IsCurrent)
+                    return false;
+                if (requireExactTarget)
+                {
+                    if (currentTarget is not { } current
+                        || !ForegroundGuard.Matches(operation.Target, current)
+                        || !ForegroundGuard.StillValid(operation.Target))
+                        return false;
+                }
+
+                nativeResult = TryCommitPreparedClipboardWrite(
+                    operation, snapshot.Observation, preparation);
+                return nativeResult.Success;
+            }
+
+            bool committed = requireExactTarget
+                ? await ForegroundGuard.TryRunWithExactInputTargetAsync(
+                    operation.Target, current => Commit(current))
+                : Commit(currentTarget: null);
+
+            if (!committed
+                && nativeResult.NeedsRollback
+                && nativeResult.Observation.Sequence != 0)
+            {
+                await Application.Current.Dispatcher.InvokeAsync(
+                    () => RestoreClipboardIfUnchanged(
+                        snapshot, nativeResult.Observation));
+            }
+
+            return committed ? nativeResult.Observation : null;
+        }
+        finally
+        {
+            FreeNativeClipboardPreparation(preparation);
+        }
+    }
+
+    internal static ClipboardObservation? TryCommitClipboardWrite(
+        SelectionOperation operation,
+        Func<ClipboardObservation?> atomicWrite)
+    {
+        ClipboardObservation? written = null;
+        bool committed = operation.TryCommit(() =>
+        {
+            written = atomicWrite();
+            return written != null;
+        });
+        return committed ? written : null;
+    }
+
+    internal static bool TryCommitClipboardMutation(
+        SelectionOperation operation,
+        Func<bool> mutation) =>
+        operation.TryCommit(mutation);
+
+    private static NativeClipboardWritePreparation? TryPrepareNativeClipboardWrite(
+        ClipboardObservation expected, string text)
+    {
+        IntPtr ownerWindow = Interlocked.CompareExchange(
+            ref _clipboardOwnerWindow, IntPtr.Zero, IntPtr.Zero);
+        if (ownerWindow == IntPtr.Zero || !IsWindow(ownerWindow))
+            return null;
+
+        IntPtr textHandle = CreateUnicodeTextHandle(text);
+        if (textHandle == IntPtr.Zero) return null;
+
+        List<NativeClipboardFormatBackup>? backups = null;
+        NativeClipboardWritePreparation? preparation = null;
+        if (!OpenClipboard(ownerWindow))
+        {
+            GlobalFree(textHandle);
+            return null;
+        }
+
+        try
+        {
+            if (CanRestoreClipboard(expected, ObserveClipboard()))
+            {
+                backups = DuplicateClipboardFormats();
+                if (backups != null
+                    && CanRestoreClipboard(expected, ObserveClipboard()))
+                {
+                    preparation = new NativeClipboardWritePreparation(
+                        ownerWindow, textHandle, backups);
+                }
+            }
+        }
+        finally
+        {
+            if (!CloseClipboard())
+                preparation = null;
+            if (preparation == null)
+            {
+                GlobalFree(textHandle);
+                if (backups != null)
+                    FreeNativeClipboardBackups(backups);
+            }
+        }
+
+        return preparation;
+    }
+
+    private static IntPtr CreateUnicodeTextHandle(string text)
+    {
+        byte[] bytes;
+        try
+        {
+            bytes = new System.Text.UnicodeEncoding(
+                bigEndian: false, byteOrderMark: false, throwOnInvalidBytes: true)
+                .GetBytes(text + '\0');
+        }
+        catch { return IntPtr.Zero; }
+
+        IntPtr memory = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)bytes.Length);
+        if (memory == IntPtr.Zero) return IntPtr.Zero;
+
+        IntPtr destination = GlobalLock(memory);
+        if (destination == IntPtr.Zero)
+        {
+            GlobalFree(memory);
+            return IntPtr.Zero;
+        }
+
+        try
+        {
+            Marshal.Copy(bytes, 0, destination, bytes.Length);
+        }
+        catch
+        {
+            GlobalUnlock(memory);
+            GlobalFree(memory);
+            return IntPtr.Zero;
+        }
+        GlobalUnlock(memory);
+        return memory;
+    }
+
+    private static List<NativeClipboardFormatBackup>? DuplicateClipboardFormats()
+    {
+        int count = CountClipboardFormats();
+        var backups = new List<NativeClipboardFormatBackup>(Math.Max(count, 0));
+        uint previous = 0;
+
+        while (true)
+        {
+            Marshal.SetLastPInvokeError(0);
+            uint format = EnumClipboardFormats(previous);
+            if (format == 0)
+            {
+                if (Marshal.GetLastPInvokeError() == 0) return backups;
+                FreeNativeClipboardBackups(backups);
+                return null;
+            }
+            if (!CanDuplicateClipboardFormat(format))
+            {
+                FreeNativeClipboardBackups(backups);
+                return null;
+            }
+
+            IntPtr source = GetClipboardData(format);
+            IntPtr duplicate = source == IntPtr.Zero
+                ? IntPtr.Zero
+                : OleDuplicateData(source, checked((ushort)format), GMEM_MOVEABLE);
+            if (duplicate == IntPtr.Zero)
+            {
+                FreeNativeClipboardBackups(backups);
+                return null;
+            }
+
+            backups.Add(new NativeClipboardFormatBackup(format, duplicate));
+            previous = format;
+        }
+    }
+
+    private static bool CanDuplicateClipboardFormat(uint format) =>
+        format <= ushort.MaxValue
+        && format != CF_BITMAP
+        && format != CF_METAFILEPICT
+        && format != CF_PALETTE
+        && format != CF_ENHMETAFILE
+        && format != CF_OWNERDISPLAY
+        && format != CF_DSPBITMAP
+        && format != CF_DSPMETAFILEPICT
+        && format != CF_DSPENHMETAFILE
+        && (format < CF_PRIVATEFIRST || format > CF_PRIVATELAST)
+        && (format < CF_GDIOBJFIRST || format > CF_GDIOBJLAST);
+
+    private static NativeClipboardWriteResult TryCommitPreparedClipboardWrite(
+        SelectionOperation operation,
+        ClipboardObservation expected,
+        NativeClipboardWritePreparation preparation)
+    {
+        if (!IsWindow(preparation.OwnerWindow)
+            || !OpenClipboard(preparation.OwnerWindow))
+            return default;
+
+        bool textTransferred = false;
+        bool rollbackAttempted = false;
+        bool rollbackComplete = false;
+        bool clipboardClosed = false;
+        try
+        {
+            // Final nonblocking linearization point: if a newer selection or dismissal arrived
+            // during target/clipboard validation, abort before EmptyClipboard mutates anything.
+            if (!TryClaimClipboardMutationAtBoundary(
+                    operation, expected, ObserveClipboard()))
+                return default;
+            if (!EmptyClipboard())
+                return default;
+
+            IntPtr set = SetClipboardData(
+                CF_UNICODETEXT, preparation.TextHandle);
+            textTransferred = set != IntPtr.Zero;
+            if (textTransferred)
+            {
+                preparation.TextHandle = IntPtr.Zero;
+            }
+            else
+            {
+                // The clipboard is already empty. Restore every pre-duplicated format while
+                // the exclusion lock is still held so an external writer cannot interleave.
+                rollbackAttempted = true;
+                rollbackComplete = RestoreNativeClipboardBackups(
+                    preparation.Backups);
+            }
+        }
+        finally
+        {
+            clipboardClosed = CloseClipboard();
+        }
+
+        // Ownership sampled while the clipboard is open is only tentative: a producer can win
+        // immediately after CloseClipboard. This post-close sample is the token callers use for
+        // paste and any managed fallback restore.
+        var after = ObserveClipboard();
+        bool stillOwnsClipboard =
+            after.OwnerWindow == preparation.OwnerWindow
+            && after.OwnerProcessId == (uint)Environment.ProcessId;
+
+        if (textTransferred)
+        {
+            bool accepted = CanAcceptClosedClipboardWrite(
+                expected,
+                after,
+                preparation.OwnerWindow,
+                (uint)Environment.ProcessId,
+                clipboardClosed);
+            return new NativeClipboardWriteResult(
+                Success: accepted,
+                NeedsRollback: !accepted && stillOwnsClipboard,
+                after);
+        }
+
+        // A complete inline rollback already restored all duplicated formats. If it was partial,
+        // only the still-current app-owned observation is eligible for the richer managed
+        // fallback; a foreign post-close writer must be preserved.
+        return new NativeClipboardWriteResult(
+            Success: false,
+            NeedsRollback: rollbackAttempted
+                           && !rollbackComplete
+                           && stillOwnsClipboard,
+            after);
+    }
+
+    private static bool RestoreNativeClipboardBackups(
+        List<NativeClipboardFormatBackup> backups)
+    {
+        bool restored = true;
+        foreach (var backup in backups)
+        {
+            if (backup.Handle == IntPtr.Zero) continue;
+            if (SetClipboardData(backup.Format, backup.Handle) == IntPtr.Zero)
+            {
+                restored = false;
+                continue;
+            }
+            backup.Handle = IntPtr.Zero;
+        }
+        return restored;
+    }
+
+    private static void FreeNativeClipboardPreparation(
+        NativeClipboardWritePreparation preparation)
+    {
+        if (preparation.TextHandle != IntPtr.Zero)
+        {
+            GlobalFree(preparation.TextHandle);
+            preparation.TextHandle = IntPtr.Zero;
+        }
+        FreeNativeClipboardBackups(preparation.Backups);
+    }
+
+    private static void FreeNativeClipboardBackups(
+        List<NativeClipboardFormatBackup> backups)
+    {
+        foreach (var backup in backups)
+        {
+            if (backup.Handle == IntPtr.Zero) continue;
+            GlobalFree(backup.Handle);
+            backup.Handle = IntPtr.Zero;
+        }
+    }
 
     /// <summary>
     /// Captures the current selection. <paramref name="isDrag"/> distinguishes a drag gesture
@@ -53,17 +589,23 @@ public static class TextCapture
     /// <paramref name="cursorX"/>/<paramref name="cursorY"/> are the gesture point, used by the UIA
     /// pre-gate to rescue selectable text inside item containers (X/Twitter feed tweets).
     /// </summary>
-    public static async Task<string?> CaptureSelectedTextAsync(bool isDrag, bool allowSyntheticKeys,
-        bool ambiguousCursor, int cursorX, int cursorY)
+    internal static async Task<string?> CaptureSelectedTextAsync(
+        SelectionOperation operation,
+        bool isDrag,
+        bool allowSyntheticKeys,
+        bool ambiguousCursor,
+        int cursorX,
+        int cursorY)
     {
-        // Skip if a capture is already running — the caller will simply not show a toolbar this round.
-        if (!await _captureLock.WaitAsync(0))
-        {
-            SnapActions.Helpers.Log.Warn("Capture skipped — another capture is already in progress");
-            return null;
-        }
+        // Queue behind an older capture, then discard whichever token is stale after acquisition.
+        // Dropping the contender here would lose the newer selection while the stale one still ran.
+        await _captureLock.WaitAsync();
+        ClipboardSnapshot? saved = null;
+        ClipboardObservation? acceptedWrite = null;
         try
         {
+            if (!await operation.CanInjectInputAsync()) return null;
+
             // A drag under the ambiguous arrow/hand cursor is a strong selection signal (unlike a
             // click) whose text UIA and WM_COPY often can't read in Chromium (the X/Twitter feed).
             // For it we let the self-gating Ctrl+Insert keystroke run even past an item-suppress.
@@ -91,8 +633,12 @@ public static class TextCapture
                 // Bounded (RunBoundedUiaAsync) so a wedged provider can't hang here and permanently
                 // hold the capture lock.
                 var probe = await RunBoundedUiaAsync(
-                    ProbeSelectionViaUIA(cursorX, cursorY, preferKeystroke: allowSyntheticKeys),
+                    ProbeSelectionViaUIA(
+                        cursorX, cursorY, preferKeystroke: allowSyntheticKeys,
+                        operation.Target.ProcessId,
+                        operation.Target.AutomationRuntimeId),
                     new SelectionProbe(SelectionProbeOutcome.Unknown, null, "UIA pre-gate timed out"));
+                if (!await operation.CanInjectInputAsync()) return null;
                 if (probe.Outcome == SelectionProbeOutcome.HasText)
                 {
                     SnapActions.Helpers.Log.Info($"UIA pre-gate returned text ({probe.Text!.Length} chars) — skipping clipboard pipeline");
@@ -116,94 +662,157 @@ public static class TextCapture
             if (skipUia) plan = plan with { RunUia = false };
             if (!plan.RunWmCopy && !plan.RunUia && !plan.RunKeystroke) return null;
 
-            // No-clear capture. We do NOT wipe the
-            // clipboard first. Instead we snapshot it and detect whether each copy step actually
-            // wrote to the clipboard via its sequence number, restoring ONLY if something did. A
-            // gesture that copies nothing leaves the clipboard completely untouched — no Clear, no
-            // restore — so it's invisible to other apps / clipboard managers, and the user's data is
-            // never momentarily absent (the old Clear()-first window could wipe it on a fault).
-            // Snapshot first, then read the sequence number in the same dispatcher slice, so the
-            // pair is consistent. Reading the number before the (dispatcher-marshalled) snapshot
-            // left a gap: an external clipboard write landing in it made the WM_COPY seq check
-            // "detect" a copy that never happened, and the toolbar showed the other process's
-            // clipboard content as the selection.
-            uint seqBefore = 0;
-            var saved = await Application.Current.Dispatcher.InvokeAsync(() =>
+            // Clipboard-mutating fallbacks are permitted only with a complete, stable snapshot.
+            // Unsupported or delay-rendered formats make capture UIA-only rather than risking loss.
+            if (plan.RunWmCopy || plan.RunKeystroke)
             {
-                var snap = SnapshotClipboard();
-                seqBefore = SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber();
-                return snap;
-            });
-            bool changed = false;
-            uint seqAfterCopy = 0; // sequence number right after OUR copy landed — for a safe restore
-            try
+                saved = await Application.Current.Dispatcher.InvokeAsync(SnapshotClipboard);
+                if (!await operation.CanInjectInputAsync()) return null;
+                if (saved == null)
+                    plan = plan with { RunWmCopy = false, RunKeystroke = false };
+            }
+
+            if (!plan.RunWmCopy && !plan.RunUia && !plan.RunKeystroke) return null;
+
+            string? text = null;
+            bool ambiguousClipboardChange = false;
+
+            if (plan.RunWmCopy && saved != null)
             {
-                // Try WM_COPY first (no keyboard events). A sequence-number change means it landed.
-                string? text = null;
-                if (plan.RunWmCopy)
+                var before = ObserveClipboard();
+                if (before != saved.Observation
+                    || !await operation.CanInjectInputAsync())
                 {
-                    CopyViaWindowMessage();
-                    await Task.Delay(20);
-                    uint seqNow = SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber();
-                    if (seqNow != seqBefore)
-                    {
-                        changed = true;
-                        seqAfterCopy = seqNow;
-                        text = await ReadClipboard();
-                    }
+                    ambiguousClipboardChange = true;
                 }
-
-                // Then UI Automation — reads the selection from the accessibility tree without firing
-                // any keystrokes or touching the clipboard; walks up parents for browser/Electron
-                // panes. Bounded so a wedged provider can't hang and hold the capture lock.
-                if (string.IsNullOrEmpty(text) && plan.RunUia)
-                    text = await RunBoundedUiaAsync(CopyViaUIA(), null);
-
-                // Last resort: Ctrl+Insert. Some apps respond to neither WM_COPY nor UIA (VS Code's
-                // editor, older Edge tabs, Java Swing). Wait for the user to release Shift/Alt first
-                // (a held modifier would turn our chord into Ctrl+Shift+Insert etc. and copy nothing),
-                // then detect the result by the clipboard sequence number.
-                if (string.IsNullOrEmpty(text) && plan.RunKeystroke)
+                else
                 {
-                    await WaitForModifierKeysReleasedAsync(VK_SHIFT, VK_MENU);
-                    uint seqBeforeKbd = SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber();
-                    CopyViaKeyboard();
-                    for (int i = 0; i < 25; i++)
+                    bool delivered = await TryRunClipboardMutationAsync(
+                        operation,
+                        before,
+                        () => CopyViaWindowMessage(operation.Target));
+                    await Task.Delay(20);
+                    var after = ObserveClipboard();
+                    bool targetStillValid = operation.IsCurrent
+                                            && await ForegroundGuard.StillValidAsync(
+                                                operation.Target);
+                    var ownership = ClassifyClipboardMutation(
+                        before, after, delivered, operation.Target.ProcessId,
+                        targetStillValid);
+                    if (ownership == ClipboardMutationOwnership.Owned)
                     {
-                        await Task.Delay(10);
-                        uint s = SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber();
-                        if (s != seqBeforeKbd)
+                        text = await ReadClipboard();
+                        var afterRead = ObserveClipboard();
+                        if (ContinuesOwnedClipboard(
+                                after, afterRead, operation.Target.ProcessId))
                         {
-                            changed = true;
-                            seqAfterCopy = s;
-                            text = await ReadClipboard();
-                            if (!string.IsNullOrEmpty(text)) break;
+                            acceptedWrite = afterRead;
+                        }
+                        else
+                        {
+                            text = null;
+                            ambiguousClipboardChange = true;
                         }
                     }
-                    // The keystroke is fire-and-forget: an app that services the copy AFTER this
-                    // watch window replaces the user's clipboard once we've already concluded
-                    // "nothing copied" — no toolbar shown, and the finally-block restore skipped
-                    // because `changed` stayed false. Schedule one late re-check to undo that.
-                    if (!changed && saved != null)
-                        ScheduleLateCopyRestore(seqBeforeKbd, saved);
-                }
-
-                return text;
-            }
-            finally
-            {
-                // Restore only if a copy step changed the clipboard. The seq re-check lives INSIDE the
-                // dispatcher callback so it's atomic with the restore — no other UI-thread work can run
-                // between checking and writing. If the sequence number no longer matches the one right
-                // after our copy, a third party owns the clipboard now and we must not clobber them.
-                // If nothing copied at all, the clipboard was never touched (zero mutations).
-                if (changed)
-                    await Application.Current.Dispatcher.InvokeAsync(() =>
+                    else if (ownership == ClipboardMutationOwnership.Ambiguous)
                     {
-                        if (SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber() == seqAfterCopy)
-                            RestoreClipboard(saved);
-                    });
+                        ambiguousClipboardChange = true;
+                    }
+                }
             }
+
+            // UI Automation is safe even when the clipboard snapshot was incomplete or another
+            // process changed the clipboard; accept its result only while this operation is current.
+            if (string.IsNullOrEmpty(text) && plan.RunUia && operation.CanInjectInput)
+            {
+                text = await RunBoundedUiaAsync(
+                    CopyViaUIA(
+                        operation.Target.ProcessId,
+                        operation.Target.AutomationRuntimeId),
+                    null);
+                if (!await operation.CanInjectInputAsync()) return null;
+            }
+
+            // Last resort: Ctrl+Insert. Stop after any ambiguous clipboard change; issuing another
+            // copy would compound uncertainty about whose data is currently on the clipboard.
+            if (string.IsNullOrEmpty(text)
+                && plan.RunKeystroke
+                && saved != null
+                && acceptedWrite == null
+                && !ambiguousClipboardChange)
+            {
+                var before = ObserveClipboard();
+                if (before != saved.Observation)
+                {
+                    ambiguousClipboardChange = true;
+                }
+                else if (await WaitForModifierKeysReleasedAsync(
+                             VK_SHIFT, VK_CONTROL, VK_MENU)
+                         && await operation.CanInjectInputAsync())
+                {
+                    // A user copy during the modifier wait invalidates the transaction before input.
+                    before = ObserveClipboard();
+                    if (before != saved.Observation)
+                    {
+                        ambiguousClipboardChange = true;
+                    }
+                    else
+                    {
+                        var inputOutcome = await TrySendInputAsync(
+                            operation,
+                            before,
+                            CtrlInsertInputs,
+                            VK_SHIFT, VK_CONTROL, VK_MENU);
+                        if (inputOutcome.Status == InputInjectionStatus.Partial)
+                        {
+                            SnapActions.Helpers.Log.Warn(
+                                inputOutcome.CleanupSucceeded
+                                    ? "Ctrl+Insert was only partially inserted; capture ownership is ambiguous"
+                                    : "Ctrl+Insert was partially inserted and key-up cleanup was incomplete");
+                            ambiguousClipboardChange = true;
+                        }
+                        else
+                        {
+                            bool delivered =
+                                inputOutcome.Status == InputInjectionStatus.Succeeded;
+                            for (int i = 0; i < 25; i++)
+                            {
+                                await Task.Delay(10);
+                                var after = ObserveClipboard();
+                                if (after == before) continue;
+                                bool targetStillValid = operation.IsCurrent
+                                                        && await ForegroundGuard.StillValidAsync(
+                                                            operation.Target);
+                                var ownership = ClassifyClipboardMutation(
+                                    before, after, delivered, operation.Target.ProcessId,
+                                    targetStillValid);
+                                if (ownership == ClipboardMutationOwnership.Owned)
+                                {
+                                    text = await ReadClipboard();
+                                    var afterRead = ObserveClipboard();
+                                    if (ContinuesOwnedClipboard(
+                                            after, afterRead, operation.Target.ProcessId))
+                                    {
+                                        acceptedWrite = afterRead;
+                                    }
+                                    else
+                                    {
+                                        text = null;
+                                        ambiguousClipboardChange = true;
+                                    }
+                                }
+                                else
+                                {
+                                    ambiguousClipboardChange = true;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return await operation.CanInjectInputAsync() ? text : null;
         }
         catch (Exception ex)
         {
@@ -212,6 +821,11 @@ public static class TextCapture
         }
         finally
         {
+            if (saved != null && acceptedWrite is { } ownedWrite)
+            {
+                await Application.Current.Dispatcher.InvokeAsync(
+                    () => RestoreClipboardIfUnchanged(saved, ownedWrite));
+            }
             _captureLock.Release();
         }
     }
@@ -229,8 +843,8 @@ public static class TextCapture
     /// Runs a UIA worker task with a hard timeout. ProbeSelectionViaUIA / CopyViaUIA run on Task.Run
     /// worker threads; if a broken accessibility provider blocks inside GetSelection/GetText the
     /// worker never completes. Without this bound the await would hang forever, <see cref="_captureLock"/>
-    /// would never be released, and EVERY later capture would be silently dropped at WaitAsync(0) for
-    /// the rest of the session. On timeout we abandon the worker and return the fallback so the
+    /// would never be released, and every later capture would wait behind it for the rest of the
+    /// session. On timeout we abandon the worker and return the fallback so the
     /// clipboard cascade still runs and the lock is released.
     /// </summary>
     private static async Task<T> RunBoundedUiaAsync<T>(Task<T> uiaTask, T onTimeout)
@@ -244,108 +858,112 @@ public static class TextCapture
     /// synthetic chord. A modifier still held at gesture end (Shift+drag to extend a selection,
     /// Ctrl+drag for a discontiguous one) would otherwise corrupt the chord — Ctrl+Insert into
     /// Ctrl+Shift+Insert, Shift+Insert into Ctrl+Shift+Insert — which copies/pastes nothing in
-    /// many apps. Callers pass only the keys that corrupt THEIR chord; the chord's own modifier
-    /// is pressed by us and harmless if also physically held.
+    /// many apps. Destructive and clipboard-mutating chords require Shift, Ctrl, and Alt all to
+    /// be released so our synthetic key-up cannot interfere with a physically held modifier.
     /// </summary>
-    private static async Task WaitForModifierKeysReleasedAsync(params int[] vkeys)
+    private static async Task<bool> WaitForModifierKeysReleasedAsync(params int[] vkeys)
     {
         for (int i = 0; i < 15; i++)
         {
-            bool held = false;
-            foreach (var vk in vkeys)
-            {
-                if ((SnapActions.Helpers.NativeMethods.GetAsyncKeyState(vk) & 0x8000) != 0)
-                {
-                    held = true;
-                    break;
-                }
-            }
-            if (!held) return;
+            if (AreModifierKeysReleased(vkeys)) return true;
             await Task.Delay(20);
         }
+        return false;
     }
 
-    // How long after the 250 ms keystroke watch window to re-check for a copy that landed late.
-    // One second covers heavily-loaded apps; the check is a scheduled dispatcher callback, not a
-    // held lock.
-    private const int LateCopyRestoreDelayMs = 1000;
-
-    /// <summary>
-    /// Restores the pre-capture snapshot if our synthetic copy landed AFTER the watch window.
-    /// "Exactly one clipboard write since right before our keystroke" (sequence number advanced
-    /// by one) identifies that late copy; more than one means the user copied something
-    /// themselves — leave it alone. Also skipped while another capture is in flight (its own
-    /// snapshot/restore owns the clipboard dance now). The seq check and the restore share one
-    /// dispatcher slice, so no other UI-thread clipboard work can interleave.
-    /// </summary>
-    private static void ScheduleLateCopyRestore(uint seqBeforeKbd, Dictionary<string, object> saved)
+    private static bool AreModifierKeysReleased(params int[] vkeys)
     {
-        _ = Application.Current.Dispatcher.InvokeAsync(async () =>
+        foreach (var vk in vkeys)
         {
-            await Task.Delay(LateCopyRestoreDelayMs);
-            if (_captureLock.CurrentCount == 0) return;
-            if (SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber() == seqBeforeKbd + 1)
-                RestoreClipboard(saved);
-        });
+            if ((SnapActions.Helpers.NativeMethods.GetAsyncKeyState(vk) & 0x8000) != 0)
+                return false;
+        }
+        return true;
     }
 
     /// <summary>
-    /// Snapshots the clipboard. Returns null on error (so the restore step can skip and avoid
-    /// destroying user data); returns an empty dict when the clipboard was actually empty.
+    /// Eagerly snapshots every advertised clipboard format that can be round-tripped safely.
+    /// Any unsupported/failed format or concurrent clipboard write rejects the whole snapshot;
+    /// callers must then avoid clipboard-mutating capture fallbacks.
     /// </summary>
-    private static Dictionary<string, object>? SnapshotClipboard()
+    internal static ClipboardSnapshot? SnapshotClipboard()
     {
         try
         {
+            var observationBefore = ObserveClipboard();
             var data = Clipboard.GetDataObject();
-            if (data == null)
-                return new Dictionary<string, object>(); // empty clipboard, not an error
+            if (data == null && CountClipboardFormats() != 0)
+                return null;
             var snap = new Dictionary<string, object>();
-            foreach (var fmt in data.GetFormats(autoConvert: false))
+            var reads = new List<ClipboardFormatRead>();
+
+            if (data != null)
             {
-                if (!RoundTrippableFormats.Contains(fmt)) continue;
-                try
+                foreach (var fmt in data.GetFormats(autoConvert: false))
                 {
-                    var obj = data.GetData(fmt, autoConvert: false);
-                    if (obj != null) snap[fmt] = obj;
+                    if (!RoundTrippableFormats.Contains(fmt))
+                    {
+                        reads.Add(new ClipboardFormatRead(fmt, ReadSucceeded: false, HasValue: false));
+                        continue;
+                    }
+
+                    try
+                    {
+                        var obj = data.GetData(fmt, autoConvert: false);
+                        reads.Add(new ClipboardFormatRead(
+                            fmt, ReadSucceeded: true, HasValue: obj != null));
+                        if (obj != null) snap[fmt] = obj;
+                    }
+                    catch
+                    {
+                        reads.Add(new ClipboardFormatRead(
+                            fmt, ReadSucceeded: false, HasValue: false));
+                    }
                 }
-                catch { /* delay-rendered formats may throw — skip */ }
             }
-            return snap;
+
+            var observation = ObserveClipboard();
+            if (!IsCompleteSnapshot(observationBefore, observation, reads))
+                return null;
+
+            return new ClipboardSnapshot(snap, observation);
         }
         catch
         {
-            // Distinguish failure from empty: returning null tells RestoreClipboard to leave the
-            // clipboard alone, which preserves whatever's there now (the WM_COPY/Ctrl+Insert
-            // result if it succeeded, or unmodified state otherwise).
             return null;
         }
     }
 
-    private static void RestoreClipboard(Dictionary<string, object>? snapshot)
+    internal static bool RestoreClipboardIfUnchanged(
+        ClipboardSnapshot snapshot, ClipboardObservation acceptedWrite)
     {
         try
         {
-            // Snapshot failed — best we can do is leave the clipboard as-is. Clearing it would
-            // destroy the WM_COPY result we just put there (which the caller is about to use)
-            // AND lose whatever the user had before us.
-            if (snapshot == null) return;
+            if (!CanRestoreClipboard(acceptedWrite, ObserveClipboard()))
+                return false;
 
-            if (snapshot.Count == 0)
+            if (snapshot.Data.Count == 0)
             {
-                // Clipboard was empty before us — restore that state.
+                if (!CanRestoreClipboard(acceptedWrite, ObserveClipboard()))
+                    return false;
                 Clipboard.Clear();
-                return;
+                return true;
             }
 
             var data = new System.Windows.DataObject();
-            foreach (var (fmt, obj) in snapshot)
+            foreach (var (fmt, obj) in snapshot.Data)
             {
-                try { data.SetData(fmt, obj); } catch { }
+                data.SetData(fmt, obj);
             }
+            if (!CanRestoreClipboard(acceptedWrite, ObserveClipboard()))
+                return false;
             Clipboard.SetDataObject(data, copy: true);
+            return true;
         }
-        catch { }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -481,7 +1099,12 @@ public static class TextCapture
     /// whereas the keystroke copies exactly what the browser shows selected. So the rescue is only a
     /// fallback for gestures with no keystroke (ambiguous multi-click / quiet custom-cursor capture).
     /// </remarks>
-    internal static async Task<SelectionProbe> ProbeSelectionViaUIA(int cursorX, int cursorY, bool preferKeystroke)
+    internal static async Task<SelectionProbe> ProbeSelectionViaUIA(
+        int cursorX,
+        int cursorY,
+        bool preferKeystroke,
+        uint expectedProcessId,
+        string? expectedRuntimeId)
     {
         return await Task.Run(() =>
         {
@@ -491,6 +1114,12 @@ public static class TextCapture
                 originalFocused = AutomationElement.FocusedElement;
                 if (originalFocused == null)
                     return new SelectionProbe(SelectionProbeOutcome.Unknown, null, "no focused element");
+                if ((uint)originalFocused.Current.ProcessId != expectedProcessId)
+                    return new SelectionProbe(
+                        SelectionProbeOutcome.Unknown, null, "focused element belongs to another process");
+                if (!MatchesAutomationRuntimeId(originalFocused, expectedRuntimeId))
+                    return new SelectionProbe(
+                        SelectionProbeOutcome.Unknown, null, "focused element identity changed");
 
                 // Walk up looking for TextPattern. If ANY ancestor has TextPattern with non-empty
                 // selection → HasText (return immediately). If we exhaust the walk and saw at least
@@ -547,7 +1176,7 @@ public static class TextCapture
                 // rescue and let the keystroke copy exactly what the browser shows selected.
                 if (!preferKeystroke)
                 {
-                    var atPoint = TryReadSelectionAtPoint(cursorX, cursorY);
+                    var atPoint = TryReadSelectionAtPoint(cursorX, cursorY, expectedProcessId);
                     if (!string.IsNullOrEmpty(atPoint))
                         return new SelectionProbe(SelectionProbeOutcome.HasText, atPoint,
                             "rescued selection under cursor");
@@ -585,12 +1214,13 @@ public static class TextCapture
     /// there's no selection there (an Explorer file row, a desktop icon, a bare button). Runs on
     /// the same worker thread as <see cref="ProbeSelectionViaUIA"/>; must not throw.
     /// </summary>
-    private static string? TryReadSelectionAtPoint(int x, int y)
+    private static string? TryReadSelectionAtPoint(int x, int y, uint expectedProcessId)
     {
         try
         {
             var element = AutomationElement.FromPoint(new System.Windows.Point(x, y));
             if (element == null) return null;
+            if ((uint)element.Current.ProcessId != expectedProcessId) return null;
             var walker = TreeWalker.RawViewWalker;
             for (int depth = 0; element != null && depth < TextPatternParentWalkDepth; depth++)
             {
@@ -630,7 +1260,8 @@ public static class TextCapture
     /// a pattern that returns empty selections even when the user clearly has text selected.
     /// Keeping Ctrl+Insert as a last-resort fallback covers those.
     /// </remarks>
-    private static async Task<string?> CopyViaUIA()
+    private static async Task<string?> CopyViaUIA(
+        uint expectedProcessId, string? expectedRuntimeId)
     {
         return await Task.Run(() =>
         {
@@ -638,6 +1269,8 @@ public static class TextCapture
             {
                 var element = AutomationElement.FocusedElement;
                 if (element == null) return null;
+                if ((uint)element.Current.ProcessId != expectedProcessId) return null;
+                if (!MatchesAutomationRuntimeId(element, expectedRuntimeId)) return null;
 
                 var walker = TreeWalker.RawViewWalker;
                 for (int depth = 0; element != null && depth < TextPatternParentWalkDepth; depth++)
@@ -672,73 +1305,247 @@ public static class TextCapture
         });
     }
 
-    private static void CopyViaWindowMessage()
+    private static bool MatchesAutomationRuntimeId(
+        AutomationElement element, string? expectedRuntimeId)
     {
-        IntPtr hwnd = GetForegroundWindow();
-        if (hwnd == IntPtr.Zero) return;
-
-        uint threadId = GetWindowThreadProcessId(hwnd, out _);
-        var info = new GUITHREADINFO { cbSize = (uint)Marshal.SizeOf<GUITHREADINFO>() };
-
-        IntPtr target = hwnd;
-        if (GetGUIThreadInfo(threadId, ref info) && info.hwndFocus != IntPtr.Zero)
-            target = info.hwndFocus;
-
-        // Timeout-bounded so a hung target window can't block the dispatcher
-        SendMessageTimeout(target, WM_COPY, IntPtr.Zero, IntPtr.Zero,
-            SMTO_ABORTIFHUNG, WM_COPY_TIMEOUT_MS, out _);
+        if (expectedRuntimeId == null) return true;
+        try
+        {
+            int[] runtimeId = element.GetRuntimeId();
+            return runtimeId.Length > 0
+                   && string.Join(",", runtimeId) == expectedRuntimeId;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
-    private static void CopyViaKeyboard()
+    private static bool CopyViaWindowMessage(ForegroundTarget target)
     {
-        // Use Ctrl+Insert instead of Ctrl+C.
-        // Browser extensions (like h5player) hook letter keys but not Insert.
-        SendInput((uint)CtrlInsertInputs.Length, CtrlInsertInputs, InputSize);
+        if (!target.IsComplete) return false;
+
+        // Send only to the child HWND captured for this operation. Re-querying foreground here
+        // would let an Alt-Tab redirect WM_COPY into the newly focused application.
+        return SendMessageTimeout(target.FocusedWindow, WM_COPY, IntPtr.Zero, IntPtr.Zero,
+            SMTO_ABORTIFHUNG, WM_COPY_TIMEOUT_MS, out _) != IntPtr.Zero;
+    }
+
+    internal static async Task<bool> PreparePasteAsync(SelectionOperation operation)
+    {
+        if (!await operation.CanInjectInputAsync()) return false;
+        return await WaitForModifierKeysReleasedAsync(VK_SHIFT, VK_CONTROL, VK_MENU)
+               && await operation.CanInjectInputAsync();
+    }
+
+    internal static async Task<bool> PrepareDeleteAsync(SelectionOperation operation)
+    {
+        if (!await operation.CanInjectInputAsync()) return false;
+        return await WaitForModifierKeysReleasedAsync(VK_SHIFT, VK_CONTROL, VK_MENU)
+               && await operation.CanInjectInputAsync();
     }
 
     /// <summary>
-    /// Send Shift+Insert (canonical paste). We deliberately don't use Ctrl+V — browser extensions
-    /// like h5player hook letter keys, which is the same reason capture uses Ctrl+Insert.
-    /// Fire-and-forget wrapper over <see cref="SimulatePasteAsync"/> for callers with nothing to
-    /// sequence after the paste.
+    /// Sends Shift+Insert only if the immutable operation, exact input target, physical modifiers,
+    /// and optional clipboard observation all still match at the final injection boundary.
+    /// Call <see cref="PreparePasteAsync"/> before changing clipboard data.
     /// </summary>
-    public static void SimulatePaste()
+    internal static Task<InputInjectionOutcome> TrySimulatePasteAsync(
+        SelectionOperation operation, ClipboardObservation? expectedClipboard = null)
     {
-        _ = SimulatePasteAsync();
+        return TrySendInputAsync(
+            operation,
+            expectedClipboard,
+            ShiftInsertInputs,
+            VK_SHIFT, VK_CONTROL, VK_MENU);
     }
 
-    /// <summary>
-    /// Waits for physically-held Ctrl/Alt to be released first — a held Ctrl (e.g. after a
-    /// Ctrl+drag discontiguous selection) would turn our chord into Ctrl+Shift+Insert, which
-    /// isn't paste in most apps; the copy path already waits out the same failure class. Shift
-    /// is the chord's own modifier, so a held Shift is harmless. Because an Alt-Tab is exactly
-    /// a case where the wait engages (Alt is down), the foreground guard is re-checked after it
-    /// so the paste can't be redirected into the newly focused app. No modifier held (the common
-    /// case) means zero added latency: the wait returns before its first await.
-    /// </summary>
-    public static async Task SimulatePasteAsync()
+    internal static async Task<InputInjectionOutcome> SimulatePasteAsync(
+        SelectionOperation operation)
     {
-        await WaitForModifierKeysReleasedAsync(VK_CONTROL, VK_MENU);
-        if (!ForegroundGuard.StillValid()) return;
-        SendInput((uint)ShiftInsertInputs.Length, ShiftInsertInputs, InputSize);
+        var expectedClipboard = ObserveClipboard();
+        if (!await PreparePasteAsync(operation))
+            return new InputInjectionOutcome(InputInjectionStatus.Rejected);
+        return await TrySimulatePasteAsync(operation, expectedClipboard);
+    }
+
+    internal static async Task<InputInjectionOutcome> SimulateDeleteAsync(
+        SelectionOperation operation)
+    {
+        if (!await PrepareDeleteAsync(operation))
+            return new InputInjectionOutcome(InputInjectionStatus.Rejected);
+        return await TrySendInputAsync(
+            operation,
+            expectedClipboard: null,
+            DeleteInputs,
+            VK_SHIFT, VK_CONTROL, VK_MENU);
+    }
+
+    private static async Task<InputInjectionOutcome> TrySendInputAsync(
+        SelectionOperation operation,
+        ClipboardObservation? expectedClipboard,
+        KeyStroke[] strokes,
+        params int[] modifiersThatMustBeReleased)
+    {
+        var outcome = new InputInjectionOutcome(
+            InputInjectionStatus.Rejected);
+        bool reachedInputBoundary =
+            await ForegroundGuard.TryRunWithExactInputTargetAsync(
+            operation.Target,
+            currentTarget =>
+            {
+                var currentClipboard = expectedClipboard == null
+                    ? default
+                    : ObserveClipboard();
+                if (!CanInjectAtBoundary(
+                        operation.IsCurrent,
+                        operation.Target,
+                        currentTarget,
+                        expectedClipboard,
+                        currentClipboard))
+                    return false;
+                if (!AreModifierKeysReleased(modifiersThatMustBeReleased))
+                    return false;
+                // Re-sample native identity immediately before SendInput. The UIA identity was
+                // captured directly before this callback on the same worker.
+                if (!ForegroundGuard.StillValid(operation.Target))
+                    return false;
+                // Repeat the claim after every potentially yielding or cross-process validation.
+                // Hook-thread invalidation remains lock-free and wins before this final send point.
+                if (!TrySendKeySequenceForOperation(
+                        operation,
+                        strokes,
+                        SendNativeKeyStrokes,
+                        out outcome))
+                    return false;
+                return true;
+            });
+        return reachedInputBoundary
+            ? outcome
+            : new InputInjectionOutcome(InputInjectionStatus.Rejected);
+    }
+
+    private static Task<bool> TryRunClipboardMutationAsync(
+        SelectionOperation operation,
+        ClipboardObservation expectedClipboard,
+        Func<bool> mutation)
+    {
+        return ForegroundGuard.TryRunWithExactInputTargetAsync(
+            operation.Target,
+            currentTarget =>
+            {
+                var currentClipboard = ObserveClipboard();
+                if (!CanInjectAtBoundary(
+                        operation.IsCurrent,
+                        operation.Target,
+                        currentTarget,
+                        expectedClipboard,
+                        currentClipboard))
+                    return false;
+                if (!ForegroundGuard.StillValid(operation.Target))
+                    return false;
+                if (!operation.TryClaim())
+                    return false;
+                return mutation();
+            });
     }
 
     // Insert is an extended key — without the flag some apps see numpad-0 instead.
-    private static INPUT[] BuildExtendedInsertCombo(ushort modifier) =>
+    private static KeyStroke[] BuildExtendedInsertCombo(ushort modifier) =>
     [
-        MakeKeyInput(modifier, false, extended: false),
-        MakeKeyInput(VK_INSERT, false, extended: true),
-        MakeKeyInput(VK_INSERT, true, extended: true),
-        MakeKeyInput(modifier, true, extended: false),
+        new(modifier, KeyUp: false, Extended: false),
+        new(VK_INSERT, KeyUp: false, Extended: true),
+        new(VK_INSERT, KeyUp: true, Extended: true),
+        new(modifier, KeyUp: true, Extended: false),
     ];
 
-    private static INPUT MakeKeyInput(ushort vk, bool keyUp, bool extended)
+    internal static InputInjectionOutcome SendKeySequence(
+        IReadOnlyList<KeyStroke> strokes,
+        Func<IReadOnlyList<KeyStroke>, uint> sender)
+    {
+        // SendInput inserts an INPUT array serially and returns the inserted event count. For a
+        // short prefix, synthesize key-up events for every accepted key-down not already paired
+        // with an accepted key-up, in reverse press order.
+        uint inserted = sender(strokes);
+        if (inserted == (uint)strokes.Count)
+            return new InputInjectionOutcome(
+                InputInjectionStatus.Succeeded,
+                AcceptedCount: inserted);
+        if (inserted == 0)
+            return new InputInjectionOutcome(InputInjectionStatus.Rejected);
+
+        bool cleanupSucceeded = inserted < (uint)strokes.Count;
+        if (cleanupSucceeded)
+        {
+            foreach (var release in BuildRecoveryKeyUps(strokes, inserted))
+            {
+                if (sender(new[] { release }) != 1)
+                    cleanupSucceeded = false;
+            }
+        }
+
+        return new InputInjectionOutcome(
+            InputInjectionStatus.Partial,
+            cleanupSucceeded,
+            inserted);
+    }
+
+    internal static bool TrySendKeySequenceForOperation(
+        SelectionOperation operation,
+        IReadOnlyList<KeyStroke> strokes,
+        Func<IReadOnlyList<KeyStroke>, uint> sender,
+        out InputInjectionOutcome outcome)
+    {
+        outcome = new InputInjectionOutcome(InputInjectionStatus.Rejected);
+        if (!operation.TryClaim()) return false;
+        outcome = SendKeySequence(strokes, sender);
+        return true;
+    }
+
+    private static IReadOnlyList<KeyStroke> BuildRecoveryKeyUps(
+        IReadOnlyList<KeyStroke> strokes, uint inserted)
+    {
+        var pressed = new List<KeyStroke>();
+        int accepted = Math.Min(strokes.Count, checked((int)inserted));
+        for (int i = 0; i < accepted; i++)
+        {
+            var stroke = strokes[i];
+            if (!stroke.KeyUp)
+            {
+                pressed.Add(stroke);
+                continue;
+            }
+
+            int down = pressed.FindLastIndex(
+                candidate => candidate.VirtualKey == stroke.VirtualKey);
+            if (down >= 0) pressed.RemoveAt(down);
+        }
+
+        var releases = new List<KeyStroke>(pressed.Count);
+        for (int i = pressed.Count - 1; i >= 0; i--)
+        {
+            var down = pressed[i];
+            releases.Add(down with { KeyUp = true });
+        }
+        return releases;
+    }
+
+    private static uint SendNativeKeyStrokes(
+        IReadOnlyList<KeyStroke> strokes)
+    {
+        var inputs = new INPUT[strokes.Count];
+        for (int i = 0; i < strokes.Count; i++)
+            inputs[i] = MakeKeyInput(strokes[i]);
+        return SendInput((uint)inputs.Length, inputs, InputSize);
+    }
+
+    private static INPUT MakeKeyInput(KeyStroke stroke)
     {
         var input = new INPUT { type = INPUT_KEYBOARD };
-        input.u.ki.wVk = vk;
+        input.u.ki.wVk = stroke.VirtualKey;
         uint flags = 0;
-        if (extended) flags |= KEYEVENTF_EXTENDEDKEY;
-        if (keyUp) flags |= KEYEVENTF_KEYUP;
+        if (stroke.Extended) flags |= KEYEVENTF_EXTENDEDKEY;
+        if (stroke.KeyUp) flags |= KEYEVENTF_KEYUP;
         input.u.ki.dwFlags = flags;
         return input;
     }
@@ -762,29 +1569,59 @@ public static class TextCapture
     [StructLayout(LayoutKind.Sequential)]
     private struct HARDWAREINPUT { public uint uMsg; public ushort wParamL, wParamH; }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct GUITHREADINFO
-    {
-        public uint cbSize, flags;
-        public IntPtr hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret;
-        public RECT rcCaret;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RECT { public int left, top, right, bottom; }
-
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
     [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
+    private static extern IntPtr GetClipboardOwner();
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO lpgui);
+    private static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenClipboard(IntPtr hWndNewOwner);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseClipboard();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EmptyClipboard();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetClipboardData(uint uFormat, IntPtr hMem);
+
+    [DllImport("user32.dll")]
+    private static extern int CountClipboardFormats();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint EnumClipboardFormats(uint format);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetClipboardData(uint uFormat);
+
+    [DllImport("ole32.dll")]
+    private static extern IntPtr OleDuplicateData(
+        IntPtr hSrc, ushort cfFormat, uint uiFlags);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GlobalAlloc(uint uFlags, UIntPtr dwBytes);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GlobalLock(IntPtr hMem);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GlobalUnlock(IntPtr hMem);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GlobalFree(IntPtr hMem);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,

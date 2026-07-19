@@ -24,6 +24,26 @@ public partial class ToolbarWindow : Window
     private double _dpiX = 1.0, _dpiY = 1.0;
     private bool _isEditable;
     private bool _isPasteMode;
+    private ToolbarOperationContext? _operationContext;
+
+    private sealed class ToolbarOperationContext(SelectionOperation operation)
+    {
+        internal SelectionOperation Operation { get; } = operation;
+        internal OperationActionGate ActionGate { get; } = new();
+    }
+
+    private bool TryStartToolbarAction(out SelectionOperation operation)
+    {
+        var context = Volatile.Read(ref _operationContext);
+        if (context != null && context.ActionGate.TryStart())
+        {
+            operation = context.Operation;
+            return true;
+        }
+
+        operation = default;
+        return false;
+    }
 
     // Edit mode for action toggles
     private bool _editMode;
@@ -54,6 +74,7 @@ public partial class ToolbarWindow : Window
         SourceInitialized += (_, _) =>
         {
             var hwnd = new WindowInteropHelper(this).Handle;
+            TextCapture.SetClipboardOwnerWindow(hwnd);
             // Use the IntPtr variants so 64-bit ex-styles (e.g. anything past bit 31) survive.
             // SetWindowLong silently truncates to 32 bits on x64, which would corrupt high-bit flags.
             var style = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
@@ -65,23 +86,36 @@ public partial class ToolbarWindow : Window
         // Subscribed for the life of the window — the SelectionTracker keeps a single toolbar
         // around for the whole process, so there's no leak; we still detach in Closed for safety.
         KeyboardHook.EscPressed += OnGlobalEsc;
-        Closed += (_, _) => KeyboardHook.EscPressed -= OnGlobalEsc;
+        Closed += (_, _) =>
+        {
+            KeyboardHook.EscPressed -= OnGlobalEsc;
+            TextCapture.SetClipboardOwnerWindow(IntPtr.Zero);
+        };
     }
 
     private void OnGlobalEsc()
     {
-        // Hook fires on the hook thread; marshal to UI before touching window state.
+        // Revoke on the hook thread before the key is delivered. The immutable reference avoids
+        // reading a multi-field operation struct concurrently with a new toolbar Show.
+        var context = Volatile.Read(ref _operationContext);
+        if (context == null) return;
+        context.Operation.InvalidateIfCurrent();
+
+        // Marshal only the WPF work. If another operation reshowed the singleton in the meantime,
+        // the old Esc event must not hide or revoke that newer toolbar.
         Application.Current.Dispatcher.InvokeAsync(() =>
         {
-            if (IsVisible) HideToolbar();
+            if (IsVisible) HideToolbar(context);
         });
     }
 
     // ── Show ─────────────────────────────────────────────────────
 
-    public void Show(string text, TextAnalysis analysis, List<ActionGroup> groups,
-                     double x, double y, bool isEditable = false)
+    internal void Show(string text, TextAnalysis analysis, List<ActionGroup> groups,
+                       double x, double y, bool isEditable, SelectionOperation operation)
     {
+        Volatile.Write(
+            ref _operationContext, new ToolbarOperationContext(operation));
         _selectedText = text;
         _analysis = analysis;
         _actionGroups = groups;
@@ -98,8 +132,10 @@ public partial class ToolbarWindow : Window
         PositionAndShow(x, y);
     }
 
-    public void ShowPasteMode(double x, double y)
+    internal void ShowPasteMode(double x, double y, SelectionOperation operation)
     {
+        Volatile.Write(
+            ref _operationContext, new ToolbarOperationContext(operation));
         try { _selectedText = Clipboard.ContainsText() ? Clipboard.GetText() ?? "" : ""; } catch { _selectedText = ""; }
         _analysis = TextAnalysis.PlainText;
         _actionGroups = [];
@@ -154,12 +190,6 @@ public partial class ToolbarWindow : Window
     {
         // New show — invalidate any in-flight post-delay continuations from the previous selection.
         _generation++;
-
-        // Snapshot the app the toolbar is being shown FOR. Every synthetic-input path (paste,
-        // paste-plain, delete) verifies focus hasn't moved since — this also covers an Alt-Tab
-        // that happens between the toolbar appearing and the button click, which the old
-        // click-time-only snapshot missed.
-        ForegroundGuard.Arm();
 
         // Cancel any pending hide from a previous fade-out
         var fadeOut = (Storyboard)FindResource("FadeOut");
@@ -227,7 +257,26 @@ public partial class ToolbarWindow : Window
 
     public void HideToolbar()
     {
+        HideToolbar(Volatile.Read(ref _operationContext));
+    }
+
+    internal void HideToolbarIfOperationStale()
+    {
+        var context = Volatile.Read(ref _operationContext);
+        if (context != null && !context.Operation.IsCurrent)
+            HideToolbar(context);
+    }
+
+    private void HideToolbar(ToolbarOperationContext? expectedContext)
+    {
+        var currentContext = Volatile.Read(ref _operationContext);
+        if (expectedContext != null
+            && !ReferenceEquals(expectedContext, currentContext))
+            return;
+
+        currentContext?.Operation.InvalidateIfCurrent();
         if (!IsVisible) return;
+        _generation++;
         _dismissTimer.Stop();
         _editMode = false;
         _hoverPreviewMode = false;
@@ -310,7 +359,9 @@ public partial class ToolbarWindow : Window
 
     private async void CopyButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!TrySetClipboardText(_selectedText))
+        if (!TryStartToolbarAction(out var operation)) return;
+        if (!TextCapture.TryCommitClipboardMutation(
+                operation, () => TrySetClipboardText(_selectedText)))
         {
             await ShowFailureAndHide("Couldn't write to clipboard — try again");
             return;
@@ -321,13 +372,28 @@ public partial class ToolbarWindow : Window
         if (_generation == gen) HideToolbar();
     }
 
-    private void PasteButton_Click(object sender, RoutedEventArgs e)
+    private async void PasteButton_Click(object sender, RoutedEventArgs e)
     {
-        // Abort if focus moved since the toolbar was shown (Alt-Tab before OR after the click)
-        // — otherwise the paste lands in whatever app grabbed the foreground.
-        HideToolbar();
-        if (ForegroundGuard.StillValid())
-            TextCapture.SimulatePaste();
+        int generation = _generation;
+        if (!TryStartToolbarAction(out var operation)) return;
+        var pasteOutcome = await TextCapture.SimulatePasteAsync(operation);
+        if (_generation != generation) return;
+        if (pasteOutcome.Status == TextCapture.InputInjectionStatus.Succeeded)
+        {
+            HideToolbar();
+            return;
+        }
+        if (pasteOutcome.Status == TextCapture.InputInjectionStatus.Partial)
+        {
+            await ShowFailureAndHide(
+                TextCapture.CanRollbackAfterPartialPaste(pasteOutcome)
+                    ? "Windows rejected the paste shortcut after the held key was safely released"
+                    : pasteOutcome.CleanupSucceeded
+                        ? "Windows accepted only part of the paste shortcut"
+                    : "Windows accepted part of the paste shortcut and key release was incomplete");
+            return;
+        }
+        await ShowFailureAndHide("Focus moved — paste cancelled");
     }
 
     private void TransformButton_Click(object sender, RoutedEventArgs e) =>

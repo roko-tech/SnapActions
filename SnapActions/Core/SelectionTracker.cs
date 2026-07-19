@@ -13,6 +13,7 @@ public class SelectionTracker
     private readonly MouseHook _mouseHook;
     private readonly TextClassifier _classifier;
     private readonly ActionRegistry _actionRegistry;
+    private readonly SelectionOperationSource _operations = new();
     private ToolbarWindow? _toolbar;
     // TickCount64 is monotonic — wall-clock jumps (NTP sync, hibernation resume, manual time
     // change) used to spuriously suppress or re-fire the debounce when DateTime.UtcNow drifted.
@@ -50,6 +51,7 @@ public class SelectionTracker
         _mouseHook.LongPress += OnLongPress;
         _mouseHook.MouseDown += OnMouseDown;
         KeyboardHook.CtrlCPressed += OnCtrlCPressed;
+        KeyboardHook.EscPressed += OnEscPressed;
     }
 
     public void Start()
@@ -65,7 +67,9 @@ public class SelectionTracker
 
     public void Stop()
     {
+        _operations.Invalidate();
         KeyboardHook.CtrlCPressed -= OnCtrlCPressed;
+        KeyboardHook.EscPressed -= OnEscPressed;
         _mouseHook.Uninstall();
         _mouseHook.Dispose();
     }
@@ -79,40 +83,63 @@ public class SelectionTracker
     {
         if (!SettingsManager.Current.CaptureOnCtrlC) return;
         if (IsSelfFocused()) return;
+        // Ctrl+C is explicit intent. Always let the newest event mint an operation so an older
+        // mouse/clipboard continuation cannot win merely because this event landed in debounce.
+        Interlocked.Exchange(ref _lastShowTicks, Environment.TickCount64);
+
+        // Reserve ordering before bounded UIA work. Mouse and keyboard hooks use different
+        // threads, so assigning the generation after capture could let an older slow event
+        // invalidate a genuinely newer fast one.
+        var operation = _operations.Begin(default);
+        operation = operation.WithTarget(
+            ForegroundGuard.CaptureWithAutomationIdentity());
 
         // Captured on the hook thread BEFORE CallNextHookEx delivers Ctrl+C to the app, so it's the
-        // pre-copy clipboard sequence number. If it doesn't change, the Ctrl+C copied nothing (e.g.
-        // pressed with no selection) and we must not pop the toolbar on stale clipboard text.
-        uint seqBefore = SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber();
+        // pre-copy clipboard observation. The handler accepts the result only when the sequence
+        // changes and the target process owns it; otherwise it may be an unrelated clipboard write.
+        var clipboardBefore = TextCapture.ObserveClipboard();
 
         Application.Current.Dispatcher.InvokeAsync(async () =>
         {
             try
             {
+                if (!await operation.CanInjectInputAsync()) return;
                 if (!SettingsManager.Current.Enabled) return;
                 if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps)) return;
 
-                long now = Environment.TickCount64;
-                if (now - _lastShowTicks < DebounceMs) return;
-                _lastShowTicks = now; // claim the debounce slot before the await so a rapid second Ctrl+C is dropped
-
                 await Task.Delay(100); // let the OS finish placing the copied text on the clipboard
-                if (SnapActions.Helpers.NativeMethods.GetClipboardSequenceNumber() == seqBefore) return;
+                if (!await operation.CanInjectInputAsync()) return;
+                var clipboardAfter = TextCapture.ObserveClipboard();
+                if (TextCapture.ClassifyClipboardMutation(
+                        clipboardBefore,
+                        clipboardAfter,
+                        requestDelivered: true,
+                        expectedOwnerProcessId: operation.Target.ProcessId,
+                        targetStillValid: ForegroundGuard.StillValid(operation.Target))
+                    != TextCapture.ClipboardMutationOwnership.Owned)
+                    return;
 
                 var text = await TextCapture.ReadCurrentClipboardTextAsync();
+                if (!TextCapture.ContinuesOwnedClipboard(
+                        clipboardAfter,
+                        TextCapture.ObserveClipboard(),
+                        operation.Target.ProcessId))
+                    return;
+                if (!await operation.CanInjectInputAsync()) return;
                 if (string.IsNullOrWhiteSpace(text)) return;
 
                 SnapActions.Helpers.NativeMethods.GetCursorPos(out var pt);
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
                 bool isEditable = await Task.Run(ForegroundApp.IsEditableFieldFocused);
+                if (!await operation.CanInjectInputAsync()) return;
                 var analysis = _classifier.Classify(text);
                 var groups = _actionRegistry.GetActions(text, analysis, ForegroundApp.GetActiveProcessName());
                 if (groups.Count == 0) return;
 
                 _toolbar ??= new ToolbarWindow();
                 _toolbar.Registry = _actionRegistry;
-                _toolbar.Show(text, analysis, groups, pt.X, pt.Y, isEditable);
+                _toolbar.Show(text, analysis, groups, pt.X, pt.Y, isEditable, operation);
             }
             catch (Exception ex)
             {
@@ -120,6 +147,9 @@ public class SelectionTracker
             }
         });
     }
+
+    private void OnEscPressed() =>
+        _operations.Invalidate();
 
     // Cheap PID check — no Process allocation, no string comparison
     private static bool IsSelfFocused()
@@ -136,7 +166,15 @@ public class SelectionTracker
     private void OnMouseDown(MouseHook.POINT pt)
     {
         // Quick checks only — no WPF access from hook thread
-        if (IsSelfFocused()) { _mouseHook.CancelTracking(); return; }
+        if (IsSelfFocused() || MouseHook.IsProcessWindowAtPoint(pt, OwnPid))
+        {
+            _mouseHook.CancelTracking();
+            return;
+        }
+        long generationAtMouseDown = _operations.CurrentGeneration;
+        // Invalidate immediately on the hook thread. Deferring this to the UI dispatcher let an
+        // older continuation survive while a busy UI thread waited to process the newer click.
+        _operations.InvalidateIfCurrent(generationAtMouseDown);
 
         // Sample the cursor shape now, while the press is on its target — see _mouseDownCursor.
         _mouseDownCursor = CursorShape.Classify();
@@ -149,9 +187,9 @@ public class SelectionTracker
 
         Application.Current.Dispatcher.InvokeAsync(() =>
         {
-            if (_toolbar is { IsVisible: true } && !_toolbar.IsPointInside(pt.X, pt.Y))
-                _toolbar.HideToolbar();
-        }, DispatcherPriority.Background);
+            if (_toolbar is { IsVisible: true })
+                _toolbar.HideToolbarIfOperationStale();
+        }, DispatcherPriority.Send);
     }
 
     /// <summary>
@@ -189,6 +227,7 @@ public class SelectionTracker
     private void OnSelectionLikely(MouseHook.POINT cursorPos, MouseHook.SelectionTrigger trigger)
     {
         if (IsSelfFocused()) return;
+        if (MouseHook.IsProcessWindowAtPoint(cursorPos, OwnPid)) return;
 
         // Cursor gate. The OS shows the text (I-beam) cursor only when the pointer is over
         // selectable text, so it's the most universal "was this gesture on text?" signal — more
@@ -215,9 +254,11 @@ public class SelectionTracker
         // would copy the filename). See CaptureSelectedTextAsync / DecidePlan.
         bool ambiguousCursor = CursorShape.IsAmbiguousBothPoints(_mouseDownCursor, upCursor);
 
-        long now = Environment.TickCount64;
-        if (now - _lastShowTicks < DebounceMs) return;
-        _lastShowTicks = now;
+        if (!TryClaimDebounce()) return;
+
+        var operation = _operations.Begin(default);
+        operation = operation.WithTarget(
+            ForegroundGuard.CaptureWithAutomationIdentity());
 
         // Capture into a local so the closure sees the value at *this* SelectionLikely fire,
         // not whatever a later click might overwrite it with while we're awaiting UIA.
@@ -227,6 +268,7 @@ public class SelectionTracker
         {
             try
             {
+                if (!await operation.CanInjectInputAsync()) return;
                 if (!SettingsManager.Current.Enabled) return;
                 if (_toolbar is { IsVisible: true } && _toolbar.IsPointInside(cursorPos.X, cursorPos.Y)) return;
                 if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps)) return;
@@ -245,10 +287,12 @@ public class SelectionTracker
                 bool allowKeys = aggressiveness == CaptureAggressiveness.Full
                                  || (ambiguousCursor && isDragTrigger && !ForegroundApp.IsFileManagerFocused());
                 var text = await TextCapture.CaptureSelectedTextAsync(
+                    operation,
                     isDrag: isDragTrigger,
                     allowSyntheticKeys: allowKeys,
                     ambiguousCursor: ambiguousCursor,
                     cursorX: cursorPos.X, cursorY: cursorPos.Y);
+                if (!await operation.CanInjectInputAsync()) return;
                 if (string.IsNullOrWhiteSpace(text))
                 {
                     // Double-click on an empty editable input is the configured paste-mode
@@ -272,19 +316,23 @@ public class SelectionTracker
                     if (trigger == MouseHook.SelectionTrigger.MultiClick
                         && SettingsManager.Current.PasteModeTrigger == Config.PasteModeTrigger.DoubleClick
                         && GetForegroundWindow() == foregroundAtClick
+                        && await operation.CanInjectInputAsync()
                         && await Task.Run(ForegroundApp.IsStrictlyEditableFocused))
                     {
+                        if (!await operation.CanInjectInputAsync()) return;
                         _toolbar ??= new ToolbarWindow();
                         _toolbar.Registry = _actionRegistry;
-                        _toolbar.ShowPasteMode(cursorPos.X, cursorPos.Y);
+                        _toolbar.ShowPasteMode(cursorPos.X, cursorPos.Y, operation);
                     }
                     return;
                 }
 
                 int showDelay = SettingsManager.Current.ToolbarShowDelay;
                 if (showDelay > 0) await Task.Delay(showDelay);
+                if (!await operation.CanInjectInputAsync()) return;
 
                 bool isEditable = await editableTask;
+                if (!await operation.CanInjectInputAsync()) return;
 
                 var analysis = _classifier.Classify(text);
                 var groups = _actionRegistry.GetActions(text, analysis, ForegroundApp.GetActiveProcessName());
@@ -292,7 +340,7 @@ public class SelectionTracker
 
                 _toolbar ??= new ToolbarWindow();
                 _toolbar.Registry = _actionRegistry;
-                _toolbar.Show(text, analysis, groups, cursorPos.X, cursorPos.Y, isEditable);
+                _toolbar.Show(text, analysis, groups, cursorPos.X, cursorPos.Y, isEditable, operation);
             }
             catch (Exception ex)
             {
@@ -304,11 +352,16 @@ public class SelectionTracker
     private void OnLongPress(MouseHook.POINT cursorPos)
     {
         if (IsSelfFocused()) return;
+        if (MouseHook.IsProcessWindowAtPoint(cursorPos, OwnPid)) return;
+        var operation = _operations.Begin(default);
+        operation = operation.WithTarget(
+            ForegroundGuard.CaptureWithAutomationIdentity());
 
         Application.Current.Dispatcher.InvokeAsync(async () =>
         {
             try
             {
+                if (!await operation.CanInjectInputAsync()) return;
                 if (!SettingsManager.Current.Enabled) return;
                 // Defense-in-depth: MouseHook also gates the long-press timer start on this
                 // setting, but a setting change between mouse-down and timer-fire would slip
@@ -327,19 +380,32 @@ public class SelectionTracker
                     SnapActions.Helpers.Log.Info($"Suppressed long-press: hold position ({cursorPos.X},{cursorPos.Y}) isn't a text element");
                     return;
                 }
+                if (!await operation.CanInjectInputAsync()) return;
 
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
                 _toolbar ??= new ToolbarWindow();
                 _toolbar.Registry = _actionRegistry;
-                _toolbar.ShowPasteMode(cursorPos.X, cursorPos.Y);
-                _lastShowTicks = Environment.TickCount64;
+                _toolbar.ShowPasteMode(cursorPos.X, cursorPos.Y, operation);
+                Interlocked.Exchange(ref _lastShowTicks, Environment.TickCount64);
             }
             catch (Exception ex)
             {
                 SnapActions.Helpers.Log.Error("Paste-mode handler", ex);
             }
         });
+    }
+
+    private bool TryClaimDebounce()
+    {
+        while (true)
+        {
+            long previous = Volatile.Read(ref _lastShowTicks);
+            long now = Environment.TickCount64;
+            if (now - previous < DebounceMs) return false;
+            if (Interlocked.CompareExchange(ref _lastShowTicks, now, previous) == previous)
+                return true;
+        }
     }
 
     [DllImport("user32.dll")]

@@ -1,27 +1,171 @@
+using System.Runtime.InteropServices;
+using System.Windows.Automation;
+
 namespace SnapActions.Core;
 
-/// <summary>
-/// Guards every synthetic-input path (paste, paste-plain, delete) against focus having moved
-/// since the toolbar appeared. Armed with the foreground HWND at toolbar-show time; any path
-/// about to inject input checks <see cref="StillValid"/> first, so an Alt-Tab — whether it
-/// happens before or after the button click — can't redirect a keystroke into the wrong app.
-/// (The toolbar itself is WS_EX_NOACTIVATE, so interacting with it never changes the foreground.)
-/// Written and read on the UI dispatcher only.
-/// </summary>
-public static class ForegroundGuard
+internal readonly record struct ForegroundTarget(
+    IntPtr ForegroundWindow,
+    IntPtr FocusedWindow,
+    uint ProcessId,
+    uint ThreadId,
+    string? AutomationRuntimeId = null)
 {
-    private static IntPtr _expected;
+    internal bool IsComplete =>
+        ForegroundWindow != IntPtr.Zero
+        && FocusedWindow != IntPtr.Zero
+        && ProcessId != 0
+        && ThreadId != 0;
+}
 
-    /// <summary>Snapshot the current foreground window as the intended input target.</summary>
-    public static void Arm() => _expected = Helpers.NativeMethods.GetForegroundWindow();
+/// <summary>
+/// Captures and validates the input target for an operation. The focused child HWND, process ID,
+/// and GUI thread ID prevent an Alt-Tab, native same-window focus move, or HWND reuse from
+/// redirecting input; a bounded UI Automation runtime ID also distinguishes logical controls
+/// sharing one HWND. Mutating/synthetic input requires that logical identity; a timeout or provider
+/// failure therefore cancels the action rather than trusting a possibly shared HWND.
+/// </summary>
+internal static class ForegroundGuard
+{
+    // Event-time UIA capture runs while the low-level hook still holds the triggering input.
+    // Keep this well below the hook timeout; a miss is recorded as unavailable and destructive
+    // input then fails closed when the native focused HWND is not granular enough.
+    private const int EventAutomationIdentityTimeoutMs = 50;
+    private const int AutomationIdentityTimeoutMs = 250;
+
+    internal static ForegroundTarget Capture()
+    {
+        IntPtr foreground = GetForegroundWindow();
+        if (foreground == IntPtr.Zero) return default;
+
+        uint threadId = GetWindowThreadProcessId(foreground, out uint processId);
+        if (threadId == 0 || processId == 0) return default;
+
+        var info = new GUITHREADINFO { cbSize = (uint)Marshal.SizeOf<GUITHREADINFO>() };
+        if (!GetGUIThreadInfo(threadId, ref info) || info.hwndFocus == IntPtr.Zero)
+            return default;
+
+        return new ForegroundTarget(foreground, info.hwndFocus, processId, threadId);
+    }
+
+    internal static ForegroundTarget CaptureWithAutomationIdentity()
+    {
+        var target = Capture();
+        if (!target.IsComplete) return target;
+
+        var worker = Task.Run(() => Enrich(target));
+        return worker.Wait(EventAutomationIdentityTimeoutMs)
+            ? worker.Result
+            : target;
+    }
+
+    internal static bool StillValid(ForegroundTarget expected) =>
+        MatchesWindow(expected, Capture());
+
+    internal static bool Matches(ForegroundTarget expected, ForegroundTarget current) =>
+        MatchesWindow(expected, current)
+        && (expected.AutomationRuntimeId == null
+            || expected.AutomationRuntimeId == current.AutomationRuntimeId);
+
+    internal static bool MatchesWindow(ForegroundTarget expected, ForegroundTarget current) =>
+        expected.IsComplete
+        && current.IsComplete
+        && expected.ForegroundWindow == current.ForegroundWindow
+        && expected.FocusedWindow == current.FocusedWindow
+        && expected.ProcessId == current.ProcessId
+        && expected.ThreadId == current.ThreadId;
+
+    internal static bool HasSufficientInputIdentity(ForegroundTarget target) =>
+        target.IsComplete
+        && target.AutomationRuntimeId != null;
+
+    internal static async Task<bool> StillValidAsync(ForegroundTarget expected)
+    {
+        if (!StillValid(expected)) return false;
+        if (expected.AutomationRuntimeId == null) return true;
+
+        var worker = Task.Run(() => CaptureAutomationRuntimeId(expected.ProcessId));
+        var completed = await Task.WhenAny(
+            worker, Task.Delay(AutomationIdentityTimeoutMs));
+        if (completed != worker) return false;
+
+        string? currentRuntimeId = await worker;
+        return currentRuntimeId == expected.AutomationRuntimeId
+               && StillValid(expected);
+    }
 
     /// <summary>
-    /// True when the foreground window is still the one the toolbar was shown for. Fail-open when
-    /// either read came back null (no foreground window is a transient OS state, not an Alt-Tab).
+    /// Captures the full current target and, without another await/scheduler hop, runs a short
+    /// commit callback only if it still exactly matches <paramref name="expected"/>. If UIA
+    /// exceeds the bound, a gate prevents the abandoned worker from committing input later.
     /// </summary>
-    public static bool StillValid()
+    internal static async Task<bool> TryRunWithExactInputTargetAsync(
+        ForegroundTarget expected, Func<ForegroundTarget, bool> commit)
     {
-        IntPtr current = Helpers.NativeMethods.GetForegroundWindow();
-        return current == _expected || current == IntPtr.Zero || _expected == IntPtr.Zero;
+        if (!HasSufficientInputIdentity(expected)) return false;
+
+        int gate = 0;
+        var worker = Task.Run(() =>
+        {
+            var current = Enrich(Capture());
+            if (!Matches(expected, current)) return false;
+            if (Interlocked.CompareExchange(ref gate, 1, 0) != 0) return false;
+            return commit(current);
+        });
+
+        var completed = await Task.WhenAny(
+            worker, Task.Delay(AutomationIdentityTimeoutMs));
+        if (completed == worker) return await worker;
+
+        // If the worker has not crossed the commit gate, abandon it permanently. If it already
+        // crossed, its callback is the bounded final check + SendInput sequence, so await it.
+        if (Interlocked.CompareExchange(ref gate, 2, 0) == 0) return false;
+        return await worker;
     }
+
+    private static ForegroundTarget Enrich(ForegroundTarget target)
+    {
+        if (!StillValid(target)) return target;
+        string? runtimeId = CaptureAutomationRuntimeId(target.ProcessId);
+        return runtimeId != null && StillValid(target)
+            ? target with { AutomationRuntimeId = runtimeId }
+            : target;
+    }
+
+    private static string? CaptureAutomationRuntimeId(uint expectedProcessId)
+    {
+        try
+        {
+            var element = AutomationElement.FocusedElement;
+            if (element == null || (uint)element.Current.ProcessId != expectedProcessId)
+                return null;
+
+            int[] runtimeId = element.GetRuntimeId();
+            return runtimeId.Length == 0 ? null : string.Join(",", runtimeId);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GUITHREADINFO
+    {
+        public uint cbSize, flags;
+        public IntPtr hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret;
+        public RECT rcCaret;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int left, top, right, bottom; }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO lpgui);
 }

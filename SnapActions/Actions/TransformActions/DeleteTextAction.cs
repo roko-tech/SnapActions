@@ -1,10 +1,8 @@
-using System.Runtime.InteropServices;
 using SnapActions.Detection;
-using SnapActions.Helpers;
 
 namespace SnapActions.Actions.TransformActions;
 
-public class DeleteTextAction : IAction
+public class DeleteTextAction : IAction, IOperationAction
 {
     public string Id => "delete_text";
     public string Name => "Delete";
@@ -14,18 +12,25 @@ public class DeleteTextAction : IAction
     public bool CanExecute(string text, TextAnalysis analysis) => !string.IsNullOrEmpty(text);
 
     public ActionResult Execute(string text, TextAnalysis analysis)
-    {
-        // VK_DELETE is destructive in whatever app has focus — never send it if focus moved
-        // since the toolbar appeared (same guard as every paste path).
-        if (!Core.ForegroundGuard.StillValid())
-            return new ActionResult(false, Message: "Focus moved — delete cancelled");
+        => new(false, Message: "Delete requires a current selection target");
 
-        var inputs = new NativeMethods.INPUT[]
+    async Task<ActionResult> IOperationAction.ExecuteAsync(
+        string text, TextAnalysis analysis, Core.SelectionOperation operation)
+    {
+        var outcome = await Core.TextCapture.SimulateDeleteAsync(operation);
+        return outcome.Status switch
         {
-            NativeMethods.MakeKeyInput(0x2E, false), // VK_DELETE down
-            NativeMethods.MakeKeyInput(0x2E, true),   // VK_DELETE up
+            Core.TextCapture.InputInjectionStatus.Succeeded =>
+                new ActionResult(true),
+            Core.TextCapture.InputInjectionStatus.Partial =>
+                new ActionResult(
+                    false,
+                    Message: outcome.CleanupSucceeded
+                        ? "Windows accepted only part of the delete input; the selection may have changed"
+                        : "Windows accepted part of the delete input and key release was incomplete"),
+            _ => new ActionResult(
+                false,
+                Message: "Focus moved or Windows rejected the delete input"),
         };
-        NativeMethods.SendInput(2, inputs, Marshal.SizeOf<NativeMethods.INPUT>());
-        return new ActionResult(true);
     }
 }
