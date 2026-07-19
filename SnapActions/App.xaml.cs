@@ -63,32 +63,14 @@ public partial class App : Application
         _trayIcon = new TrayIconManager();
         _trayIcon.Initialize();
 
+        ForegroundGuard.WarmUpAutomation();
+
         _tracker = new SelectionTracker();
         _tracker.Start();
 
         // Global Esc-to-dismiss for our windows. Replaces the previous per-window
         // GetAsyncKeyState polling — see KeyboardHook.cs for the rationale.
         KeyboardHook.Install();
-
-        WarmUpUia();
-    }
-
-    /// <summary>
-    /// The first UIA call in a process pays a 50–500 ms COM/JIT cold-start. Pay it once at startup on
-    /// a background thread (result discarded — it must NOT feed any gate) so the first real selection
-    /// capture is already warm.
-    /// </summary>
-    private static void WarmUpUia()
-    {
-        Task.Run(() =>
-        {
-            try
-            {
-                var focused = System.Windows.Automation.AutomationElement.FocusedElement;
-                focused?.TryGetCurrentPattern(System.Windows.Automation.TextPattern.Pattern, out _);
-            }
-            catch { /* warmup only — any failure is irrelevant */ }
-        });
     }
 
     protected override void OnExit(ExitEventArgs e)

@@ -936,6 +936,58 @@ public class OperationSafetyTests
         Assert.Single(results, started => started);
     }
 
+    [Fact]
+    public async Task TimedOutWorkerGate_RejectsNewWorkUntilUnderlyingCallFinishes()
+    {
+        var gate = new SingleFlightWorkerGate();
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var timeout = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        int calls = 0;
+
+        try
+        {
+            Task<int> firstAttempt = gate.RunBoundedAsync(
+                () =>
+                {
+                    Interlocked.Increment(ref calls);
+                    entered.Set();
+                    release.Wait();
+                    return 1;
+                },
+                onBusyOrTimeout: -1,
+                timeout: () => timeout.Task);
+
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
+            timeout.SetResult();
+            int timedOut = await firstAttempt;
+            Assert.Equal(-1, timedOut);
+
+            int rejectedWhileBusy = await gate.RunBoundedAsync(
+                () =>
+                {
+                    Interlocked.Increment(ref calls);
+                    return 2;
+                },
+                onBusyOrTimeout: -2,
+                timeout: () => Task.CompletedTask);
+
+            Assert.Equal(-2, rejectedWhileBusy);
+            Assert.Equal(1, Volatile.Read(ref calls));
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        Task<int>? nextWorker = null;
+        Assert.True(SpinWait.SpinUntil(
+            () => gate.TryStart(() => 3, out nextWorker),
+            TimeSpan.FromSeconds(5)));
+        Assert.Equal(3, await nextWorker!);
+    }
+
     private static TextCapture.ClipboardNativeApi CreateClipboardNativeApi(
         Func<bool> open,
         Func<TextCapture.ClipboardObservation> observe,

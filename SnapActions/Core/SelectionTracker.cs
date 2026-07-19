@@ -19,6 +19,7 @@ public class SelectionTracker
     // change) used to spuriously suppress or re-fire the debounce when DateTime.UtcNow drifted.
     private long _lastShowTicks;
     private const long DebounceMs = 250;
+    private const int UiAutomationTimeoutMs = 500;
     private static readonly uint OwnPid = (uint)Environment.ProcessId;
 
     /// <summary>
@@ -131,7 +132,10 @@ public class SelectionTracker
                 SnapActions.Helpers.NativeMethods.GetCursorPos(out var pt);
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
-                bool isEditable = await Task.Run(ForegroundApp.IsEditableFieldFocused);
+                bool isEditable = await ForegroundGuard.RunBoundedAutomationAsync(
+                    ForegroundApp.IsEditableFieldFocused,
+                    onBusyOrTimeout: false,
+                    timeoutMs: UiAutomationTimeoutMs);
                 if (!await operation.CanInjectInputAsync()) return;
                 var analysis = _classifier.Classify(text);
                 var groups = _actionRegistry.GetActions(text, analysis, ForegroundApp.GetActiveProcessName());
@@ -274,8 +278,6 @@ public class SelectionTracker
                 if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps)) return;
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
-                var editableTask = Task.Run(() => ForegroundApp.IsEditableFieldFocused());
-
                 bool isDragTrigger = trigger == MouseHook.SelectionTrigger.Drag;
                 // Allow the synthetic Ctrl+Insert for a Full capture (I-beam/Unreadable) OR for a
                 // DRAG under the ambiguous arrow/hand cursor. The keystroke is the only reliable way
@@ -317,7 +319,10 @@ public class SelectionTracker
                         && SettingsManager.Current.PasteModeTrigger == Config.PasteModeTrigger.DoubleClick
                         && GetForegroundWindow() == foregroundAtClick
                         && await operation.CanInjectInputAsync()
-                        && await Task.Run(ForegroundApp.IsStrictlyEditableFocused))
+                        && await ForegroundGuard.RunBoundedAutomationAsync(
+                            ForegroundApp.IsStrictlyEditableFocused,
+                            onBusyOrTimeout: false,
+                            timeoutMs: UiAutomationTimeoutMs))
                     {
                         if (!await operation.CanInjectInputAsync()) return;
                         _toolbar ??= new ToolbarWindow();
@@ -331,7 +336,10 @@ public class SelectionTracker
                 if (showDelay > 0) await Task.Delay(showDelay);
                 if (!await operation.CanInjectInputAsync()) return;
 
-                bool isEditable = await editableTask;
+                bool isEditable = await ForegroundGuard.RunBoundedAutomationAsync(
+                    ForegroundApp.IsEditableFieldFocused,
+                    onBusyOrTimeout: false,
+                    timeoutMs: UiAutomationTimeoutMs);
                 if (!await operation.CanInjectInputAsync()) return;
 
                 var analysis = _classifier.Classify(text);
@@ -375,7 +383,11 @@ public class SelectionTracker
                 // address bar) "focused" — IsTextInputFocused would return true and the paste
                 // menu would pop up over the title bar. IsTextInputAtPoint asks UI Automation
                 // what's literally under the cursor instead.
-                if (!await Task.Run(() => ForegroundApp.IsTextInputAtPoint(cursorPos.X, cursorPos.Y)))
+                if (!await ForegroundGuard.RunBoundedAutomationAsync(
+                        () => ForegroundApp.IsTextInputAtPoint(
+                            cursorPos.X, cursorPos.Y),
+                        onBusyOrTimeout: false,
+                        timeoutMs: UiAutomationTimeoutMs))
                 {
                     SnapActions.Helpers.Log.Info($"Suppressed long-press: hold position ({cursorPos.X},{cursorPos.Y}) isn't a text element");
                     return;

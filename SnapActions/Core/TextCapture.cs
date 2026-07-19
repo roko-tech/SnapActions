@@ -764,7 +764,7 @@ public static class TextCapture
                 // Bounded (RunBoundedUiaAsync) so a wedged provider can't hang here and permanently
                 // hold the capture lock.
                 var probe = await RunBoundedUiaAsync(
-                    ProbeSelectionViaUIA(
+                    () => ProbeSelectionViaUIA(
                         cursorX, cursorY, preferKeystroke: allowSyntheticKeys,
                         operation.Target.ProcessId,
                         operation.Target.AutomationRuntimeId),
@@ -857,7 +857,7 @@ public static class TextCapture
             if (string.IsNullOrEmpty(text) && plan.RunUia && operation.CanInjectInput)
             {
                 text = await RunBoundedUiaAsync(
-                    CopyViaUIA(
+                    () => CopyViaUIA(
                         operation.Target.ProcessId,
                         operation.Target.AutomationRuntimeId),
                     null);
@@ -972,18 +972,15 @@ public static class TextCapture
     private const int UiaCallTimeoutMs = 500;
 
     /// <summary>
-    /// Runs a UIA worker task with a hard timeout. ProbeSelectionViaUIA / CopyViaUIA run on Task.Run
-    /// worker threads; if a broken accessibility provider blocks inside GetSelection/GetText the
-    /// worker never completes. Without this bound the await would hang forever, <see cref="_captureLock"/>
-    /// would never be released, and every later capture would wait behind it for the rest of the
-    /// session. On timeout we abandon the worker and return the fallback so the
-    /// clipboard cascade still runs and the lock is released.
+    /// Runs a UIA call with a hard timeout and a shared pre-start single-flight gate. If a broken
+    /// provider blocks inside GetSelection/GetText, the await returns its fallback but the gate
+    /// stays occupied until that underlying call really exits. Later UIA calls fail fast instead
+    /// of accumulating more stranded workers.
     /// </summary>
-    private static async Task<T> RunBoundedUiaAsync<T>(Task<T> uiaTask, T onTimeout)
-    {
-        var done = await Task.WhenAny(uiaTask, Task.Delay(UiaCallTimeoutMs));
-        return done == uiaTask ? await uiaTask : onTimeout;
-    }
+    private static Task<T> RunBoundedUiaAsync<T>(
+        Func<T> uiaCall, T onTimeout) =>
+        ForegroundGuard.RunBoundedAutomationAsync(
+            uiaCall, onTimeout, UiaCallTimeoutMs);
 
     /// <summary>
     /// Waits up to ~300 ms for the user to release the given modifier keys before we inject a
@@ -1295,112 +1292,109 @@ public static class TextCapture
     /// whereas the keystroke copies exactly what the browser shows selected. So the rescue is only a
     /// fallback for gestures with no keystroke (ambiguous multi-click / quiet custom-cursor capture).
     /// </remarks>
-    internal static async Task<SelectionProbe> ProbeSelectionViaUIA(
+    internal static SelectionProbe ProbeSelectionViaUIA(
         int cursorX,
         int cursorY,
         bool preferKeystroke,
         uint expectedProcessId,
         string? expectedRuntimeId)
     {
-        return await Task.Run(() =>
+        AutomationElement? originalFocused = null;
+        try
         {
-            AutomationElement? originalFocused = null;
-            try
+            originalFocused = AutomationElement.FocusedElement;
+            if (originalFocused == null)
+                return new SelectionProbe(SelectionProbeOutcome.Unknown, null, "no focused element");
+            if ((uint)originalFocused.Current.ProcessId != expectedProcessId)
+                return new SelectionProbe(
+                    SelectionProbeOutcome.Unknown, null, "focused element belongs to another process");
+            if (!MatchesAutomationRuntimeId(originalFocused, expectedRuntimeId))
+                return new SelectionProbe(
+                    SelectionProbeOutcome.Unknown, null, "focused element identity changed");
+
+            // Walk up looking for TextPattern. If ANY ancestor has TextPattern with non-empty
+            // selection → HasText (return immediately). If we exhaust the walk and saw at least
+            // one TextPattern but all were empty → Suppress. If we never saw TextPattern → fall
+            // through to the item-element check below.
+            var walker = TreeWalker.RawViewWalker;
+            var element = originalFocused;
+            bool sawAnyTextPattern = false;
+            for (int depth = 0; element != null && depth < TextPatternParentWalkDepth; depth++)
             {
-                originalFocused = AutomationElement.FocusedElement;
-                if (originalFocused == null)
-                    return new SelectionProbe(SelectionProbeOutcome.Unknown, null, "no focused element");
-                if ((uint)originalFocused.Current.ProcessId != expectedProcessId)
-                    return new SelectionProbe(
-                        SelectionProbeOutcome.Unknown, null, "focused element belongs to another process");
-                if (!MatchesAutomationRuntimeId(originalFocused, expectedRuntimeId))
-                    return new SelectionProbe(
-                        SelectionProbeOutcome.Unknown, null, "focused element identity changed");
-
-                // Walk up looking for TextPattern. If ANY ancestor has TextPattern with non-empty
-                // selection → HasText (return immediately). If we exhaust the walk and saw at least
-                // one TextPattern but all were empty → Suppress. If we never saw TextPattern → fall
-                // through to the item-element check below.
-                var walker = TreeWalker.RawViewWalker;
-                var element = originalFocused;
-                bool sawAnyTextPattern = false;
-                for (int depth = 0; element != null && depth < TextPatternParentWalkDepth; depth++)
-                {
-                    try
-                    {
-                        if (element.TryGetCurrentPattern(TextPattern.Pattern, out var pat))
-                        {
-                            sawAnyTextPattern = true;
-                            var tp = (TextPattern)pat;
-                            var ranges = tp.GetSelection();
-                            if (ranges != null && ranges.Length > 0)
-                            {
-                                var combined = ranges.Length == 1
-                                    ? ranges[0].GetText(-1)
-                                    : string.Join("\n",
-                                        ranges.Select(r => r.GetText(-1)).Where(s => !string.IsNullOrEmpty(s)));
-                                if (!string.IsNullOrEmpty(combined))
-                                    return new SelectionProbe(SelectionProbeOutcome.HasText, combined, null);
-                            }
-                            // TextPattern at this level returned no selection text. Keep walking up
-                            // — an ancestor pane / document may have the real selection (browsers
-                            // often expose TextPattern at multiple levels with the leaf empty).
-                        }
-                    }
-                    catch { /* per-level UIA failure — try the parent */ }
-
-                    try { element = walker.GetParent(element); }
-                    catch { break; }
-                }
-
-                if (sawAnyTextPattern)
-                    return new SelectionProbe(SelectionProbeOutcome.EmptyTextPattern,
-                        null, "TextPattern present but selection is empty");
-
-                // No TextPattern anywhere up the walk from FOCUS. Before classifying, read the
-                // selection from the element UNDER THE CURSOR: X/Twitter focuses the tweet container
-                // (a ListItem — or, inconsistently, a plain group), not the text, so the upward walk
-                // from focus misses the tweet's own text, which sits right under the cursor. Covers
-                // both the item case AND the plain-Unknown case.
-                // Read the selection from the element UNDER THE CURSOR — X/Twitter focuses the tweet
-                // container, not the text, so the walk from focus missed it. BUT GetSelection() is
-                // unreliable for bidirectional (mixed LTR/RTL) content: FromPoint lands on an adjacent
-                // Arabic run and returns ITS text, not the visually-selected Latin word (confirmed:
-                // a "literacy" drag read back 8 Arabic chars). So use this rescue ONLY when the
-                // reliable Ctrl+Insert keystroke isn't available (an ambiguous multi-click, or a quiet
-                // custom-cursor capture). When it IS available — a drag or a Full capture — we skip the
-                // rescue and let the keystroke copy exactly what the browser shows selected.
-                if (!preferKeystroke)
-                {
-                    var atPoint = TryReadSelectionAtPoint(cursorX, cursorY, expectedProcessId);
-                    if (!string.IsNullOrEmpty(atPoint))
-                        return new SelectionProbe(SelectionProbeOutcome.HasText, atPoint,
-                            "rescued selection under cursor");
-                }
-
-                // Layer C: check the originally-focused element for non-text item patterns —
-                // Explorer file rows, desktop icons, list-box rows. SelectionItemPattern means
-                // "I am a selectable item" (vs. text); ControlType keeps us off Pane / Custom /
-                // Document which browsers and Electron focus for real text contexts.
                 try
                 {
-                    var ct = originalFocused.Current.ControlType;
-                    if (NonTextItemTypes.Contains(ct)
-                        && originalFocused.TryGetCurrentPattern(SelectionItemPattern.Pattern, out _))
-                        return new SelectionProbe(SelectionProbeOutcome.SuppressItemElement,
-                            null, $"focused element is {ct.ProgrammaticName} with SelectionItemPattern");
+                    if (element.TryGetCurrentPattern(TextPattern.Pattern, out var pat))
+                    {
+                        sawAnyTextPattern = true;
+                        var tp = (TextPattern)pat;
+                        var ranges = tp.GetSelection();
+                        if (ranges != null && ranges.Length > 0)
+                        {
+                            var combined = ranges.Length == 1
+                                ? ranges[0].GetText(-1)
+                                : string.Join("\n",
+                                    ranges.Select(r => r.GetText(-1)).Where(s => !string.IsNullOrEmpty(s)));
+                            if (!string.IsNullOrEmpty(combined))
+                                return new SelectionProbe(SelectionProbeOutcome.HasText, combined, null);
+                        }
+                        // TextPattern at this level returned no selection text. Keep walking up
+                        // — an ancestor pane / document may have the real selection (browsers
+                        // often expose TextPattern at multiple levels with the leaf empty).
+                    }
                 }
-                catch { /* couldn't read ControlType — fall through to Unknown */ }
+                catch { /* per-level UIA failure — try the parent */ }
 
-                return new SelectionProbe(SelectionProbeOutcome.Unknown, null, "no TextPattern, not a known non-text item");
+                try { element = walker.GetParent(element); }
+                catch { break; }
             }
-            catch (Exception ex)
+
+            if (sawAnyTextPattern)
+                return new SelectionProbe(SelectionProbeOutcome.EmptyTextPattern,
+                    null, "TextPattern present but selection is empty");
+
+            // No TextPattern anywhere up the walk from FOCUS. Before classifying, read the
+            // selection from the element UNDER THE CURSOR: X/Twitter focuses the tweet container
+            // (a ListItem — or, inconsistently, a plain group), not the text, so the upward walk
+            // from focus misses the tweet's own text, which sits right under the cursor. Covers
+            // both the item case AND the plain-Unknown case.
+            // Read the selection from the element UNDER THE CURSOR — X/Twitter focuses the tweet
+            // container, not the text, so the walk from focus missed it. BUT GetSelection() is
+            // unreliable for bidirectional (mixed LTR/RTL) content: FromPoint lands on an adjacent
+            // Arabic run and returns ITS text, not the visually-selected Latin word (confirmed:
+            // a "literacy" drag read back 8 Arabic chars). So use this rescue ONLY when the
+            // reliable Ctrl+Insert keystroke isn't available (an ambiguous multi-click, or a quiet
+            // custom-cursor capture). When it IS available — a drag or a Full capture — we skip the
+            // rescue and let the keystroke copy exactly what the browser shows selected.
+            if (!preferKeystroke)
             {
-                // Total UIA failure — be permissive (fall through to clipboard pipeline) so we
-                // don't silently break selections in apps where UIA misbehaves.
-                return new SelectionProbe(SelectionProbeOutcome.Unknown, null, $"UIA exception: {ex.GetType().Name}");
+                var atPoint = TryReadSelectionAtPoint(cursorX, cursorY, expectedProcessId);
+                if (!string.IsNullOrEmpty(atPoint))
+                    return new SelectionProbe(SelectionProbeOutcome.HasText, atPoint,
+                        "rescued selection under cursor");
             }
-        });
+
+            // Layer C: check the originally-focused element for non-text item patterns —
+            // Explorer file rows, desktop icons, list-box rows. SelectionItemPattern means
+            // "I am a selectable item" (vs. text); ControlType keeps us off Pane / Custom /
+            // Document which browsers and Electron focus for real text contexts.
+            try
+            {
+                var ct = originalFocused.Current.ControlType;
+                if (NonTextItemTypes.Contains(ct)
+                    && originalFocused.TryGetCurrentPattern(SelectionItemPattern.Pattern, out _))
+                    return new SelectionProbe(SelectionProbeOutcome.SuppressItemElement,
+                        null, $"focused element is {ct.ProgrammaticName} with SelectionItemPattern");
+            }
+            catch { /* couldn't read ControlType — fall through to Unknown */ }
+
+            return new SelectionProbe(SelectionProbeOutcome.Unknown, null, "no TextPattern, not a known non-text item");
+        }
+        catch (Exception ex)
+        {
+            // Total UIA failure — be permissive (fall through to clipboard pipeline) so we
+            // don't silently break selections in apps where UIA misbehaves.
+            return new SelectionProbe(SelectionProbeOutcome.Unknown, null, $"UIA exception: {ex.GetType().Name}");
+        }
     }
 
     /// <summary>
@@ -1456,49 +1450,46 @@ public static class TextCapture
     /// a pattern that returns empty selections even when the user clearly has text selected.
     /// Keeping Ctrl+Insert as a last-resort fallback covers those.
     /// </remarks>
-    private static async Task<string?> CopyViaUIA(
+    private static string? CopyViaUIA(
         uint expectedProcessId, string? expectedRuntimeId)
     {
-        return await Task.Run(() =>
+        try
         {
-            try
-            {
-                var element = AutomationElement.FocusedElement;
-                if (element == null) return null;
-                if ((uint)element.Current.ProcessId != expectedProcessId) return null;
-                if (!MatchesAutomationRuntimeId(element, expectedRuntimeId)) return null;
+            var element = AutomationElement.FocusedElement;
+            if (element == null) return null;
+            if ((uint)element.Current.ProcessId != expectedProcessId) return null;
+            if (!MatchesAutomationRuntimeId(element, expectedRuntimeId)) return null;
 
-                var walker = TreeWalker.RawViewWalker;
-                for (int depth = 0; element != null && depth < TextPatternParentWalkDepth; depth++)
+            var walker = TreeWalker.RawViewWalker;
+            for (int depth = 0; element != null && depth < TextPatternParentWalkDepth; depth++)
+            {
+                try
                 {
-                    try
+                    if (element.TryGetCurrentPattern(TextPattern.Pattern, out var pat))
                     {
-                        if (element.TryGetCurrentPattern(TextPattern.Pattern, out var pat))
+                        var tp = (TextPattern)pat;
+                        var ranges = tp.GetSelection();
+                        if (ranges != null && ranges.Length > 0)
                         {
-                            var tp = (TextPattern)pat;
-                            var ranges = tp.GetSelection();
-                            if (ranges != null && ranges.Length > 0)
-                            {
-                                // GetText(-1) returns the entire range with no length cap. For
-                                // discontiguous selections (rare — Ctrl-click in Excel-style
-                                // grids) join with \n so the caller sees all of it.
-                                var combined = ranges.Length == 1
-                                    ? ranges[0].GetText(-1)
-                                    : string.Join("\n",
-                                        ranges.Select(r => r.GetText(-1)).Where(s => !string.IsNullOrEmpty(s)));
-                                if (!string.IsNullOrEmpty(combined)) return combined;
-                            }
+                            // GetText(-1) returns the entire range with no length cap. For
+                            // discontiguous selections (rare — Ctrl-click in Excel-style
+                            // grids) join with \n so the caller sees all of it.
+                            var combined = ranges.Length == 1
+                                ? ranges[0].GetText(-1)
+                                : string.Join("\n",
+                                    ranges.Select(r => r.GetText(-1)).Where(s => !string.IsNullOrEmpty(s)));
+                            if (!string.IsNullOrEmpty(combined)) return combined;
                         }
                     }
-                    catch { /* per-level UIA failure — try the parent */ }
-
-                    try { element = walker.GetParent(element); }
-                    catch { break; }
                 }
+                catch { /* per-level UIA failure — try the parent */ }
+
+                try { element = walker.GetParent(element); }
+                catch { break; }
             }
-            catch { /* UIA failure */ }
-            return null;
-        });
+        }
+        catch { /* UIA failure */ }
+        return null;
     }
 
     private static bool MatchesAutomationRuntimeId(
