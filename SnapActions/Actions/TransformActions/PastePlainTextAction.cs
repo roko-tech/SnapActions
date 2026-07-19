@@ -28,9 +28,11 @@ public class PastePlainTextAction : IAction, IOperationAction
         if (!await TextCapture.PreparePasteAsync(operation))
             return new ActionResult(false, Message: "Focus moved — paste cancelled");
 
+        TextCapture.ClipboardSnapshot? original = null;
+        bool deferredRestoreOwnsSnapshot = false;
         try
         {
-            var original = TextCapture.SnapshotClipboard();
+            original = TextCapture.SnapshotClipboard();
             if (original == null)
                 return new ActionResult(
                     false, Message: "Clipboard formats couldn't be preserved safely");
@@ -80,17 +82,32 @@ public class PastePlainTextAction : IAction, IOperationAction
 
             // Give the target time to consume the plain text, then restore only while the exact
             // sequence and clipboard owner from our write are unchanged.
+            var restoreSnapshot = original;
             _ = Application.Current.Dispatcher.InvokeAsync(async () =>
             {
-                await Task.Delay(200);
-                TextCapture.RestoreClipboardIfUnchanged(original, written.Value);
+                try
+                {
+                    await Task.Delay(200);
+                    TextCapture.RestoreClipboardIfUnchanged(
+                        restoreSnapshot, written.Value);
+                }
+                finally
+                {
+                    restoreSnapshot.Dispose();
+                }
             }, DispatcherPriority.Background);
+            deferredRestoreOwnsSnapshot = true;
 
             return new ActionResult(true, Message: "Pasted as plain text");
         }
         catch
         {
             return new ActionResult(false, Message: "Failed to paste");
+        }
+        finally
+        {
+            if (!deferredRestoreOwnsSnapshot)
+                original?.Dispose();
         }
     }
 }

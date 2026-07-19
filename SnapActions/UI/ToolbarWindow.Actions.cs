@@ -95,6 +95,7 @@ public partial class ToolbarWindow
                 if (!TextCapture.CanStartClipboardWrite(
                         previous, TextCapture.ObserveClipboard()))
                 {
+                    previous.Dispose();
                     await ShowFailureAndHide("Clipboard changed — action cancelled");
                     return;
                 }
@@ -130,10 +131,15 @@ public partial class ToolbarWindow
                     else
                         ScheduleClipboardRestore(previous, supersededWrite);
                 }
+                else
+                {
+                    previous?.Dispose();
+                }
                 return;
             }
             if (!writeSucceeded)
             {
+                previous?.Dispose();
                 await ShowFailureAndHide(
                     "Clipboard changed or couldn't be written — action cancelled");
                 return;
@@ -153,6 +159,7 @@ public partial class ToolbarWindow
                         && written is { } partialWrite
                         && TextCapture.RestoreClipboardIfUnchanged(
                             previous, partialWrite);
+                    previous?.Dispose();
                     if (_generation != actionGeneration) return;
                     await ShowFailureAndHide(
                         restored
@@ -167,11 +174,17 @@ public partial class ToolbarWindow
                 {
                     if (previous != null && written is { } failedWrite)
                         TextCapture.RestoreClipboardIfUnchanged(previous, failedWrite);
+                    previous?.Dispose();
                     if (_generation != actionGeneration) return;
                     await ShowFailureAndHide("Focus moved — paste cancelled");
                     return;
                 }
-                if (_generation != actionGeneration) return;
+                if (_generation != actionGeneration)
+                {
+                    previous?.Dispose();
+                    return;
+                }
+                previous?.Dispose();
                 HideToolbar();
                 return;
             }
@@ -198,9 +211,16 @@ public partial class ToolbarWindow
     {
         Application.Current.Dispatcher.InvokeAsync(async () =>
         {
-            await Task.Delay(3000);
-            if (!TextCapture.RestoreClipboardIfUnchanged(snapshot, acceptedWrite))
-                Log.Info("Clipboard restore skipped because ownership changed");
+            try
+            {
+                await Task.Delay(3000);
+                if (!TextCapture.RestoreClipboardIfUnchanged(snapshot, acceptedWrite))
+                    Log.Info("Clipboard restore skipped because ownership changed");
+            }
+            finally
+            {
+                snapshot.Dispose();
+            }
         }, DispatcherPriority.Background);
     }
 

@@ -318,6 +318,215 @@ public class OperationSafetyTests
     }
 
     [Fact]
+    public void ClipboardRestoreBoundary_ForeignWriterDuringLockWinsOnlyAfterClose()
+    {
+        var accepted = new TextCapture.ClipboardObservation(
+            Sequence: 21, OwnerWindow: new IntPtr(31), OwnerProcessId: 40);
+        bool clipboardOpen = false;
+        bool foreignWritePending = false;
+        string clipboardValue = "SnapActions";
+        var events = new List<string>();
+        using var snapshot = new TextCapture.ClipboardSnapshot(
+            new Dictionary<string, object>(),
+            accepted,
+            new List<TextCapture.NativeClipboardFormatBackup>());
+        var nativeClipboard = CreateClipboardNativeApi(
+            open: () =>
+            {
+                clipboardOpen = true;
+                events.Add("open");
+                return true;
+            },
+            observe: () =>
+            {
+                Assert.True(clipboardOpen);
+                events.Add("observe");
+                foreignWritePending = true;
+                events.Add("foreign-blocked");
+                return accepted;
+            },
+            empty: () =>
+            {
+                Assert.True(clipboardOpen);
+                clipboardValue = "original";
+                events.Add("restore");
+                return true;
+            },
+            close: () =>
+            {
+                Assert.True(clipboardOpen);
+                clipboardOpen = false;
+                events.Add("close");
+                if (foreignWritePending)
+                {
+                    clipboardValue = "foreign";
+                    events.Add("foreign");
+                }
+                return true;
+            });
+
+        bool restored = TextCapture.RestoreClipboardIfUnchanged(
+            snapshot, accepted, nativeClipboard);
+
+        Assert.True(restored);
+        Assert.Equal("foreign", clipboardValue);
+        Assert.Equal(
+            ["open", "observe", "foreign-blocked", "restore", "close", "foreign"],
+            events);
+    }
+
+    [Fact]
+    public void ClipboardRestoreBoundary_ChangedBeforeLockedObservationDoesNotMutate()
+    {
+        var accepted = new TextCapture.ClipboardObservation(
+            Sequence: 21, OwnerWindow: new IntPtr(31), OwnerProcessId: 40);
+        var foreign = accepted with
+        {
+            Sequence = 22,
+            OwnerWindow = new IntPtr(32),
+            OwnerProcessId = 41,
+        };
+        bool clipboardOpen = false;
+        bool restoreCalled = false;
+        bool closeCalled = false;
+        using var snapshot = new TextCapture.ClipboardSnapshot(
+            new Dictionary<string, object>(),
+            accepted,
+            new List<TextCapture.NativeClipboardFormatBackup>());
+        var nativeClipboard = CreateClipboardNativeApi(
+            open: () =>
+            {
+                clipboardOpen = true;
+                return true;
+            },
+            observe: () =>
+            {
+                Assert.True(clipboardOpen);
+                return foreign;
+            },
+            empty: () =>
+            {
+                restoreCalled = true;
+                return true;
+            },
+            close: () =>
+            {
+                Assert.True(clipboardOpen);
+                clipboardOpen = false;
+                closeCalled = true;
+                return true;
+            });
+
+        bool restored = TextCapture.RestoreClipboardIfUnchanged(
+            snapshot, accepted, nativeClipboard);
+
+        Assert.False(restored);
+        Assert.False(restoreCalled);
+        Assert.True(closeCalled);
+    }
+
+    [Fact]
+    public void ClipboardRestoreBoundary_FormatFailureRollsBackBeforeClose()
+    {
+        var accepted = new TextCapture.ClipboardObservation(
+            Sequence: 21, OwnerWindow: new IntPtr(31), OwnerProcessId: 40);
+        int emptyCalls = 0;
+        int restoreCalls = 0;
+        bool clipboardOpen = false;
+        using var snapshot = new TextCapture.ClipboardSnapshot(
+            new Dictionary<string, object> { ["original"] = "value" },
+            accepted,
+            new List<TextCapture.NativeClipboardFormatBackup>
+            {
+                new(1, IntPtr.Zero, TextCapture.NativeClipboardHandleKind.GlobalMemory),
+            });
+        var nativeClipboard = CreateClipboardNativeApi(
+            open: () =>
+            {
+                clipboardOpen = true;
+                return true;
+            },
+            observe: () =>
+            {
+                Assert.True(clipboardOpen);
+                return accepted;
+            },
+            empty: () =>
+            {
+                Assert.True(clipboardOpen);
+                emptyCalls++;
+                return true;
+            },
+            close: () =>
+            {
+                Assert.True(clipboardOpen);
+                clipboardOpen = false;
+                return true;
+            },
+            duplicateFormats: () =>
+            [
+                new TextCapture.NativeClipboardFormatBackup(
+                    13, IntPtr.Zero,
+                    TextCapture.NativeClipboardHandleKind.GlobalMemory),
+            ],
+            restoreFormats: _ =>
+            {
+                Assert.True(clipboardOpen);
+                restoreCalls++;
+                return restoreCalls > 1;
+            });
+
+        bool restored = TextCapture.RestoreClipboardIfUnchanged(
+            snapshot, accepted, nativeClipboard);
+
+        Assert.False(restored);
+        Assert.Equal(2, emptyCalls);
+        Assert.Equal(2, restoreCalls);
+    }
+
+    [Fact]
+    public void ClipboardFormatTransfer_RelinquishesOnlySuccessfulHandles()
+    {
+        var backups = new List<TextCapture.NativeClipboardFormatBackup>
+        {
+            new(1, new IntPtr(101), TextCapture.NativeClipboardHandleKind.GlobalMemory),
+            new(2, new IntPtr(102), TextCapture.NativeClipboardHandleKind.GdiObject),
+            new(3, new IntPtr(103), TextCapture.NativeClipboardHandleKind.GlobalMemory),
+        };
+        var transferredFormats = new List<uint>();
+
+        bool restored = TextCapture.RestoreNativeClipboardBackups(
+            backups,
+            (format, handle) =>
+            {
+                transferredFormats.Add(format);
+                return format == 2 ? IntPtr.Zero : handle;
+            });
+
+        Assert.False(restored);
+        Assert.Equal([1u, 2u, 3u], transferredFormats);
+        Assert.Equal(IntPtr.Zero, backups[0].Handle);
+        Assert.Equal(new IntPtr(102), backups[1].Handle);
+        Assert.Equal(IntPtr.Zero, backups[2].Handle);
+    }
+
+    [Fact]
+    public void ClipboardSnapshot_NativeRestorePayloadIsOneShot()
+    {
+        var observation = new TextCapture.ClipboardObservation(
+            Sequence: 20, OwnerWindow: IntPtr.Zero, OwnerProcessId: 0);
+        using var snapshot = new TextCapture.ClipboardSnapshot(
+            new Dictionary<string, object>(),
+            observation,
+            new List<TextCapture.NativeClipboardFormatBackup>());
+
+        Assert.True(snapshot.HasNativeRestorePayload);
+        Assert.NotNull(snapshot.TakeNativeBackups());
+        Assert.False(snapshot.HasNativeRestorePayload);
+        Assert.Null(snapshot.TakeNativeBackups());
+    }
+
+    [Fact]
     public void ClipboardOwnership_ContinuesAcrossDelayedRenderingSequenceAdvance()
     {
         var accepted = new TextCapture.ClipboardObservation(
@@ -726,6 +935,26 @@ public class OperationSafetyTests
 
         Assert.Single(results, started => started);
     }
+
+    private static TextCapture.ClipboardNativeApi CreateClipboardNativeApi(
+        Func<bool> open,
+        Func<TextCapture.ClipboardObservation> observe,
+        Func<bool> empty,
+        Func<bool> close,
+        Func<List<TextCapture.NativeClipboardFormatBackup>?>? duplicateFormats = null,
+        Func<List<TextCapture.NativeClipboardFormatBackup>, bool>? restoreFormats = null) =>
+        new(
+            GetOwnerWindow: () => new IntPtr(50),
+            Open: _ => open(),
+            Observe: observe,
+            DuplicateFormats: duplicateFormats
+                              ?? (() => throw new InvalidOperationException(
+                                  "Format duplication was not expected")),
+            Empty: empty,
+            RestoreFormats: restoreFormats
+                            ?? (_ => throw new InvalidOperationException(
+                                "Format restoration was not expected")),
+            Close: close);
 
     private static TextCapture.KeyStroke[] BuildPasteStrokes() =>
     [
