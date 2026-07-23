@@ -746,6 +746,8 @@ public static class TextCapture
 
             // UIA pre-gate. Outcomes:
             //   HasText            — a real text selection; use it, skip the whole clipboard dance.
+            //   ConfirmedTextPreferExact — UIA proves text is selected, but its
+            //                         value may be wrong for bidi content. Use the app's copy path.
             //   SuppressItemElement — focus is a non-text item (Explorer file, desktop icon, list
             //                         row). Bail out: WM_COPY against those "succeeds" by copying
             //                         the filename/item text even though no text is selected.
@@ -765,8 +767,7 @@ public static class TextCapture
                 // hold the capture lock.
                 var probe = await RunBoundedUiaAsync(
                     () => ProbeSelectionViaUIA(
-                        cursorX, cursorY, preferKeystroke: allowSyntheticKeys,
-                        operation.Target.ProcessId,
+                        cursorX, cursorY, operation.Target.ProcessId,
                         operation.Target.AutomationRuntimeId),
                     new SelectionProbe(SelectionProbeOutcome.Unknown, null, "UIA pre-gate timed out"));
                 if (!await operation.CanInjectInputAsync()) return null;
@@ -776,6 +777,9 @@ public static class TextCapture
                     return probe.Text;
                 }
                 outcome = probe.Outcome;
+                if (outcome == SelectionProbeOutcome.ConfirmedTextPreferExact)
+                    SnapActions.Helpers.Log.Info(
+                        "UIA pre-gate confirmed a text selection — using exact clipboard capture");
                 if (outcome == SelectionProbeOutcome.SuppressItemElement && !aggressiveDrag)
                 {
                     SnapActions.Helpers.Log.Info($"UIA pre-gate suppressed capture: {probe.Reason}");
@@ -1187,6 +1191,9 @@ public static class TextCapture
     {
         /// <summary>UIA gave us the selected text directly — use it and skip the clipboard pipeline.</summary>
         HasText,
+        /// <summary>UIA confirmed a selection, but its returned text is not trusted.
+        /// Use the target application's copy path to preserve exact bidi content.</summary>
+        ConfirmedTextPreferExact,
         /// <summary>The focused element is a non-text item (Explorer file, desktop icon, list row).
         /// Definitive — capture must not run (WM_COPY would copy the item's name).</summary>
         SuppressItemElement,
@@ -1200,13 +1207,25 @@ public static class TextCapture
 
     internal readonly record struct SelectionProbe(SelectionProbeOutcome Outcome, string? Text, string? Reason);
 
+    internal static SelectionProbe ClassifyUiaSelection(
+        string text, bool fromCursorPoint) =>
+        fromCursorPoint
+            ? new SelectionProbe(
+                SelectionProbeOutcome.ConfirmedTextPreferExact,
+                null,
+                "selection confirmed; exact copy preferred")
+            : new SelectionProbe(
+                SelectionProbeOutcome.HasText,
+                text,
+                "UIA selection text accepted");
+
     /// <summary>Which capture layers a given gesture may run. Produced by <see cref="DecidePlan"/>.</summary>
     internal readonly record struct CapturePlan(bool RunWmCopy, bool RunUia, bool RunKeystroke);
 
     /// <summary>
     /// Pure policy: probe outcome × gesture → which layers run. The balance being struck:
     /// <list type="bullet">
-    ///   <item><b>EmptyTextPattern + drag</b> — full cascade (keystroke allowed). A drag that
+    ///   <item><b>EmptyTextPattern + drag</b> — exact clipboard cascade (keystroke allowed). A drag that
     ///     passed the I-beam and distance gates is the strongest possible selection signal; a
     ///     provider reporting "empty" against it is exactly the lying-provider class the
     ///     Ctrl+Insert fallback exists for. If there genuinely is no selection, Ctrl+Insert
@@ -1224,10 +1243,11 @@ public static class TextCapture
     ///     WM_COPY there would copy the item's name and pop a spurious toolbar — the false
     ///     positive the cursor gate's old hard-suppress prevented. Real web text yields
     ///     HasText/EmptyTextPattern (never Unknown), so the arrow/hand selection fix is untouched;
-    ///     custom-cursor quiet captures (Unknown cursor kind, not ambiguous) keep the WM_COPY
-    ///     fallback their custom-I-beam editors rely on.</item>
+    ///     custom-cursor quiet captures (Unknown cursor kind, not ambiguous) keep the WM_COPY/UIA
+    ///     fallback their custom-I-beam editors rely on. When exact copy is available, the later
+    ///     UIA pass is skipped so it cannot preempt Ctrl+Insert with a neighboring bidi run.</item>
     /// </list>
-    /// (HasText / SuppressItemElement are resolved before planning.)
+    /// (HasText / SuppressItemElement may be resolved before planning.)
     /// </summary>
     internal static CapturePlan DecidePlan(SelectionProbeOutcome outcome, bool isDrag,
         bool allowSyntheticKeys, bool ambiguousCursor = false)
@@ -1235,19 +1255,22 @@ public static class TextCapture
         // An ambiguous arrow/hand DRAG (not a click) is a strong selection signal; allowSyntheticKeys
         // is set for it by the caller (and cleared for Explorer/file managers). Its text is often
         // invisible to UIA/WM_COPY (X/Twitter feed), so the Ctrl+Insert keystroke is the reliable
-        // capture — run the full cascade even on an item-suppress (a feed tweet is a ListItem that
-        // holds text). Self-gating: no selection ⇒ sequence number doesn't move ⇒ nothing captured.
+        // capture — run the exact clipboard cascade even on an item-suppress (a feed tweet is a
+        // ListItem that holds text). Self-gating: no selection ⇒ sequence number doesn't move ⇒
+        // nothing captured.
         bool aggressiveDrag = ambiguousCursor && isDrag && allowSyntheticKeys;
         return outcome switch
         {
+            SelectionProbeOutcome.ConfirmedTextPreferExact =>
+                new(true, false, allowSyntheticKeys),
             SelectionProbeOutcome.SuppressItemElement => aggressiveDrag
-                ? new(true, true, true)
+                ? new(true, false, true)
                 : new(false, false, false),
             SelectionProbeOutcome.EmptyTextPattern => new(true, false, isDrag && allowSyntheticKeys),
             // Unknown: Full or ambiguous-drag (allowSyntheticKeys true) runs the keystroke cascade;
             // an ambiguous multi-click (no keys) stays silent to avoid a WM_COPY-on-item false
             // positive; a custom-cursor quiet capture keeps its WM_COPY fallback for editors.
-            _ when allowSyntheticKeys => new(true, true, true),
+            _ when allowSyntheticKeys => new(true, false, true),
             _ when ambiguousCursor => new(false, false, false),
             _ => new(true, true, false),
         };
@@ -1284,18 +1307,16 @@ public static class TextCapture
     ///
     /// <paramref name="cursorX"/>/<paramref name="cursorY"/> are the gesture point, used to read the
     /// selection from the element UNDER THE CURSOR when the walk from focus finds nothing — some
-    /// containers hold selectable text but focus lands on the container (X/Twitter exposes each feed
-    /// tweet as a ListItem, focused, not the text). That under-cursor read is skipped when
-    /// <paramref name="preferKeystroke"/> is set (a drag / Full capture, where the Ctrl+Insert
-    /// keystroke is available): GetSelection() misreads bidirectional (mixed LTR/RTL) selections —
-    /// FromPoint lands on an adjacent Arabic run and returns its text, not the selected Latin word —
-    /// whereas the keystroke copies exactly what the browser shows selected. So the rescue is only a
-    /// fallback for gestures with no keystroke (ambiguous multi-click / quiet custom-cursor capture).
+    /// containers hold selectable text but focus lands on the container (ChatGPT/Twitter expose
+    /// message/feed content inside ListItems). GetSelection() from that cursor-point element can
+    /// return the wrong adjacent run for bidirectional text, so its non-empty result is used only
+    /// as evidence that text is selected; the returned string is discarded and the target
+    /// application's copy path supplies the exact content. A selection found in the focused tree
+    /// remains trusted and clipboard-independent.
     /// </remarks>
     internal static SelectionProbe ProbeSelectionViaUIA(
         int cursorX,
         int cursorY,
-        bool preferKeystroke,
         uint expectedProcessId,
         string? expectedRuntimeId)
     {
@@ -1312,10 +1333,10 @@ public static class TextCapture
                 return new SelectionProbe(
                     SelectionProbeOutcome.Unknown, null, "focused element identity changed");
 
-            // Walk up looking for TextPattern. If ANY ancestor has TextPattern with non-empty
-            // selection → HasText (return immediately). If we exhaust the walk and saw at least
-            // one TextPattern but all were empty → Suppress. If we never saw TextPattern → fall
-            // through to the item-element check below.
+            // Walk up looking for TextPattern. If ANY ancestor has a non-empty selection,
+            // return that focused-tree text immediately. If we exhaust the walk and saw at
+            // least one TextPattern but all were empty → restrict the fallback. If we never
+            // saw TextPattern → fall through to the item-element check below.
             var walker = TreeWalker.RawViewWalker;
             var element = originalFocused;
             bool sawAnyTextPattern = false;
@@ -1335,7 +1356,8 @@ public static class TextCapture
                                 : string.Join("\n",
                                     ranges.Select(r => r.GetText(-1)).Where(s => !string.IsNullOrEmpty(s)));
                             if (!string.IsNullOrEmpty(combined))
-                                return new SelectionProbe(SelectionProbeOutcome.HasText, combined, null);
+                                return ClassifyUiaSelection(
+                                    combined, fromCursorPoint: false);
                         }
                         // TextPattern at this level returned no selection text. Keep walking up
                         // — an ancestor pane / document may have the real selection (browsers
@@ -1357,21 +1379,14 @@ public static class TextCapture
             // (a ListItem — or, inconsistently, a plain group), not the text, so the upward walk
             // from focus misses the tweet's own text, which sits right under the cursor. Covers
             // both the item case AND the plain-Unknown case.
-            // Read the selection from the element UNDER THE CURSOR — X/Twitter focuses the tweet
-            // container, not the text, so the walk from focus missed it. BUT GetSelection() is
-            // unreliable for bidirectional (mixed LTR/RTL) content: FromPoint lands on an adjacent
-            // Arabic run and returns ITS text, not the visually-selected Latin word (confirmed:
-            // a "literacy" drag read back 8 Arabic chars). So use this rescue ONLY when the
-            // reliable Ctrl+Insert keystroke isn't available (an ambiguous multi-click, or a quiet
-            // custom-cursor capture). When it IS available — a drag or a Full capture — we skip the
-            // rescue and let the keystroke copy exactly what the browser shows selected.
-            if (!preferKeystroke)
-            {
-                var atPoint = TryReadSelectionAtPoint(cursorX, cursorY, expectedProcessId);
-                if (!string.IsNullOrEmpty(atPoint))
-                    return new SelectionProbe(SelectionProbeOutcome.HasText, atPoint,
-                        "rescued selection under cursor");
-            }
+            // Read the selection from the element UNDER THE CURSOR. For bidi content the returned
+            // string may be an adjacent run rather than the exact visual selection, but a non-empty
+            // range still proves this is selectable text rather than a bare file/list item.
+            var atPoint = TryReadSelectionAtPoint(
+                cursorX, cursorY, expectedProcessId);
+            if (!string.IsNullOrEmpty(atPoint))
+                return ClassifyUiaSelection(
+                    atPoint, fromCursorPoint: true);
 
             // Layer C: check the originally-focused element for non-text item patterns —
             // Explorer file rows, desktop icons, list-box rows. SelectionItemPattern means

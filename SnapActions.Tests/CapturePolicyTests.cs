@@ -51,7 +51,11 @@ public class CapturePolicyTests
     {
         // A quiet capture (custom/unknown cursor) must not inject keys regardless of outcome.
         foreach (var outcome in new[]
-                 { TextCapture.SelectionProbeOutcome.EmptyTextPattern, TextCapture.SelectionProbeOutcome.Unknown })
+                 {
+                     TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact,
+                     TextCapture.SelectionProbeOutcome.EmptyTextPattern,
+                     TextCapture.SelectionProbeOutcome.Unknown
+                 })
         {
             Assert.False(TextCapture.DecidePlan(outcome, isDrag: true, allowSyntheticKeys: false).RunKeystroke);
             Assert.False(TextCapture.DecidePlan(outcome, isDrag: false, allowSyntheticKeys: false).RunKeystroke);
@@ -59,11 +63,11 @@ public class CapturePolicyTests
     }
 
     [Fact]
-    public void Plan_Unknown_RunsFullCascade()
+    public void Plan_Unknown_WithExactCopy_SkipsUia()
     {
         var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.Unknown,
             isDrag: false, allowSyntheticKeys: true);
-        Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: true, RunKeystroke: true), plan);
+        Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: false, RunKeystroke: true), plan);
     }
 
     [Fact]
@@ -81,21 +85,21 @@ public class CapturePolicyTests
     public void Plan_AmbiguousDrag_Unknown_RunsKeystrokeCascade()
     {
         // THE X/Twitter feed fix: an arrow/hand DRAG (strong selection signal) whose text UIA can't
-        // see runs the full cascade including the Ctrl+Insert keystroke (the caller sets keys=true
-        // for it). Self-gating: no selection ⇒ nothing copied ⇒ no toolbar.
+        // see runs the exact clipboard cascade including Ctrl+Insert (the caller sets keys=true
+        // for it). A second UIA read must not preempt that exact copy with an adjacent bidi run.
         var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.Unknown,
             isDrag: true, allowSyntheticKeys: true, ambiguousCursor: true);
-        Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: true, RunKeystroke: true), plan);
+        Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: false, RunKeystroke: true), plan);
     }
 
     [Fact]
     public void Plan_AmbiguousDrag_ItemSuppress_IsOverriddenToKeystrokeCascade()
     {
         // A feed tweet is a ListItem+SelectionItemPattern that HOLDS selectable text; an ambiguous
-        // drag over it must not hard-stop on the item signal — run the self-gating keystroke cascade.
+        // drag over it must not hard-stop on the item signal — run the exact clipboard cascade.
         var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.SuppressItemElement,
             isDrag: true, allowSyntheticKeys: true, ambiguousCursor: true);
-        Assert.Equal(new TextCapture.CapturePlan(true, true, true), plan);
+        Assert.Equal(new TextCapture.CapturePlan(true, false, true), plan);
     }
 
     [Fact]
@@ -116,6 +120,58 @@ public class CapturePolicyTests
         var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.SuppressItemElement,
             isDrag: true, allowSyntheticKeys: false, ambiguousCursor: true);
         Assert.Equal(new TextCapture.CapturePlan(false, false, false), plan);
+    }
+
+    [Fact]
+    public void Plan_ConfirmedTextPreferExact_UsesClipboardCopyNotUia()
+    {
+        // ChatGPT/Twitter can expose selectable message/feed text inside a focused ListItem.
+        // UIA proves that a selection exists, but the app's copy path must supply the exact text.
+        var plan = TextCapture.DecidePlan(
+            TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact,
+            isDrag: true,
+            allowSyntheticKeys: true);
+        Assert.Equal(
+            new TextCapture.CapturePlan(
+                RunWmCopy: true, RunUia: false, RunKeystroke: true),
+            plan);
+    }
+
+    [Fact]
+    public void Plan_ConfirmedTextPreferExact_WithoutSyntheticKeys_UsesWmCopyOnly()
+    {
+        var plan = TextCapture.DecidePlan(
+            TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact,
+            isDrag: true,
+            allowSyntheticKeys: false);
+        Assert.Equal(
+            new TextCapture.CapturePlan(
+                RunWmCopy: true, RunUia: false, RunKeystroke: false),
+            plan);
+    }
+
+    [Fact]
+    public void UiaSelection_FromCursorPoint_DiscardsPossiblyWrongText()
+    {
+        var probe = TextCapture.ClassifyUiaSelection(
+            "نص مجاور غير محدد",
+            fromCursorPoint: true);
+
+        Assert.Equal(
+            TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact,
+            probe.Outcome);
+        Assert.Null(probe.Text);
+    }
+
+    [Fact]
+    public void UiaSelection_FromFocusedTree_ReturnsTextDirectly()
+    {
+        var probe = TextCapture.ClassifyUiaSelection(
+            "selected text",
+            fromCursorPoint: false);
+
+        Assert.Equal(TextCapture.SelectionProbeOutcome.HasText, probe.Outcome);
+        Assert.Equal("selected text", probe.Text);
     }
 
     [Fact]
