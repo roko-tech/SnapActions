@@ -59,6 +59,18 @@ public class OperationSafetyTests
     }
 
     [Fact]
+    public void LateBoundTarget_PreservesCurrentOperationGeneration()
+    {
+        var source = new SelectionOperationSource();
+        var operation = source.Begin(Target);
+        var bound = operation.WithTarget(
+            Target with { AutomationRuntimeId = "42,1" });
+
+        Assert.True(bound.IsCurrent);
+        Assert.Equal("42,1", bound.Target.AutomationRuntimeId);
+    }
+
+    [Fact]
     public async Task DismissedOperation_CannotResumeMutation()
     {
         var source = new SelectionOperationSource();
@@ -118,6 +130,51 @@ public class OperationSafetyTests
     }
 
     [Theory]
+    [InlineData((int)TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact)]
+    [InlineData((int)TextCapture.SelectionProbeOutcome.EmptyTextPattern)]
+    [InlineData((int)TextCapture.SelectionProbeOutcome.SuppressItemElement)]
+    [InlineData((int)TextCapture.SelectionProbeOutcome.Unknown)]
+    public void SelectionProbe_BindsIdentityAfterEventTimeMiss(
+        int outcomeValue)
+    {
+        var outcome =
+            (TextCapture.SelectionProbeOutcome)outcomeValue;
+        var probe = new TextCapture.SelectionProbe(
+            outcome,
+            Text: null,
+            Reason: "probe completed",
+            AutomationRuntimeId: "42,1");
+
+        var bound = TextCapture.BindProbeIdentity(Target, probe);
+
+        Assert.Equal(Target with { AutomationRuntimeId = "42,1" }, bound);
+    }
+
+    [Fact]
+    public void ProbeIdentity_DoesNotReplaceEventTimeIdentity()
+    {
+        var target = Target with { AutomationRuntimeId = "42,1" };
+        var probe = new TextCapture.SelectionProbe(
+            TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact,
+            Text: null,
+            Reason: "selection confirmed",
+            AutomationRuntimeId: "42,2");
+
+        Assert.Equal(target, TextCapture.BindProbeIdentity(target, probe));
+    }
+
+    [Fact]
+    public void ProbeIdentity_DoesNotBindMissingObservedIdentity()
+    {
+        var probe = new TextCapture.SelectionProbe(
+            TextCapture.SelectionProbeOutcome.Unknown,
+            Text: null,
+            Reason: "no selection");
+
+        Assert.Equal(Target, TextCapture.BindProbeIdentity(Target, probe));
+    }
+
+    [Theory]
     [InlineData(99u, 13u)]
     [InlineData(12u, 99u)]
     public void ForegroundTarget_ReusedWindowWithDifferentProcessOrThreadDoesNotMatch(
@@ -135,16 +192,19 @@ public class OperationSafetyTests
     }
 
     [Fact]
-    public void ClipboardSnapshot_CustomFormatIsIncomplete()
+    public void ClipboardSnapshot_CustomFormatIsDeferredToNativeBackup()
     {
         var observation = new TextCapture.ClipboardObservation(
             Sequence: 10, OwnerWindow: new IntPtr(20), OwnerProcessId: 30);
         var reads = new[]
         {
-            new TextCapture.ClipboardFormatRead("application/x-custom", ReadSucceeded: true, HasValue: true),
+            new TextCapture.ClipboardFormatRead(
+                "Chromium internal source RFH token",
+                ReadSucceeded: false,
+                HasValue: false),
         };
 
-        Assert.False(TextCapture.IsCompleteSnapshot(observation, observation, reads));
+        Assert.True(TextCapture.IsCompleteSnapshot(observation, observation, reads));
     }
 
     [Fact]
@@ -251,15 +311,79 @@ public class OperationSafetyTests
     }
 
     [Fact]
-    public void ClipboardMutation_MultipleWritesRemainAmbiguous()
+    public void ClipboardMutation_MultiFormatExpectedOwnerIsReadableButUnrestorable()
+    {
+        var before = new TextCapture.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
+        var after = new TextCapture.ClipboardObservation(22, new IntPtr(31), OwnerProcessId: 40);
+
+        var ownership = TextCapture.ClassifyClipboardMutation(
+            before, after, requestDelivered: true, expectedOwnerProcessId: 40,
+            targetStillValid: true);
+
+        Assert.Equal(
+            TextCapture.ClipboardMutationOwnership.OwnedUnrestorable,
+            ownership);
+        Assert.True(TextCapture.CanReadClipboardMutation(ownership));
+        Assert.False(TextCapture.CanRestoreCapturedClipboard(
+            ownership, after, after));
+    }
+
+    [Fact]
+    public void ClipboardMutation_MultiFormatUndeliveredRequestRemainsAmbiguous()
     {
         var before = new TextCapture.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
         var after = new TextCapture.ClipboardObservation(22, new IntPtr(31), OwnerProcessId: 40);
 
         Assert.Equal(TextCapture.ClipboardMutationOwnership.Ambiguous,
             TextCapture.ClassifyClipboardMutation(
-                before, after, requestDelivered: true, expectedOwnerProcessId: 40,
+                before, after, requestDelivered: false, expectedOwnerProcessId: 40,
                 targetStillValid: true));
+    }
+
+    [Fact]
+    public void ClipboardMutation_UnstablePreCopyObservationRemainsAmbiguous()
+    {
+        var after = new TextCapture.ClipboardObservation(
+            22, new IntPtr(31), OwnerProcessId: 40);
+
+        Assert.Equal(TextCapture.ClipboardMutationOwnership.Ambiguous,
+            TextCapture.ClassifyClipboardMutation(
+                before: default, after, requestDelivered: true,
+                expectedOwnerProcessId: 40, targetStillValid: true));
+    }
+
+    [Fact]
+    public void ClipboardMutation_RestoreAuthorityRequiresUnchangedSingleStepWrite()
+    {
+        var accepted = new TextCapture.ClipboardObservation(
+            21, new IntPtr(31), OwnerProcessId: 40);
+
+        Assert.True(TextCapture.CanRestoreCapturedClipboard(
+            TextCapture.ClipboardMutationOwnership.Owned,
+            accepted, accepted));
+        Assert.False(TextCapture.CanRestoreCapturedClipboard(
+            TextCapture.ClipboardMutationOwnership.Owned,
+            accepted, accepted with { Sequence = 22 }));
+        Assert.False(TextCapture.CanRestoreCapturedClipboard(
+            TextCapture.ClipboardMutationOwnership.OwnedUnrestorable,
+            accepted, accepted));
+    }
+
+    [Theory]
+    [InlineData(0x2D, 0x00, true, true)]
+    [InlineData(0x2D, 0x10, true, false)]
+    [InlineData(0x2D, 0x00, false, false)]
+    [InlineData(0x43, 0x00, true, false)]
+    public void PhysicalCtrlInsert_DistinguishesInjectedCaptureChord(
+        int virtualKey,
+        int flags,
+        bool controlDown,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            KeyboardHook.IsPhysicalCtrlInsert(
+                virtualKey, flags, controlDown));
     }
 
     [Fact]
@@ -986,6 +1110,47 @@ public class OperationSafetyTests
             () => gate.TryStart(() => 3, out nextWorker),
             TimeSpan.FromSeconds(5)));
         Assert.Equal(3, await nextWorker!);
+    }
+
+    [Fact]
+    public async Task BusyWorkerGate_RetriesOnceAfterBoundedHandoff()
+    {
+        var gate = new SingleFlightWorkerGate();
+        using var firstEntered = new ManualResetEventSlim();
+        using var releaseFirst = new ManualResetEventSlim();
+        var handoffStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseHandoff = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var neverTimeout = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        Assert.True(gate.TryStart(
+            () =>
+            {
+                firstEntered.Set();
+                releaseFirst.Wait();
+                return 1;
+            },
+            out Task<int>? firstWorker));
+        Assert.True(firstEntered.Wait(TimeSpan.FromSeconds(5)));
+
+        Task<int> retry = gate.RunBoundedAsync(
+            () => 2,
+            onBusyOrTimeout: -1,
+            timeout: () => neverTimeout.Task,
+            busyHandoff: () =>
+            {
+                handoffStarted.SetResult();
+                return releaseHandoff.Task;
+            });
+
+        await handoffStarted.Task;
+        releaseFirst.Set();
+        Assert.Equal(1, await firstWorker!);
+        releaseHandoff.SetResult();
+
+        Assert.Equal(2, await retry);
     }
 
     private static TextCapture.ClipboardNativeApi CreateClipboardNativeApi(

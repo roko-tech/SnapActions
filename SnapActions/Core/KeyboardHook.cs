@@ -22,7 +22,9 @@ public static class KeyboardHook
     private const int WM_SYSKEYDOWN = 0x0104;
     private const int VK_ESCAPE = 0x1B;
     private const int VK_CONTROL = 0x11;
+    private const int VK_INSERT = 0x2D;
     private const int VK_C = 0x43;
+    private const int LLKHF_INJECTED = 0x10;
 
     private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
@@ -44,6 +46,12 @@ public static class KeyboardHook
     /// clipboard state. Marshal to the UI dispatcher before touching WPF.
     /// </summary>
     public static event Action? CtrlCPressed;
+
+    /// <summary>
+    /// Fires before a physical Ctrl+Insert copy reaches the foreground app. SnapActions' own
+    /// SendInput copy chord is excluded so it cannot invalidate the operation that emitted it.
+    /// </summary>
+    public static event Action? PhysicalCtrlInsertPressed;
 
     public static void Install()
     {
@@ -91,6 +99,14 @@ public static class KeyboardHook
         _hookThread = null; // reset so a later Install() isn't no-op'd by the non-null guard
     }
 
+    internal static bool IsPhysicalCtrlInsert(
+        int virtualKey,
+        int flags,
+        bool controlDown) =>
+        virtualKey == VK_INSERT
+        && controlDown
+        && (flags & LLKHF_INJECTED) == 0;
+
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
         try
@@ -102,13 +118,23 @@ public static class KeyboardHook
                 {
                     // KBDLLHOOKSTRUCT.vkCode is the first DWORD at lParam.
                     int vk = Marshal.ReadInt32(lParam, 0);
+                    bool controlDown =
+                        (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
                     if (vk == VK_ESCAPE)
                     {
                         try { EscPressed?.Invoke(); } catch { /* don't break the hook chain */ }
                     }
-                    else if (vk == VK_C && (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0)
+                    else if (vk == VK_C && controlDown)
                     {
                         try { CtrlCPressed?.Invoke(); } catch { /* don't break the hook chain */ }
+                    }
+                    else if (IsPhysicalCtrlInsert(
+                                 vk,
+                                 Marshal.ReadInt32(lParam, 8),
+                                 controlDown))
+                    {
+                        try { PhysicalCtrlInsertPressed?.Invoke(); }
+                        catch { /* don't break the hook chain */ }
                     }
                 }
             }

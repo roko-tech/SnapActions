@@ -168,10 +168,12 @@ public class CapturePolicyTests
     {
         var probe = TextCapture.ClassifyUiaSelection(
             "selected text",
-            fromCursorPoint: false);
+            fromCursorPoint: false,
+            automationRuntimeId: "42,1");
 
         Assert.Equal(TextCapture.SelectionProbeOutcome.HasText, probe.Outcome);
         Assert.Equal("selected text", probe.Text);
+        Assert.Equal("42,1", probe.AutomationRuntimeId);
     }
 
     [Fact]

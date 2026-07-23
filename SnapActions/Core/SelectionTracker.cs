@@ -52,6 +52,7 @@ public class SelectionTracker
         _mouseHook.LongPress += OnLongPress;
         _mouseHook.MouseDown += OnMouseDown;
         KeyboardHook.CtrlCPressed += OnCtrlCPressed;
+        KeyboardHook.PhysicalCtrlInsertPressed += OnPhysicalCtrlInsertPressed;
         KeyboardHook.EscPressed += OnEscPressed;
     }
 
@@ -70,20 +71,28 @@ public class SelectionTracker
     {
         _operations.Invalidate();
         KeyboardHook.CtrlCPressed -= OnCtrlCPressed;
+        KeyboardHook.PhysicalCtrlInsertPressed -= OnPhysicalCtrlInsertPressed;
         KeyboardHook.EscPressed -= OnEscPressed;
         _mouseHook.Uninstall();
         _mouseHook.Dispose();
     }
 
     /// <summary>
-    /// Opt-in trigger: the user pressed Ctrl+C, so they explicitly copied text — show the toolbar
-    /// for it with NO synthetic keystroke and NO clipboard clear (zero interference, intent is
-    /// unambiguous, so the I-beam/selection gates are skipped).
+    /// A real Ctrl+C supersedes any older capture. When the opt-in trigger is enabled, show the
+    /// toolbar for that explicit copy with NO synthetic keystroke and NO clipboard clear (zero
+    /// interference, so the I-beam/selection gates are skipped).
     /// </summary>
     private void OnCtrlCPressed()
     {
-        if (!SettingsManager.Current.CaptureOnCtrlC) return;
         if (IsSelfFocused()) return;
+        if (!SettingsManager.Current.CaptureOnCtrlC)
+        {
+            // A real user copy supersedes any pending selection capture even when Ctrl+C-triggered
+            // toolbars are disabled; otherwise the older capture could restore over the new copy.
+            _operations.Invalidate();
+            QueueHideStaleToolbar();
+            return;
+        }
         // Ctrl+C is explicit intent. Always let the newest event mint an operation so an older
         // mouse/clipboard continuation cannot win merely because this event landed in debounce.
         Interlocked.Exchange(ref _lastShowTicks, Environment.TickCount64);
@@ -92,6 +101,7 @@ public class SelectionTracker
         // threads, so assigning the generation after capture could let an older slow event
         // invalidate a genuinely newer fast one.
         var operation = _operations.Begin(default);
+        QueueHideStaleToolbar();
         operation = operation.WithTarget(
             ForegroundGuard.CaptureWithAutomationIdentity());
 
@@ -111,13 +121,13 @@ public class SelectionTracker
                 await Task.Delay(100); // let the OS finish placing the copied text on the clipboard
                 if (!await operation.CanInjectInputAsync()) return;
                 var clipboardAfter = TextCapture.ObserveClipboard();
-                if (TextCapture.ClassifyClipboardMutation(
+                if (!TextCapture.CanReadClipboardMutation(
+                        TextCapture.ClassifyClipboardMutation(
                         clipboardBefore,
                         clipboardAfter,
                         requestDelivered: true,
                         expectedOwnerProcessId: operation.Target.ProcessId,
-                        targetStillValid: ForegroundGuard.StillValid(operation.Target))
-                    != TextCapture.ClipboardMutationOwnership.Owned)
+                        targetStillValid: ForegroundGuard.StillValid(operation.Target))))
                     return;
 
                 var text = await TextCapture.ReadCurrentClipboardTextAsync();
@@ -154,6 +164,20 @@ public class SelectionTracker
 
     private void OnEscPressed() =>
         _operations.Invalidate();
+
+    private void OnPhysicalCtrlInsertPressed()
+    {
+        if (IsSelfFocused()) return;
+        _operations.Invalidate();
+        QueueHideStaleToolbar();
+    }
+
+    private void QueueHideStaleToolbar() =>
+        Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            if (_toolbar is { IsVisible: true })
+                _toolbar.HideToolbarIfOperationStale();
+        }, DispatcherPriority.Send);
 
     // Cheap PID check — no Process allocation, no string comparison
     private static bool IsSelfFocused()
@@ -288,12 +312,14 @@ public class SelectionTracker
                 // pending cut — and the browser-feed case this exists for never lands there.
                 bool allowKeys = aggressiveness == CaptureAggressiveness.Full
                                  || (ambiguousCursor && isDragTrigger && !ForegroundApp.IsFileManagerFocused());
-                var text = await TextCapture.CaptureSelectedTextAsync(
+                var capture = await TextCapture.CaptureSelectedTextAsync(
                     operation,
                     isDrag: isDragTrigger,
                     allowSyntheticKeys: allowKeys,
                     ambiguousCursor: ambiguousCursor,
                     cursorX: cursorPos.X, cursorY: cursorPos.Y);
+                operation = capture.Operation;
+                var text = capture.Text;
                 if (!await operation.CanInjectInputAsync()) return;
                 if (string.IsNullOrWhiteSpace(text))
                 {

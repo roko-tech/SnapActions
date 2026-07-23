@@ -58,19 +58,33 @@ internal sealed class SingleFlightWorkerGate
     internal Task<T> RunBoundedAsync<T>(
         Func<T> work,
         T onBusyOrTimeout,
-        int timeoutMs)
-        => RunBoundedAsync(
+        int timeoutMs,
+        int busyHandoffMs = 0)
+    {
+        Func<Task>? busyHandoff = busyHandoffMs > 0
+            ? () => Task.Delay(busyHandoffMs)
+            : null;
+        return RunBoundedAsync(
             work,
             onBusyOrTimeout,
-            () => Task.Delay(timeoutMs));
+            () => Task.Delay(timeoutMs),
+            busyHandoff);
+    }
 
     internal async Task<T> RunBoundedAsync<T>(
         Func<T> work,
         T onBusyOrTimeout,
-        Func<Task> timeout)
+        Func<Task> timeout,
+        Func<Task>? busyHandoff = null)
     {
         if (!TryStart(work, out Task<T>? worker))
-            return onBusyOrTimeout;
+        {
+            if (busyHandoff == null)
+                return onBusyOrTimeout;
+            await busyHandoff();
+            if (!TryStart(work, out worker))
+                return onBusyOrTimeout;
+        }
 
         var completed = await Task.WhenAny(
             worker!, timeout());
@@ -226,9 +240,10 @@ internal static class ForegroundGuard
     internal static Task<T> RunBoundedAutomationAsync<T>(
         Func<T> work,
         T onBusyOrTimeout,
-        int timeoutMs) =>
+        int timeoutMs,
+        int busyHandoffMs = 0) =>
         AutomationWorkers.RunBoundedAsync(
-            work, onBusyOrTimeout, timeoutMs);
+            work, onBusyOrTimeout, timeoutMs, busyHandoffMs);
 
     private static ForegroundTarget Enrich(ForegroundTarget target)
     {

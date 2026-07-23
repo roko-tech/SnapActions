@@ -47,9 +47,13 @@ public static class TextCapture
     // stale captures exit while the newest one is allowed to proceed.
     private static readonly System.Threading.SemaphoreSlim _captureLock = new(1, 1);
 
-    // Clipboard formats we can read eagerly and preserve as native handles. If even one advertised
-    // managed format or native handle cannot be captured safely, the snapshot is incomplete and
-    // every clipboard-mutating capture fallback is disabled; UIA may still capture without mutation.
+    internal readonly record struct CaptureResult(
+        string? Text,
+        SelectionOperation Operation);
+
+    // Clipboard formats whose managed values are used by actions such as Paste Plain Text.
+    // Other advertised formats stay out of the managed dictionary, but the native snapshot below
+    // must still duplicate every one of them before clipboard-mutating capture is allowed.
     private static readonly HashSet<string> RoundTrippableFormats = new(StringComparer.Ordinal)
     {
         System.Windows.DataFormats.UnicodeText, System.Windows.DataFormats.Text,
@@ -67,7 +71,10 @@ public static class TextCapture
     internal enum ClipboardMutationOwnership
     {
         None,
+        // Attributable single-step write; exact post-read observation may authorize restoration.
         Owned,
+        // Target-owned multi-step write; readable, but never authoritative enough to restore over.
+        OwnedUnrestorable,
         Ambiguous,
     }
 
@@ -190,9 +197,8 @@ public static class TextCapture
         before.Sequence != 0
         && before == after
         && reads.All(read =>
-            RoundTrippableFormats.Contains(read.Format)
-            && read.ReadSucceeded
-            && read.HasValue);
+            !RoundTrippableFormats.Contains(read.Format)
+            || (read.ReadSucceeded && read.HasValue));
 
     internal static ClipboardMutationOwnership ClassifyClipboardMutation(
         ClipboardObservation before,
@@ -216,13 +222,32 @@ public static class TextCapture
                 : ClipboardMutationOwnership.None;
         }
 
-        return requestDelivered
-               && unchecked(after.Sequence - before.Sequence) == 1
-               && targetStillValid
-               && expectedOwner
+        // One producer may advance the sequence several times while it empties the clipboard and
+        // publishes multiple formats (Chromium does this for text, HTML, and internal metadata).
+        // Attribute the completed copy by its delivered request, still-valid target, and final
+        // owner instead of treating the sequence delta as a producer count.
+        if (before.Sequence == 0
+            || !requestDelivered
+            || !targetStillValid
+            || !expectedOwner)
+            return ClipboardMutationOwnership.Ambiguous;
+
+        return unchecked(after.Sequence - before.Sequence) == 1
             ? ClipboardMutationOwnership.Owned
-            : ClipboardMutationOwnership.Ambiguous;
+            : ClipboardMutationOwnership.OwnedUnrestorable;
     }
+
+    internal static bool CanReadClipboardMutation(
+        ClipboardMutationOwnership ownership) =>
+        ownership is ClipboardMutationOwnership.Owned
+            or ClipboardMutationOwnership.OwnedUnrestorable;
+
+    internal static bool CanRestoreCapturedClipboard(
+        ClipboardMutationOwnership ownership,
+        ClipboardObservation accepted,
+        ClipboardObservation current) =>
+        ownership == ClipboardMutationOwnership.Owned
+        && CanRestoreClipboard(accepted, current);
 
     /// <summary>
     /// Classifies a write performed while OpenClipboard was held continuously from the
@@ -719,8 +744,10 @@ public static class TextCapture
     /// a UIA timeout can't have its filename copied (see <see cref="DecidePlan"/>);
     /// <paramref name="cursorX"/>/<paramref name="cursorY"/> are the gesture point, used by the UIA
     /// pre-gate to rescue selectable text inside item containers (X/Twitter feed tweets).
+    /// The result carries the operation with any late-bound logical focus identity so the toolbar
+    /// and its actions enforce the same exact target used during capture.
     /// </summary>
-    internal static async Task<string?> CaptureSelectedTextAsync(
+    internal static async Task<CaptureResult> CaptureSelectedTextAsync(
         SelectionOperation operation,
         bool isDrag,
         bool allowSyntheticKeys,
@@ -728,6 +755,8 @@ public static class TextCapture
         int cursorX,
         int cursorY)
     {
+        CaptureResult Result(string? text) => new(text, operation);
+
         // Queue behind an older capture, then discard whichever token is stale after acquisition.
         // Dropping the contender here would lose the newer selection while the stale one still ran.
         await _captureLock.WaitAsync();
@@ -735,7 +764,7 @@ public static class TextCapture
         ClipboardObservation? acceptedWrite = null;
         try
         {
-            if (!await operation.CanInjectInputAsync()) return null;
+            if (!await operation.CanInjectInputAsync()) return Result(null);
 
             // A drag under the ambiguous arrow/hand cursor is a strong selection signal (unlike a
             // click) whose text UIA and WM_COPY often can't read in Chromium (the X/Twitter feed).
@@ -769,12 +798,23 @@ public static class TextCapture
                     () => ProbeSelectionViaUIA(
                         cursorX, cursorY, operation.Target.ProcessId,
                         operation.Target.AutomationRuntimeId),
-                    new SelectionProbe(SelectionProbeOutcome.Unknown, null, "UIA pre-gate timed out"));
-                if (!await operation.CanInjectInputAsync()) return null;
+                    new SelectionProbe(SelectionProbeOutcome.Unknown, null, "UIA pre-gate unavailable"),
+                    busyHandoffMs: operation.Target.AutomationRuntimeId == null
+                        ? UiaBusyHandoffMs
+                        : 0);
+                if (!await operation.CanInjectInputAsync()) return Result(null);
+                var boundTarget = BindProbeIdentity(
+                    operation.Target, probe);
+                if (boundTarget != operation.Target)
+                {
+                    operation = operation.WithTarget(boundTarget);
+                    SnapActions.Helpers.Log.Info(
+                        "UIA pre-gate supplied the exact target identity");
+                }
                 if (probe.Outcome == SelectionProbeOutcome.HasText)
                 {
                     SnapActions.Helpers.Log.Info($"UIA pre-gate returned text ({probe.Text!.Length} chars) — skipping clipboard pipeline");
-                    return probe.Text;
+                    return Result(probe.Text);
                 }
                 outcome = probe.Outcome;
                 if (outcome == SelectionProbeOutcome.ConfirmedTextPreferExact)
@@ -783,7 +823,7 @@ public static class TextCapture
                 if (outcome == SelectionProbeOutcome.SuppressItemElement && !aggressiveDrag)
                 {
                     SnapActions.Helpers.Log.Info($"UIA pre-gate suppressed capture: {probe.Reason}");
-                    return null;
+                    return Result(null);
                 }
                 // For an ambiguous-cursor drag we deliberately DON'T bail on an item-suppress:
                 // X/Twitter exposes each feed tweet as a ListItem+SelectionItemPattern container of
@@ -795,19 +835,33 @@ public static class TextCapture
 
             var plan = DecidePlan(outcome, isDrag, allowSyntheticKeys, ambiguousCursor);
             if (skipUia) plan = plan with { RunUia = false };
-            if (!plan.RunWmCopy && !plan.RunUia && !plan.RunKeystroke) return null;
+            if ((plan.RunWmCopy || plan.RunKeystroke)
+                && !ForegroundGuard.HasSufficientInputIdentity(operation.Target))
+            {
+                SnapActions.Helpers.Log.Info(
+                    "Clipboard capture unavailable: exact target identity is missing");
+                plan = plan with { RunWmCopy = false, RunKeystroke = false };
+            }
+            if (!plan.RunWmCopy && !plan.RunUia && !plan.RunKeystroke)
+                return Result(null);
 
             // Clipboard-mutating fallbacks are permitted only with a complete, stable snapshot.
-            // Unsupported or delay-rendered formats make capture UIA-only rather than risking loss.
+            // Formats that cannot be duplicated natively, or unstable delay-rendered formats,
+            // make capture UIA-only rather than risking loss.
             if (plan.RunWmCopy || plan.RunKeystroke)
             {
                 saved = await Application.Current.Dispatcher.InvokeAsync(SnapshotClipboard);
-                if (!await operation.CanInjectInputAsync()) return null;
+                if (!await operation.CanInjectInputAsync()) return Result(null);
                 if (saved == null)
+                {
+                    SnapActions.Helpers.Log.Info(
+                        "Clipboard capture unavailable: native snapshot was incomplete");
                     plan = plan with { RunWmCopy = false, RunKeystroke = false };
+                }
             }
 
-            if (!plan.RunWmCopy && !plan.RunUia && !plan.RunKeystroke) return null;
+            if (!plan.RunWmCopy && !plan.RunUia && !plan.RunKeystroke)
+                return Result(null);
 
             string? text = null;
             bool ambiguousClipboardChange = false;
@@ -834,14 +888,16 @@ public static class TextCapture
                     var ownership = ClassifyClipboardMutation(
                         before, after, delivered, operation.Target.ProcessId,
                         targetStillValid);
-                    if (ownership == ClipboardMutationOwnership.Owned)
+                    if (CanReadClipboardMutation(ownership))
                     {
                         text = await ReadClipboard();
                         var afterRead = ObserveClipboard();
                         if (ContinuesOwnedClipboard(
                                 after, afterRead, operation.Target.ProcessId))
                         {
-                            acceptedWrite = afterRead;
+                            if (CanRestoreCapturedClipboard(
+                                    ownership, after, afterRead))
+                                acceptedWrite = afterRead;
                         }
                         else
                         {
@@ -865,7 +921,7 @@ public static class TextCapture
                         operation.Target.ProcessId,
                         operation.Target.AutomationRuntimeId),
                     null);
-                if (!await operation.CanInjectInputAsync()) return null;
+                if (!await operation.CanInjectInputAsync()) return Result(null);
             }
 
             // Last resort: Ctrl+Insert. Stop after any ambiguous clipboard change; issuing another
@@ -921,14 +977,16 @@ public static class TextCapture
                                 var ownership = ClassifyClipboardMutation(
                                     before, after, delivered, operation.Target.ProcessId,
                                     targetStillValid);
-                                if (ownership == ClipboardMutationOwnership.Owned)
+                                if (CanReadClipboardMutation(ownership))
                                 {
                                     text = await ReadClipboard();
                                     var afterRead = ObserveClipboard();
                                     if (ContinuesOwnedClipboard(
                                             after, afterRead, operation.Target.ProcessId))
                                     {
-                                        acceptedWrite = afterRead;
+                                        if (CanRestoreCapturedClipboard(
+                                                ownership, after, afterRead))
+                                            acceptedWrite = afterRead;
                                     }
                                     else
                                     {
@@ -947,12 +1005,17 @@ public static class TextCapture
                 }
             }
 
-            return await operation.CanInjectInputAsync() ? text : null;
+            if (!await operation.CanInjectInputAsync())
+                return Result(null);
+            if (string.IsNullOrEmpty(text))
+                SnapActions.Helpers.Log.Info(
+                    $"Selection capture produced no text (WM_COPY={plan.RunWmCopy}, UIA={plan.RunUia}, CtrlInsert={plan.RunKeystroke}, clipboardAmbiguous={ambiguousClipboardChange})");
+            return Result(text);
         }
         catch (Exception ex)
         {
             SnapActions.Helpers.Log.Error("Capture error", ex);
-            return null;
+            return Result(null);
         }
         finally
         {
@@ -974,17 +1037,21 @@ public static class TextCapture
     };
 
     private const int UiaCallTimeoutMs = 500;
+    private const int UiaBusyHandoffMs = 50;
 
     /// <summary>
     /// Runs a UIA call with a hard timeout and a shared pre-start single-flight gate. If a broken
     /// provider blocks inside GetSelection/GetText, the await returns its fallback but the gate
-    /// stays occupied until that underlying call really exits. Later UIA calls fail fast instead
-    /// of accumulating more stranded workers.
+    /// stays occupied until that underlying call really exits. Calls normally fail fast while it
+    /// is occupied; the selection pre-gate may wait once for a short event-identity handoff, then
+    /// retry without ever admitting concurrent UIA workers.
     /// </summary>
     private static Task<T> RunBoundedUiaAsync<T>(
-        Func<T> uiaCall, T onTimeout) =>
+        Func<T> uiaCall,
+        T onTimeout,
+        int busyHandoffMs = 0) =>
         ForegroundGuard.RunBoundedAutomationAsync(
-            uiaCall, onTimeout, UiaCallTimeoutMs);
+            uiaCall, onTimeout, UiaCallTimeoutMs, busyHandoffMs);
 
     /// <summary>
     /// Waits up to ~300 ms for the user to release the given modifier keys before we inject a
@@ -1015,9 +1082,10 @@ public static class TextCapture
     }
 
     /// <summary>
-    /// Eagerly snapshots every advertised clipboard format that can be round-tripped safely.
-    /// Any unsupported/failed format or concurrent clipboard write rejects the whole snapshot;
-    /// callers must then avoid clipboard-mutating capture fallbacks.
+    /// Eagerly reads the managed clipboard formats used by actions, then duplicates every native
+    /// format for lossless restoration. Managed-only custom formats are deferred to that native
+    /// backup instead of rejecting common Chromium clipboards before duplication is attempted.
+    /// A failed required managed read, native duplication, or concurrent write rejects the snapshot.
     /// </summary>
     internal static ClipboardSnapshot? SnapshotClipboard()
     {
@@ -1205,19 +1273,36 @@ public static class TextCapture
         Unknown,
     }
 
-    internal readonly record struct SelectionProbe(SelectionProbeOutcome Outcome, string? Text, string? Reason);
+    internal readonly record struct SelectionProbe(
+        SelectionProbeOutcome Outcome,
+        string? Text,
+        string? Reason,
+        string? AutomationRuntimeId = null);
 
     internal static SelectionProbe ClassifyUiaSelection(
-        string text, bool fromCursorPoint) =>
+        string text,
+        bool fromCursorPoint,
+        string? automationRuntimeId = null) =>
         fromCursorPoint
             ? new SelectionProbe(
                 SelectionProbeOutcome.ConfirmedTextPreferExact,
                 null,
-                "selection confirmed; exact copy preferred")
+                "selection confirmed; exact copy preferred",
+                automationRuntimeId)
             : new SelectionProbe(
                 SelectionProbeOutcome.HasText,
                 text,
-                "UIA selection text accepted");
+                "UIA selection text accepted",
+                automationRuntimeId);
+
+    internal static ForegroundTarget BindProbeIdentity(
+        ForegroundTarget target,
+        SelectionProbe probe) =>
+        target.IsComplete
+        && target.AutomationRuntimeId == null
+        && probe.AutomationRuntimeId != null
+            ? target with { AutomationRuntimeId = probe.AutomationRuntimeId }
+            : target;
 
     /// <summary>Which capture layers a given gesture may run. Produced by <see cref="DecidePlan"/>.</summary>
     internal readonly record struct CapturePlan(bool RunWmCopy, bool RunUia, bool RunKeystroke);
@@ -1312,7 +1397,9 @@ public static class TextCapture
     /// return the wrong adjacent run for bidirectional text, so its non-empty result is used only
     /// as evidence that text is selected; the returned string is discarded and the target
     /// application's copy path supplies the exact content. A selection found in the focused tree
-    /// remains trusted and clipboard-independent.
+    /// remains trusted and clipboard-independent. Probe results also carry the focused element's
+    /// runtime ID to fill a missed 50 ms event-time identity for the toolbar and any clipboard
+    /// fallback; every later mutation still revalidates that exact ID immediately before input.
     /// </remarks>
     internal static SelectionProbe ProbeSelectionViaUIA(
         int cursorX,
@@ -1329,9 +1416,13 @@ public static class TextCapture
             if ((uint)originalFocused.Current.ProcessId != expectedProcessId)
                 return new SelectionProbe(
                     SelectionProbeOutcome.Unknown, null, "focused element belongs to another process");
-            if (!MatchesAutomationRuntimeId(originalFocused, expectedRuntimeId))
+            if (!MatchesAutomationRuntimeId(
+                    originalFocused, expectedRuntimeId))
                 return new SelectionProbe(
                     SelectionProbeOutcome.Unknown, null, "focused element identity changed");
+            string? RuntimeIdForResult() =>
+                expectedRuntimeId
+                ?? TryReadAutomationRuntimeId(originalFocused);
 
             // Walk up looking for TextPattern. If ANY ancestor has a non-empty selection,
             // return that focused-tree text immediately. If we exhaust the walk and saw at
@@ -1357,7 +1448,9 @@ public static class TextCapture
                                     ranges.Select(r => r.GetText(-1)).Where(s => !string.IsNullOrEmpty(s)));
                             if (!string.IsNullOrEmpty(combined))
                                 return ClassifyUiaSelection(
-                                    combined, fromCursorPoint: false);
+                                    combined,
+                                    fromCursorPoint: false,
+                                    automationRuntimeId: RuntimeIdForResult());
                         }
                         // TextPattern at this level returned no selection text. Keep walking up
                         // — an ancestor pane / document may have the real selection (browsers
@@ -1372,7 +1465,9 @@ public static class TextCapture
 
             if (sawAnyTextPattern)
                 return new SelectionProbe(SelectionProbeOutcome.EmptyTextPattern,
-                    null, "TextPattern present but selection is empty");
+                    null,
+                    "TextPattern present but selection is empty",
+                    RuntimeIdForResult());
 
             // No TextPattern anywhere up the walk from FOCUS. Before classifying, read the
             // selection from the element UNDER THE CURSOR: X/Twitter focuses the tweet container
@@ -1385,8 +1480,12 @@ public static class TextCapture
             var atPoint = TryReadSelectionAtPoint(
                 cursorX, cursorY, expectedProcessId);
             if (!string.IsNullOrEmpty(atPoint))
+            {
                 return ClassifyUiaSelection(
-                    atPoint, fromCursorPoint: true);
+                    atPoint,
+                    fromCursorPoint: true,
+                    automationRuntimeId: RuntimeIdForResult());
+            }
 
             // Layer C: check the originally-focused element for non-text item patterns —
             // Explorer file rows, desktop icons, list-box rows. SelectionItemPattern means
@@ -1398,11 +1497,17 @@ public static class TextCapture
                 if (NonTextItemTypes.Contains(ct)
                     && originalFocused.TryGetCurrentPattern(SelectionItemPattern.Pattern, out _))
                     return new SelectionProbe(SelectionProbeOutcome.SuppressItemElement,
-                        null, $"focused element is {ct.ProgrammaticName} with SelectionItemPattern");
+                        null,
+                        $"focused element is {ct.ProgrammaticName} with SelectionItemPattern",
+                        RuntimeIdForResult());
             }
             catch { /* couldn't read ControlType — fall through to Unknown */ }
 
-            return new SelectionProbe(SelectionProbeOutcome.Unknown, null, "no TextPattern, not a known non-text item");
+            return new SelectionProbe(
+                SelectionProbeOutcome.Unknown,
+                null,
+                "no TextPattern, not a known non-text item",
+                RuntimeIdForResult());
         }
         catch (Exception ex)
         {
@@ -1511,15 +1616,22 @@ public static class TextCapture
         AutomationElement element, string? expectedRuntimeId)
     {
         if (expectedRuntimeId == null) return true;
+        return TryReadAutomationRuntimeId(element) == expectedRuntimeId;
+    }
+
+    private static string? TryReadAutomationRuntimeId(
+        AutomationElement element)
+    {
         try
         {
             int[] runtimeId = element.GetRuntimeId();
             return runtimeId.Length > 0
-                   && string.Join(",", runtimeId) == expectedRuntimeId;
+                ? string.Join(",", runtimeId)
+                : null;
         }
         catch
         {
-            return false;
+            return null;
         }
     }
 
