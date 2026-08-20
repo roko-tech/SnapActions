@@ -177,6 +177,22 @@ public class CapturePolicyTests
     }
 
     [Fact]
+    public void UiaSelection_FromFocusedTree_WithExactCopy_DiscardsPossiblyWrongBidiText()
+    {
+        var probe = TextCapture.ClassifyUiaSelection(
+            "دراما العائلي الكوري",
+            fromCursorPoint: false,
+            preferExactCopy: true,
+            automationRuntimeId: "42,1");
+
+        Assert.Equal(
+            TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact,
+            probe.Outcome);
+        Assert.Null(probe.Text);
+        Assert.Equal("42,1", probe.AutomationRuntimeId);
+    }
+
+    [Fact]
     public void Plan_AmbiguousCursor_EmptyTextPattern_KeepsWmCopy()
     {
         // The feed's lying-provider path must survive: arrow/hand + EmptyTextPattern keeps WM_COPY

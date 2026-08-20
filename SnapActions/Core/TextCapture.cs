@@ -797,7 +797,8 @@ public static class TextCapture
                 var probe = await RunBoundedUiaAsync(
                     () => ProbeSelectionViaUIA(
                         cursorX, cursorY, operation.Target.ProcessId,
-                        operation.Target.AutomationRuntimeId),
+                        operation.Target.AutomationRuntimeId,
+                        preferExactCopy: allowSyntheticKeys),
                     new SelectionProbe(SelectionProbeOutcome.Unknown, null, "UIA pre-gate unavailable"),
                     busyHandoffMs: operation.Target.AutomationRuntimeId == null
                         ? UiaBusyHandoffMs
@@ -1282,8 +1283,9 @@ public static class TextCapture
     internal static SelectionProbe ClassifyUiaSelection(
         string text,
         bool fromCursorPoint,
+        bool preferExactCopy = false,
         string? automationRuntimeId = null) =>
-        fromCursorPoint
+        fromCursorPoint || preferExactCopy
             ? new SelectionProbe(
                 SelectionProbeOutcome.ConfirmedTextPreferExact,
                 null,
@@ -1396,16 +1398,19 @@ public static class TextCapture
     /// message/feed content inside ListItems). GetSelection() from that cursor-point element can
     /// return the wrong adjacent run for bidirectional text, so its non-empty result is used only
     /// as evidence that text is selected; the returned string is discarded and the target
-    /// application's copy path supplies the exact content. A selection found in the focused tree
-    /// remains trusted and clipboard-independent. Probe results also carry the focused element's
-    /// runtime ID to fill a missed 50 ms event-time identity for the toolbar and any clipboard
-    /// fallback; every later mutation still revalidates that exact ID immediately before input.
+    /// application's copy path supplies the exact content. A focused-tree selection is likewise
+    /// treated as evidence only when <paramref name="preferExactCopy"/> is true: Chromium can expose
+    /// the same wrong adjacent bidi run there. Quiet captures that cannot inject an exact copy keep
+    /// using focused-tree text directly. Probe results also carry the focused element's runtime ID
+    /// to fill a missed 50 ms event-time identity for the toolbar and any clipboard fallback; every
+    /// later mutation still revalidates that exact ID immediately before input.
     /// </remarks>
     internal static SelectionProbe ProbeSelectionViaUIA(
         int cursorX,
         int cursorY,
         uint expectedProcessId,
-        string? expectedRuntimeId)
+        string? expectedRuntimeId,
+        bool preferExactCopy)
     {
         AutomationElement? originalFocused = null;
         try
@@ -1450,6 +1455,7 @@ public static class TextCapture
                                 return ClassifyUiaSelection(
                                     combined,
                                     fromCursorPoint: false,
+                                    preferExactCopy: preferExactCopy,
                                     automationRuntimeId: RuntimeIdForResult());
                         }
                         // TextPattern at this level returned no selection text. Keep walking up
