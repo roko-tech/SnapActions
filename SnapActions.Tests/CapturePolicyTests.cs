@@ -75,6 +75,130 @@ public class CapturePolicyTests
         Assert.Equal("selected text", probe.Text);
     }
 
+    [Fact]
+    public void UiaSelection_ClipboardFreeChromiumGesture_ReplacesWrongSameLengthBidiRun()
+    {
+        var probe = TextCapture.ClassifyUiaSelection(
+            "ب ثاني ",
+            fromCursorPoint: false,
+            gestureText: "ChatGPT",
+            requireGestureText: true);
+
+        Assert.Equal(TextCapture.SelectionProbeOutcome.HasText, probe.Outcome);
+        Assert.Equal("ChatGPT", probe.Text);
+    }
+
+    [Fact]
+    public void UiaSelection_ClipboardFreeChromiumDoubleClick_RejectsDifferentLengthGuess()
+    {
+        var probe = TextCapture.ClassifyUiaSelection(
+            "selected text",
+            fromCursorPoint: false,
+            gestureText: "word",
+            requireGestureText: true);
+
+        Assert.Equal(TextCapture.SelectionProbeOutcome.UntrustedText, probe.Outcome);
+        Assert.Null(probe.Text);
+    }
+
+    [Fact]
+    public void UiaSelection_ClipboardFreeChromiumDrag_AcceptsDifferentLengthMixedBidiRange()
+    {
+        var probe = TextCapture.ClassifyUiaSelection(
+            "كلمات عربية مجاورة",
+            fromCursorPoint: false,
+            gestureText: "هل تريد ChatGPT الآن؟",
+            requireGestureText: true,
+            acceptGestureLengthMismatch: true);
+
+        Assert.Equal(TextCapture.SelectionProbeOutcome.HasText, probe.Outcome);
+        Assert.Equal("هل تريد ChatGPT الآن؟", probe.Text);
+    }
+
+    [Theory]
+    [InlineData(1238, 1463)]
+    [InlineData(1463, 1238)]
+    public void ChromiumDragGeometry_IgnoresDuplicateBidiCaretRectangle(
+        int startX,
+        int endX)
+    {
+        var gesture = new TextCapture.SelectionGesture(
+            IsDrag: true,
+            ClickCount: 1,
+            StartX: startX,
+            StartY: 1485,
+            EndX: endX,
+            EndY: 1485);
+
+        Assert.False(TextCapture.IsCharacterInsideDrag(
+            [
+                new System.Windows.Rect(1439, 1453, 1, 57),
+                new System.Windows.Rect(2491, 1453, 32, 57),
+            ],
+            gesture));
+        Assert.True(TextCapture.IsCharacterInsideDrag(
+            [new System.Windows.Rect(1439, 1453, 12, 57)],
+            gesture));
+    }
+
+    [Fact]
+    public void ChromiumDragGeometry_RotatesEnglishRunBackToLogicalOrder()
+    {
+        const string visualLine = "ChatGPTمرحبا ";
+        var text = TextCapture.MapVisualSelectionToLogicalText(
+            visualLine,
+            [
+                new TextCapture.Utf16Span(0, "ChatGPT".Length),
+                new TextCapture.Utf16Span(visualLine.Length - 1, 1),
+            ],
+            "earlier line\nمرحبا ChatGPT\nlater line");
+
+        Assert.Equal("ChatGPT", text);
+    }
+
+    [Fact]
+    public void ChromiumDragGeometry_ReturnsMixedSelectionInLogicalOrder()
+    {
+        const string visualLine = "ChatGPTمرحبا ";
+        var text = TextCapture.MapVisualSelectionToLogicalText(
+            visualLine,
+            [
+                new TextCapture.Utf16Span(0, "ChatGPT".Length),
+                new TextCapture.Utf16Span(visualLine.Length - 2, 1),
+                new TextCapture.Utf16Span(visualLine.Length - 1, 1),
+            ],
+            "مرحبا ChatGPT");
+
+        Assert.Equal("ا ChatGPT", text);
+    }
+
+    [Fact]
+    public void ChromiumDragGeometry_RejectsNoncontiguousLogicalGuess()
+    {
+        const string visualLine = "ChatGPTمرحبا ";
+        var text = TextCapture.MapVisualSelectionToLogicalText(
+            visualLine,
+            [
+                new TextCapture.Utf16Span(0, "ChatGPT".Length),
+                new TextCapture.Utf16Span("ChatGPT".Length, 1),
+            ],
+            "مرحبا ChatGPT");
+
+        Assert.Null(text);
+    }
+
+    [Fact]
+    public void Plan_ClipboardFree_UntrustedText_FailsClosed()
+    {
+        var plan = TextCapture.DecidePlan(
+            TextCapture.SelectionProbeOutcome.UntrustedText,
+            isDrag: true,
+            allowSyntheticKeys: false,
+            allowClipboardCapture: false);
+
+        Assert.Equal(new TextCapture.CapturePlan(false, false, false), plan);
+    }
+
     // ── TextCapture.DecidePlan ───────────────────────────────────────────────
 
     [Fact]

@@ -109,7 +109,7 @@ public class MouseHook : IDisposable
         MultiClick,
     }
 
-    public event Action<POINT, SelectionTrigger>? SelectionLikely;
+    public event Action<POINT, SelectionTrigger, int>? SelectionLikely;
     public event Action<POINT>? LongPress;
     public event Action<POINT>? MouseDown;
 
@@ -214,7 +214,7 @@ public class MouseHook : IDisposable
         // read as a selection. See the WM_LBUTTONDOWN note for why this runs at fire time.
         if (_clickCount >= 2 && IsClickOnClientArea(_lastClickPoint))
         {
-            try { SelectionLikely?.Invoke(_lastClickPoint, SelectionTrigger.MultiClick); }
+            try { SelectionLikely?.Invoke(_lastClickPoint, SelectionTrigger.MultiClick, _clickCount); }
             catch (Exception ex) { Log.Warn($"SelectionLikely (multi-click) handler threw: {ex.Message}"); }
         }
         _clickCount = 0;
@@ -341,7 +341,7 @@ public class MouseHook : IDisposable
                     Log.Info($"Suppressed: drag started at ({_mouseDownPoint.X},{_mouseDownPoint.Y}) on a non-client area (title bar / border / scrollbar)");
                     return;
                 }
-                try { SelectionLikely?.Invoke(up, SelectionTrigger.Drag); }
+                try { SelectionLikely?.Invoke(up, SelectionTrigger.Drag, 1); }
                 catch (Exception ex) { Log.Warn($"SelectionLikely (drag) handler threw: {ex.Message}"); }
                 _clickCount = 0;
                 _lastClickTicks = 0;
@@ -363,7 +363,7 @@ public class MouseHook : IDisposable
                         // doesn't fire SelectionLikely twice.
                         if (_clickCount == 2 && IsClickOnClientArea(up))
                         {
-                            try { SelectionLikely?.Invoke(up, SelectionTrigger.MultiClick); }
+                            try { SelectionLikely?.Invoke(up, SelectionTrigger.MultiClick, _clickCount); }
                             catch (Exception ex) { Log.Warn($"SelectionLikely (instant double-click) handler threw: {ex.Message}"); }
                         }
                     }

@@ -42,6 +42,7 @@ public class SelectionTracker
     /// pre-dispatch part of OnSelectionLikely both run there).
     /// </summary>
     private CursorKind _mouseDownCursor = CursorKind.Unreadable;
+    private MouseHook.POINT _mouseDownPoint;
 
     public SelectionTracker()
     {
@@ -206,6 +207,7 @@ public class SelectionTracker
 
         // Sample the cursor shape now, while the press is on its target — see _mouseDownCursor.
         _mouseDownCursor = CursorShape.Classify();
+        _mouseDownPoint = pt;
 
         // Snapshot foreground HWND before the click-triggered action runs. The low-level mouse
         // hook fires before the OS dispatches WM_LBUTTONDOWN to the target, so any double-click
@@ -252,7 +254,10 @@ public class SelectionTracker
     /// Paste-mode triggers (long-press or double-click) still use IsTextInputAtPoint at the cursor —
     /// paste mode showing on a button or scrollbar is worse than the same false-positive cost there.
     /// </summary>
-    private void OnSelectionLikely(MouseHook.POINT cursorPos, MouseHook.SelectionTrigger trigger)
+    private void OnSelectionLikely(
+        MouseHook.POINT cursorPos,
+        MouseHook.SelectionTrigger trigger,
+        int clickCount)
     {
         if (IsSelfFocused()) return;
         if (MouseHook.IsProcessWindowAtPoint(cursorPos, OwnPid)) return;
@@ -287,6 +292,22 @@ public class SelectionTracker
         operation = operation.WithTarget(
             ForegroundGuard.CaptureWithAutomationIdentity());
 
+        var gesture = trigger == MouseHook.SelectionTrigger.Drag
+            ? new TextCapture.SelectionGesture(
+                IsDrag: true,
+                ClickCount: clickCount,
+                StartX: _mouseDownPoint.X,
+                StartY: _mouseDownPoint.Y,
+                EndX: cursorPos.X,
+                EndY: cursorPos.Y)
+            : new TextCapture.SelectionGesture(
+                IsDrag: false,
+                ClickCount: clickCount,
+                StartX: cursorPos.X,
+                StartY: cursorPos.Y,
+                EndX: cursorPos.X,
+                EndY: cursorPos.Y);
+
         // Capture into a local so the closure sees the value at *this* SelectionLikely fire,
         // not whatever a later click might overwrite it with while we're awaiting UIA.
         IntPtr foregroundAtClick = _foregroundAtMouseDown;
@@ -301,10 +322,9 @@ public class SelectionTracker
                 if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps)) return;
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
-                bool isDragTrigger = trigger == MouseHook.SelectionTrigger.Drag;
                 var capture = await TextCapture.CaptureSelectedTextAsync(
                     operation,
-                    isDrag: isDragTrigger,
+                    gesture,
                     allowSyntheticKeys: false,
                     allowClipboardCapture: false,
                     ambiguousCursor: ambiguousCursor,
