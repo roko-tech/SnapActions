@@ -48,8 +48,13 @@
                           ToolTip="These actions send your selected text to a third-party online service (MyMemory, dictionaryapi.dev, open.er-api.com) over HTTPS. With this off, they ask before sending anything."
                           Foreground="#FFCDD6F4" Margin="0,4"
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+                <CheckBox x:Name="CaptureOnMouseSelectionCheck"
+                          Content="Show toolbar automatically when I select text"
+                          ToolTip="Automatic selection capture may briefly copy the selected text and restore your previous clipboard. Turn this off to prevent those clipboard writes; you can still use the Ctrl+C trigger below."
+                          Foreground="#FFCDD6F4" Margin="0,4"
+                          Checked="Setting_Changed" Unchecked="Setting_Changed"/>
                 <CheckBox x:Name="CaptureOnCtrlCCheck"
-                          Content="Also show the toolbar when I press Ctrl+C"
+                          Content="Show toolbar when I press Ctrl+C"
                           ToolTip="When on, copying text with Ctrl+C also pops the toolbar for it. This reads what you just copied — no synthetic keystroke and no clipboard clearing — so it won't interfere with other apps."
                           Foreground="#FFCDD6F4" Margin="0,4"
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>

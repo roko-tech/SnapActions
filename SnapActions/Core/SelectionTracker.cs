@@ -256,6 +256,7 @@ public class SelectionTracker
     {
         if (IsSelfFocused()) return;
         if (MouseHook.IsProcessWindowAtPoint(cursorPos, OwnPid)) return;
+        if (!ShouldCaptureMouseSelection(SettingsManager.Current)) return;
 
         // Cursor gate. The OS shows the text (I-beam) cursor only when the pointer is over
         // selectable text, so it's the most universal "was this gesture on text?" signal — more
@@ -382,6 +383,9 @@ public class SelectionTracker
             }
         });
     }
+
+    internal static bool ShouldCaptureMouseSelection(AppSettings settings) =>
+        settings.CaptureOnMouseSelection;
 
     private void OnLongPress(MouseHook.POINT cursorPos)
     {

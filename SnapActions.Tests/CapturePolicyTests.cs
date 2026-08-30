@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using SnapActions.Config;
 using SnapActions.Core;
 using SnapActions.Detection.Detectors;
 using Xunit;
@@ -13,6 +14,16 @@ namespace SnapActions.Tests;
 /// </summary>
 public class CapturePolicyTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MouseSelectionCapture_RespectsSetting(bool enabled)
+    {
+        var settings = new AppSettings { CaptureOnMouseSelection = enabled };
+
+        Assert.Equal(enabled, SelectionTracker.ShouldCaptureMouseSelection(settings));
+    }
+
     // ── TextCapture.DecidePlan ───────────────────────────────────────────────
 
     [Fact]

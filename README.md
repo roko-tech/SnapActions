@@ -28,7 +28,7 @@ Select  a sentence                    →  Translate, Dictionary, Search
 
 In editable text fields, transforms apply in-place: select text → click `Aa` → `lowercase` / `UPPERCASE` / `camelCase` / `snake_case` / etc. To bring up a paste menu without an existing selection, **long-press** the left mouse button (500 ms by default) inside any text input — or switch the trigger to double-click (on an empty editable field), or off, in Settings.
 
-Prefer an explicit trigger? Turn on **Capture on Ctrl+C** in Settings — then copying text the normal way also pops the toolbar for it, with no synthetic keystroke and no clipboard clearing.
+Prefer an explicit trigger? Turn off **Show toolbar automatically when I select text** and turn on **Show toolbar when I press Ctrl+C** in Settings. Highlighting alone then performs no capture or clipboard write; copying text normally pops the toolbar for it.
 
 When an action writes to the clipboard, a "Copied to clipboard" toast confirms it before the toolbar fades.
 
@@ -93,7 +93,8 @@ URL · Base64 · HTML · Hex · ROT13 · MD5 / SHA-1 / SHA-256 / SHA-512 (under 
 | Toolbar show delay | Instant, 100 ms – 1 s | Instant |
 | Multi-click delay | Instant, 100 – 400 ms | 200 ms |
 | Paste mode trigger | Long-press / Double-click / Off | Long-press |
-| Capture on Ctrl+C | On / Off | Off |
+| Show toolbar automatically when I select text | On / Off | On |
+| Show toolbar when I press Ctrl+C | On / Off | Off |
 | Long-press duration | 300 ms – 1 s | 500 ms |
 | Auto-dismiss after | 3 / 5 / 8 / 15 / 30 s, Never | 8 s |
 | Replace selection on transform | On / Off | On |
@@ -129,7 +130,7 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 2. **UI Automation `TextPattern.GetSelection`** — probes the selection through the accessibility tree, no keystrokes. It walks up to 6 parents of the focused element and also checks the element *under the cursor* — some apps put keyboard focus on a container rather than the text (the X/Twitter feed focuses the tweet cell). In quiet captures, focused-tree text can be used directly. When an exact browser copy is available, UIA only confirms that text is selected and the returned string is discarded, because Chromium providers can report an adjacent run in mixed LTR/RTL content; WM_COPY or Ctrl+Insert supplies the exact visual selection instead.
 3. **Ctrl+Insert** via `SendInput` — last resort for apps where neither WM_COPY nor UIA work (Java Swing, some older Edge contexts, certain custom Electron renderers). Insert, not C, so browser extensions that hook letter keys don't see it. If a specific app still misbehaves on the synthetic key, add its process name to **Settings → Excluded apps** to suppress capture there entirely.
 
-**The clipboard is never cleared.** SnapActions snapshots it (the round-trippable formats — text, HTML, RTF, CSV, file drops, bitmaps), then watches the clipboard *sequence number* to tell whether a capture step actually wrote to it, and restores the prior contents only if nothing else has touched it since. So a gesture that captures nothing leaves the clipboard completely untouched, a copy you make in another app mid-capture is never clobbered, and the restore is guarded so a transient error or app shutdown can't wipe your data.
+**The clipboard is never cleared.** SnapActions snapshots it (the round-trippable formats — text, HTML, RTF, CSV, file drops, bitmaps), then watches the clipboard *sequence number* to tell whether a capture step actually wrote to it, and restores the prior contents only if nothing else has touched it since. Automatic mouse capture can briefly write the selected text before that restore, so clipboard-history tools may observe it; turn off **Show toolbar automatically when I select text** to prevent any highlight-triggered clipboard write. A gesture that captures nothing leaves the clipboard completely untouched, a copy you make in another app mid-capture is never clobbered, and the restore is guarded so a transient error or app shutdown can't wipe your data.
 
 **Editable-field detection.** Transforms and paste-mode use a multi-layer check:
 - **Win32 caret presence** — covers Notepad and other native text controls

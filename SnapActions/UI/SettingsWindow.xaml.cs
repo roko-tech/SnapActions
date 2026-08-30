@@ -81,6 +81,7 @@ public partial class SettingsWindow : Window
         ReplaceSelectionCheck.IsChecked = s.ReplaceSelectionOnTransform;
         RestoreClipboardCheck.IsChecked = s.RestoreClipboardAfterAction;
         OnlineLookupsCheck.IsChecked = s.AllowOnlineLookups;
+        CaptureOnMouseSelectionCheck.IsChecked = s.CaptureOnMouseSelection;
         CaptureOnCtrlCCheck.IsChecked = s.CaptureOnCtrlC;
 
         SelectComboByTag(DismissTimeCombo, s.ToolbarDismissTimeout.ToString(), 2);
@@ -402,6 +403,7 @@ public partial class SettingsWindow : Window
         s.ReplaceSelectionOnTransform = ReplaceSelectionCheck.IsChecked == true;
         s.RestoreClipboardAfterAction = RestoreClipboardCheck.IsChecked == true;
         s.AllowOnlineLookups = OnlineLookupsCheck.IsChecked == true;
+        s.CaptureOnMouseSelection = CaptureOnMouseSelectionCheck.IsChecked == true;
         s.CaptureOnCtrlC = CaptureOnCtrlCCheck.IsChecked == true;
         s.ShowTransformActions = ShowTransformCheck.IsChecked == true;
         s.ShowEncodeActions = ShowEncodeCheck.IsChecked == true;
