@@ -14,6 +14,12 @@ namespace SnapActions.Tests;
 /// </summary>
 public class CapturePolicyTests
 {
+    [Fact]
+    public void MouseSelectionCapture_DefaultsOn()
+    {
+        Assert.True(SelectionTracker.ShouldCaptureMouseSelection(new AppSettings()));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -22,6 +28,51 @@ public class CapturePolicyTests
         var settings = new AppSettings { CaptureOnMouseSelection = enabled };
 
         Assert.Equal(enabled, SelectionTracker.ShouldCaptureMouseSelection(settings));
+    }
+
+    [Fact]
+    public void Plan_ClipboardFree_NeverUsesCopyLayers()
+    {
+        foreach (var outcome in Enum.GetValues<TextCapture.SelectionProbeOutcome>())
+        foreach (var isDrag in new[] { false, true })
+        foreach (var allowSyntheticKeys in new[] { false, true })
+        foreach (var ambiguousCursor in new[] { false, true })
+        {
+            var plan = TextCapture.DecidePlan(
+                outcome,
+                isDrag,
+                allowSyntheticKeys,
+                ambiguousCursor,
+                allowClipboardCapture: false);
+
+            Assert.False(plan.RunWmCopy);
+            Assert.False(plan.RunKeystroke);
+        }
+    }
+
+    [Fact]
+    public void Plan_ClipboardFree_UnknownRetainsUiaFallback()
+    {
+        var plan = TextCapture.DecidePlan(
+            TextCapture.SelectionProbeOutcome.Unknown,
+            isDrag: true,
+            allowSyntheticKeys: true,
+            ambiguousCursor: false,
+            allowClipboardCapture: false);
+
+        Assert.Equal(new TextCapture.CapturePlan(false, true, false), plan);
+    }
+
+    [Fact]
+    public void UiaSelection_FromCursorPoint_ClipboardFree_ReturnsText()
+    {
+        var probe = TextCapture.ClassifyUiaSelection(
+            "selected text",
+            fromCursorPoint: true,
+            acceptCursorPointText: true);
+
+        Assert.Equal(TextCapture.SelectionProbeOutcome.HasText, probe.Outcome);
+        Assert.Equal("selected text", probe.Text);
     }
 
     // ── TextCapture.DecidePlan ───────────────────────────────────────────────

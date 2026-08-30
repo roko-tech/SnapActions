@@ -226,14 +226,14 @@ public class SelectionTracker
     ///   <item>MouseHook.LooksLikeScrollbarDrag + NCHITTEST gate (gesture-fire time) — rejects
     ///         perpendicular edge drags (custom scrollbars in Chrome/Electron/etc.) and gestures
     ///         that started on a title bar / border / native scrollbar.</item>
-    ///   <item>This method's cursor gate — I-beam at press or release → full capture; a known
-    ///         non-text system cursor at both → suppress; a custom (unclassifiable) cursor →
-    ///         quiet capture, no synthetic keystrokes (see CursorShape.DecideCaptureAggressiveness).</item>
+    ///   <item>This method's cursor gate — I-beam at press or release permits capture; a known
+    ///         non-text system cursor at both suppresses it; an unclassifiable cursor stays
+    ///         eligible (see CursorShape.DecideCaptureAggressiveness).</item>
     ///   <item>This method's pre-checks: self-PID, debounce, Enabled, IsPointInside (toolbar
     ///         self-click), ExcludedApps.</item>
-    ///   <item>TextCapture's probe-planned cascade (WM_COPY → UIA → Ctrl+Insert; see
-    ///         TextCapture.DecidePlan for how the probe outcome, trigger, and aggressiveness
-    ///         restrict it). Empty captured text aborts here — except when the trigger was a
+    ///   <item>TextCapture's UI Automation-only selection read. Automatic mouse capture never
+    ///         sends WM_COPY or Ctrl+Insert and never reads or mutates the clipboard. Empty
+    ///         captured text aborts here — except when the trigger was a
     ///         multi-click AND <see cref="PasteModeTrigger.DoubleClick"/> is configured, in
     ///         which case empty text falls through to paste mode if the cursor is over an
     ///         editable input.</item>
@@ -244,11 +244,11 @@ public class SelectionTracker
     ///   • atDownTask (mouse-down UIA) — removed v1.6.12, blocks selections in apps with shallow UIA trees
     /// The lesson from those: UIA's TextPattern coverage is too inconsistent across apps to be
     /// a *required* gate (false negatives broke legitimate selections).
-    /// TextCapture.ProbeSelectionViaUIA (the gate inside the pipeline below) avoids that trap:
-    /// only a clearly non-text item element is a hard stop; an empty TextPattern merely
-    /// restricts the cascade (some providers report empty despite a real selection — the
-    /// lying-provider class), and everything ambiguous falls through to the clipboard path —
-    /// so the historical false-negative apps (Java Swing, some Edge, custom Electron) work.
+    /// TextCapture.ProbeSelectionViaUIA (the capture inside the pipeline below) reads both the
+    /// focused tree and the element under the cursor. A clearly non-text item is a hard stop;
+    /// empty or ambiguous UIA results fail closed without touching the clipboard. In apps with
+    /// incomplete providers (Java Swing, some Edge, custom Electron), users can explicitly copy
+    /// with Ctrl+C to show the toolbar instead.
     /// Paste-mode triggers (long-press or double-click) still use IsTextInputAtPoint at the cursor —
     /// paste mode showing on a button or scrollbar is worse than the same false-positive cost there.
     /// </summary>
@@ -261,12 +261,11 @@ public class SelectionTracker
         // Cursor gate. The OS shows the text (I-beam) cursor only when the pointer is over
         // selectable text, so it's the most universal "was this gesture on text?" signal — more
         // reliable across apps than UIA TextPattern. I-beam at mouse-down (the press landed on
-        // text) or right now (the gesture ended on text) → full capture; a positively-identified
-        // non-text system cursor (arrow, hand, resize, …) at BOTH points → suppressed before any
-        // clipboard or keystroke work; a custom cursor we can't classify → quiet capture only
-        // (WM_COPY + UIA, never a synthetic keystroke), because some apps draw their own I-beam
-        // and used to lose the toolbar entirely here. Unreadable cursors (touch, full-screen)
-        // stay fully permissive. See CursorShape.DecideCaptureAggressiveness.
+        // text) or right now (the gesture ended on text) → capture is eligible; a positively-
+        // identified hard non-text cursor at BOTH points → suppress; a custom cursor we can't
+        // classify stays eligible because some apps draw their own I-beam. Automatic capture is
+        // UIA-only regardless of cursor kind. Unreadable cursors (touch, full-screen) stay fully
+        // permissive. See CursorShape.DecideCaptureAggressiveness.
         // Checked before the debounce so a suppressed gesture doesn't burn it.
         var upCursor = CursorShape.Classify();
         var aggressiveness = CursorShape.DecideCaptureAggressiveness(_mouseDownCursor, upCursor);
@@ -278,9 +277,8 @@ public class SelectionTracker
             SnapActions.Helpers.Log.Info($"Suppressed selection at ({cursorPos.X},{cursorPos.Y}): cursor was a hard non-text shape at press and release ({_mouseDownCursor}/{upCursor})");
             return;
         }
-        // Arrow/hand at both ends: real web text still yields UIA HasText/EmptyTextPattern, but an
-        // Explorer row seen during a UIA timeout (outcome Unknown) must not fall to WM_COPY (which
-        // would copy the filename). See CaptureSelectedTextAsync / DecidePlan.
+        // Arrow/hand at both ends remains useful to the UIA item/container policy: web content may
+        // expose selected text under the cursor, while a genuine Explorer item still suppresses.
         bool ambiguousCursor = CursorShape.IsAmbiguousBothPoints(_mouseDownCursor, upCursor);
 
         if (!TryClaimDebounce()) return;
@@ -304,19 +302,11 @@ public class SelectionTracker
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
                 bool isDragTrigger = trigger == MouseHook.SelectionTrigger.Drag;
-                // Allow the synthetic Ctrl+Insert for a Full capture (I-beam/Unreadable) OR for a
-                // DRAG under the ambiguous arrow/hand cursor. The keystroke is the only reliable way
-                // to read a Chromium selection UIA can't see (X/Twitter feed), and a drag — unlike a
-                // click — is a strong selection signal; it stays self-gating (nothing selected ⇒
-                // nothing copied). An ambiguous multi-click still gets no keystroke. Withheld in
-                // Explorer / file managers: there Ctrl+Insert copies FILES and could downgrade a
-                // pending cut — and the browser-feed case this exists for never lands there.
-                bool allowKeys = aggressiveness == CaptureAggressiveness.Full
-                                 || (ambiguousCursor && isDragTrigger && !ForegroundApp.IsFileManagerFocused());
                 var capture = await TextCapture.CaptureSelectedTextAsync(
                     operation,
                     isDrag: isDragTrigger,
-                    allowSyntheticKeys: allowKeys,
+                    allowSyntheticKeys: false,
+                    allowClipboardCapture: false,
                     ambiguousCursor: ambiguousCursor,
                     cursorX: cursorPos.X, cursorY: cursorPos.Y);
                 operation = capture.Operation;

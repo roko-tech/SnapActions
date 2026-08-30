@@ -209,9 +209,9 @@ public class AppSettings
     public bool AllowOnlineLookups { get; set; } = false;
 
     /// <summary>
-    /// Whether mouse selection gestures automatically capture text and show the toolbar. Capture
-    /// may use WM_COPY or Ctrl+Insert, so users who do not want transient clipboard writes can turn
-    /// this off and use the explicit Ctrl+C trigger instead.
+    /// Whether mouse selection gestures automatically capture text and show the toolbar. Automatic
+    /// capture is UI Automation-only and does not read or mutate the clipboard. Apps that do not
+    /// expose selected text through UIA require the explicit Ctrl+C trigger instead.
     /// </summary>
     public bool CaptureOnMouseSelection { get; set; } = true;
 

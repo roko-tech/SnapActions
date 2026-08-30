@@ -739,6 +739,8 @@ public static class TextCapture
     /// (strongest selection intent — both the I-beam and drag-distance gates agreed) from a
     /// multi-click; <paramref name="allowSyntheticKeys"/> is false for quiet-only captures
     /// (<see cref="CaptureAggressiveness.Quiet"/>) where a Ctrl+Insert must never be injected;
+    /// <paramref name="allowClipboardCapture"/> controls both WM_COPY and Ctrl+Insert. When false,
+    /// capture remains UI Automation-only and never snapshots, reads, or mutates the clipboard;
     /// <paramref name="ambiguousCursor"/> is true when the gesture ran under the arrow/hand cursor
     /// at both ends — it withholds WM_COPY on an Unknown UIA outcome so an Explorer row seen during
     /// a UIA timeout can't have its filename copied (see <see cref="DecidePlan"/>);
@@ -751,6 +753,7 @@ public static class TextCapture
         SelectionOperation operation,
         bool isDrag,
         bool allowSyntheticKeys,
+        bool allowClipboardCapture,
         bool ambiguousCursor,
         int cursorX,
         int cursorY)
@@ -771,7 +774,10 @@ public static class TextCapture
             // For it we let the self-gating Ctrl+Insert keystroke run even past an item-suppress.
             // Gated on allowSyntheticKeys so the caller's Explorer/file-manager exclusion (where a
             // keystroke would copy files, not text) also disables the item-suppress override.
-            bool aggressiveDrag = ambiguousCursor && isDrag && allowSyntheticKeys;
+            bool aggressiveDrag = allowClipboardCapture
+                                  && ambiguousCursor
+                                  && isDrag
+                                  && allowSyntheticKeys;
 
             // UIA pre-gate. Outcomes:
             //   HasText            — a real text selection; use it, skip the whole clipboard dance.
@@ -798,7 +804,8 @@ public static class TextCapture
                     () => ProbeSelectionViaUIA(
                         cursorX, cursorY, operation.Target.ProcessId,
                         operation.Target.AutomationRuntimeId,
-                        preferExactCopy: allowSyntheticKeys),
+                        preferExactCopy: allowClipboardCapture && allowSyntheticKeys,
+                        acceptCursorPointText: !allowClipboardCapture),
                     new SelectionProbe(SelectionProbeOutcome.Unknown, null, "UIA pre-gate unavailable"),
                     busyHandoffMs: operation.Target.AutomationRuntimeId == null
                         ? UiaBusyHandoffMs
@@ -834,7 +841,12 @@ public static class TextCapture
                     SnapActions.Helpers.Log.Info($"UIA pre-gate saw an empty TextPattern ({probe.Reason}) — continuing with restricted cascade");
             }
 
-            var plan = DecidePlan(outcome, isDrag, allowSyntheticKeys, ambiguousCursor);
+            var plan = DecidePlan(
+                outcome,
+                isDrag,
+                allowSyntheticKeys,
+                ambiguousCursor,
+                allowClipboardCapture);
             if (skipUia) plan = plan with { RunUia = false };
             if ((plan.RunWmCopy || plan.RunKeystroke)
                 && !ForegroundGuard.HasSufficientInputIdentity(operation.Target))
@@ -1261,7 +1273,7 @@ public static class TextCapture
         /// <summary>UIA gave us the selected text directly — use it and skip the clipboard pipeline.</summary>
         HasText,
         /// <summary>UIA confirmed a selection, but its returned text is not trusted.
-        /// Use the target application's copy path to preserve exact bidi content.</summary>
+        /// The planner may use the target application's copy path when clipboard capture is allowed.</summary>
         ConfirmedTextPreferExact,
         /// <summary>The focused element is a non-text item (Explorer file, desktop icon, list row).
         /// Definitive — capture must not run (WM_COPY would copy the item's name).</summary>
@@ -1270,7 +1282,7 @@ public static class TextCapture
         /// selection", but some providers lie (report empty despite a real selection), so this is
         /// a restriction signal, not a hard stop — see <see cref="DecidePlan"/>.</summary>
         EmptyTextPattern,
-        /// <summary>UIA couldn't determine. Fall through to WM_COPY / Ctrl+Insert.</summary>
+        /// <summary>UIA couldn't determine. Clipboard-enabled plans may use copy fallbacks.</summary>
         Unknown,
     }
 
@@ -1284,8 +1296,9 @@ public static class TextCapture
         string text,
         bool fromCursorPoint,
         bool preferExactCopy = false,
+        bool acceptCursorPointText = false,
         string? automationRuntimeId = null) =>
-        fromCursorPoint || preferExactCopy
+        (fromCursorPoint && !acceptCursorPointText) || preferExactCopy
             ? new SelectionProbe(
                 SelectionProbeOutcome.ConfirmedTextPreferExact,
                 null,
@@ -1312,6 +1325,8 @@ public static class TextCapture
     /// <summary>
     /// Pure policy: probe outcome × gesture → which layers run. The balance being struck:
     /// <list type="bullet">
+    ///   <item><b>Clipboard-free mode</b> — WM_COPY and Ctrl+Insert are prohibited for every
+    ///     outcome. UIA remains available unless the focused element is a known non-text item.</item>
     ///   <item><b>EmptyTextPattern + drag</b> — exact clipboard cascade (keystroke allowed). A drag that
     ///     passed the I-beam and distance gates is the strongest possible selection signal; a
     ///     provider reporting "empty" against it is exactly the lying-provider class the
@@ -1337,8 +1352,16 @@ public static class TextCapture
     /// (HasText / SuppressItemElement may be resolved before planning.)
     /// </summary>
     internal static CapturePlan DecidePlan(SelectionProbeOutcome outcome, bool isDrag,
-        bool allowSyntheticKeys, bool ambiguousCursor = false)
+        bool allowSyntheticKeys, bool ambiguousCursor = false,
+        bool allowClipboardCapture = true)
     {
+        if (!allowClipboardCapture)
+        {
+            return outcome == SelectionProbeOutcome.SuppressItemElement
+                ? new(false, false, false)
+                : new(false, true, false);
+        }
+
         // An ambiguous arrow/hand DRAG (not a click) is a strong selection signal; allowSyntheticKeys
         // is set for it by the caller (and cleared for Explorer/file managers). Its text is often
         // invisible to UIA/WM_COPY (X/Twitter feed), so the Ctrl+Insert keystroke is the reliable
@@ -1403,14 +1426,17 @@ public static class TextCapture
     /// the same wrong adjacent bidi run there. Quiet captures that cannot inject an exact copy keep
     /// using focused-tree text directly. Probe results also carry the focused element's runtime ID
     /// to fill a missed 50 ms event-time identity for the toolbar and any clipboard fallback; every
-    /// later mutation still revalidates that exact ID immediately before input.
+    /// later mutation still revalidates that exact ID immediately before input. When
+    /// <paramref name="acceptCursorPointText"/> is true, the cursor-point range is returned directly
+    /// because clipboard-free capture has no exact-copy fallback.
     /// </remarks>
     internal static SelectionProbe ProbeSelectionViaUIA(
         int cursorX,
         int cursorY,
         uint expectedProcessId,
         string? expectedRuntimeId,
-        bool preferExactCopy)
+        bool preferExactCopy,
+        bool acceptCursorPointText = false)
     {
         AutomationElement? originalFocused = null;
         try
@@ -1490,6 +1516,7 @@ public static class TextCapture
                 return ClassifyUiaSelection(
                     atPoint,
                     fromCursorPoint: true,
+                    acceptCursorPointText: acceptCursorPointText,
                     automationRuntimeId: RuntimeIdForResult());
             }
 

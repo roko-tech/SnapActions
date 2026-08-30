@@ -50,7 +50,7 @@
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>
                 <CheckBox x:Name="CaptureOnMouseSelectionCheck"
                           Content="Show toolbar automatically when I select text"
-                          ToolTip="Automatic selection capture may briefly copy the selected text and restore your previous clipboard. Turn this off to prevent those clipboard writes; you can still use the Ctrl+C trigger below."
+                          ToolTip="Automatic selection capture uses UI Automation only and never copies or touches your clipboard. If an app does not expose selected text, use the Ctrl+C trigger below."
                           Foreground="#FFCDD6F4" Margin="0,4"
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>
                 <CheckBox x:Name="CaptureOnCtrlCCheck"

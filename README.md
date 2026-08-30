@@ -28,7 +28,7 @@ Select  a sentence                    →  Translate, Dictionary, Search
 
 In editable text fields, transforms apply in-place: select text → click `Aa` → `lowercase` / `UPPERCASE` / `camelCase` / `snake_case` / etc. To bring up a paste menu without an existing selection, **long-press** the left mouse button (500 ms by default) inside any text input — or switch the trigger to double-click (on an empty editable field), or off, in Settings.
 
-Prefer an explicit trigger? Turn off **Show toolbar automatically when I select text** and turn on **Show toolbar when I press Ctrl+C** in Settings. Highlighting alone then performs no capture or clipboard write; copying text normally pops the toolbar for it.
+Automatic highlight capture is clipboard-free: leave **Show toolbar automatically when I select text** on and SnapActions reads the selection through UI Automation without running a copy command or touching the clipboard. If an app does not expose its selection through UIA, turn on **Show toolbar when I press Ctrl+C** and copy explicitly to summon the toolbar there.
 
 When an action writes to the clipboard, a "Copied to clipboard" toast confirms it before the toolbar fades.
 
@@ -125,12 +125,11 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 
 **Dedicated mouse-hook thread.** The low-level Windows mouse hook runs on its own STA background thread with its own dispatcher. UI thread work — WPF rendering, GC, layout — never delays mouse callbacks. Selection debounce uses `Environment.TickCount64` so NTP sync, hibernation resume, or manual clock changes never spuriously suppress or re-fire the hook.
 
-**Text capture in three layers, keys last.** SnapActions tries the quietest mechanism first and only escalates when it has to:
-1. **`WM_COPY`** to the focused window. No keystrokes, no clipboard read needed beyond the post-copy result. Works for native Win32 apps.
-2. **UI Automation `TextPattern.GetSelection`** — probes the selection through the accessibility tree, no keystrokes. It walks up to 6 parents of the focused element and also checks the element *under the cursor* — some apps put keyboard focus on a container rather than the text (the X/Twitter feed focuses the tweet cell). In quiet captures, focused-tree text can be used directly. When an exact browser copy is available, UIA only confirms that text is selected and the returned string is discarded, because Chromium providers can report an adjacent run in mixed LTR/RTL content; WM_COPY or Ctrl+Insert supplies the exact visual selection instead.
-3. **Ctrl+Insert** via `SendInput` — last resort for apps where neither WM_COPY nor UIA work (Java Swing, some older Edge contexts, certain custom Electron renderers). Insert, not C, so browser extensions that hook letter keys don't see it. If a specific app still misbehaves on the synthetic key, add its process name to **Settings → Excluded apps** to suppress capture there entirely.
+**Automatic text capture is UI Automation-only.** Mouse drag, double-click, and triple-click selection use `TextPattern.GetSelection` through the accessibility tree. SnapActions walks up to 6 parents of the focused element and also checks the element under the cursor, which covers browser content whose focus stays on a container. This path never sends `WM_COPY`, never injects `Ctrl+Insert`, and never reads, clears, or writes the clipboard.
 
-**The clipboard is never cleared.** SnapActions snapshots it (the round-trippable formats — text, HTML, RTF, CSV, file drops, bitmaps), then watches the clipboard *sequence number* to tell whether a capture step actually wrote to it, and restores the prior contents only if nothing else has touched it since. Automatic mouse capture can briefly write the selected text before that restore, so clipboard-history tools may observe it; turn off **Show toolbar automatically when I select text** to prevent any highlight-triggered clipboard write. A gesture that captures nothing leaves the clipboard completely untouched, a copy you make in another app mid-capture is never clobbered, and the restore is guarded so a transient error or app shutdown can't wipe your data.
+UI Automation coverage is not universal. Java Swing, some browser/Electron contexts, and custom text renderers may expose no selected text, so the automatic toolbar cannot appear there without a copy operation. Enable **Show toolbar when I press Ctrl+C** for those apps: your physical copy supplies the text, and SnapActions only validates and reads the resulting clipboard value. Chromium UIA can also occasionally report an adjacent run in mixed LTR/RTL text; an explicit Ctrl+C remains the exact-content fallback.
+
+**Clipboard behavior is explicit.** Automatic highlighting never touches it. A physical Ctrl+C changes it because you requested a copy. Toolbar actions that intentionally copy a result show a confirmation toast; **Restore previous clipboard after copy action** can put the prior contents back after about 3 seconds.
 
 **Editable-field detection.** Transforms and paste-mode use a multi-layer check:
 - **Win32 caret presence** — covers Notepad and other native text controls
@@ -145,9 +144,9 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 
 1. **NCHITTEST gate** (gesture-fire time) — gestures that started on a window's title bar, resize border, or native scrollbar are dropped. The hook can't tell those drags from a text-selection drag at the OS level, so we ask the receiving window via `WM_NCHITTEST` — deferred to fire time so only candidate selection gestures (not every click system-wide) pay the cross-process round-trip.
 2. **Scrollbar-edge heuristic** (mouse-up) — a drag with both endpoints within ~25 px of the right (or left, in RTL layouts) edge AND primarily vertical is treated as a custom-scrollbar drag (Chrome, VS Code, Slack, Electron apps). Same with bottom edge + horizontal motion.
-3. **Cursor-shape gate** (mouse-down + mouse-up) — the OS shows the text (I-beam) cursor over selectable text, a more universal signal than UIA TextPattern. I-beam at either point → full capture. A *hard* non-text cursor (resize, crosshair, wait, no-drop, …) at *both* points — resizing a window, a busy app, dragging a slider — is dropped before any clipboard or keystroke work. The **arrow and link-hand** cursors are treated as *ambiguous*, because click-to-open web content shows them over genuinely selectable text (an X/Twitter feed tweet shows the hand; an App Store description shows the plain arrow). Rather than drop those, a quiet capture runs — and a *drag* (a strong selection signal, unlike a click) additionally gets the Ctrl+Insert keystroke that reliably reads a browser selection UIA can't. That keystroke is self-gating (nothing selected → nothing copied) and withheld in Explorer / file managers, where it would copy files rather than text; a double-click under arrow/hand stays quiet. A *custom* cursor we can't classify (some apps draw their own I-beam) also falls back to quiet capture: WM_COPY and UIA may run, but no synthetic keystroke. Permissive when the cursor can't be read (touch, full-screen) so real selections still show.
+3. **Cursor-shape gate** (mouse-down + mouse-up) — the OS shows the text (I-beam) cursor over selectable text, a more universal signal than UIA TextPattern. I-beam at either point permits capture. A *hard* non-text cursor (resize, crosshair, wait, no-drop, …) at both points — resizing a window, a busy app, dragging a slider — is dropped before UIA work. Arrow, link-hand, custom, and unreadable cursors remain eligible because browsers and custom controls can display them over real selectable text.
 4. **Excluded-app + self-PID checks** — anything in your Settings → Excluded apps list never sees a toolbar, and clicks on SnapActions's own toolbar are ignored.
-5. **Probe-planned three-layer capture** — described above. A UIA probe first classifies the moment from the focused element's tree *or the element under the cursor*. During a full capture, a non-empty UIA range proves that text is selected but does not supply the final string; the exact clipboard path does, avoiding adjacent-run errors in mixed LTR/RTL browser text. Quiet captures keep the direct focused-tree UIA fallback. A non-text item (Explorer file, desktop icon, list row) stops capture outright — except for an arrow/hand drag over web content, where an item is often selectable text (an X/Twitter tweet is exposed as a list row but holds text), so the self-gating keystroke runs anyway (never in Explorer / file managers). A TextPattern that reports *no selection* restricts the cascade — WM_COPY still runs silently, and the synthetic Ctrl+Insert stays available for drag gestures (some accessibility providers report an empty selection even when text really is selected, and a drag that passed the cursor gate is the strongest signal they're wrong).
+5. **UIA-only selection read** — SnapActions checks the focused element's tree and then the element under the cursor. A non-empty range supplies the toolbar text directly. A known non-text item (Explorer file, desktop icon, list row) stops capture, while empty or unavailable UIA data fails closed with no toolbar and no clipboard fallback.
 
 If a suppression case is misbehaving in your app, check the log file (`%AppData%\SnapActions\logs\YYYY-MM-DD.log`) — every gate that fires writes a line with the cursor position and reason. As an escape hatch, add the app's process name to **Settings → Excluded apps**.
 
@@ -179,7 +178,7 @@ GitHub Actions runs build + tests on every push and PR — see [`.github/workflo
 
 ```
 SnapActions/
-  Core/             Mouse hook (dedicated thread), text capture (WM_COPY → UIA → Ctrl+Insert),
+  Core/             Mouse hook (dedicated thread), UIA selection capture + explicit Ctrl+C observation,
                     selection tracking, foreground-app + editable-field detection
   Detection/        Text-type detectors + classifier pipeline
   Actions/          Context, transform, encode, search, popups
@@ -199,7 +198,7 @@ SnapActions.Tests/  xUnit tests covering pure-function surfaces
 - **Custom search engines** with a language filter, plus your own URL / fetch actions.
 - **Per-app profiles** and pin-and-reorder actions on the toolbar.
 - **Hover preview** on every button; live color swatch with an alpha-safe cycle.
-- **Clipboard-safe capture** — your clipboard is preserved, and capture runs on a dedicated hook thread for zero input lag.
+- **Clipboard-free automatic capture** — highlighting never invokes copy or touches the clipboard.
 - **Tested** — unit tests with GitHub Actions CI.
 
 ## License
