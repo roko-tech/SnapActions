@@ -229,6 +229,10 @@ public class AppSettings
     /// <summary>Language code for search filtering (e.g. "en", "ar", "ja", ""). Empty = no filter.</summary>
     public string SearchLanguage { get; set; } = "";
 
+    public string TranslationSourceLanguage { get; set; } = "";
+    public string TranslationTargetLanguage { get; set; } = "en";
+    public string DictionaryLanguage { get; set; } = "en";
+
     public List<SearchEngine> SearchEngines { get; set; } = GetDefaultEngines();
 
     /// <summary>Target currency for conversion (e.g. "USD", "EUR", "SAR")</summary>
@@ -236,6 +240,8 @@ public class AppSettings
 
     /// <summary>User-defined recipe actions (templated URL → open or fetch). See <see cref="UserAction"/>.</summary>
     public List<UserAction> UserActions { get; set; } = [];
+    public List<TextRecipeDefinition> TextRecipes { get; set; } = [];
+    public string Theme { get; set; } = "system";
 
     public List<string> DisabledActionIds { get; set; } = [];
 

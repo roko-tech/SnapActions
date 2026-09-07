@@ -34,6 +34,8 @@ public class ActionRegistry
             new TranslateAction(),
             new DictionaryAction(),
             new CurrencyConverterAction(),
+            new CleanLinkAction(),
+            new InspectTextAction(),
 
             // Transform actions
             // DeleteTextAction and PastePlainTextAction live in TransformActions/ because their
@@ -68,7 +70,7 @@ public class ActionRegistry
             new EncodingAction("base64_encode", "Base64 Encode", "IconEncode",
                 text => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text))),
             new EncodingAction("base64_decode", "Base64 Decode", "IconDecode",
-                text => { try { return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(text)); } catch { return "[Invalid Base64]"; } }),
+                text => new System.Text.UTF8Encoding(false, true).GetString(Convert.FromBase64String(text))),
             new EncodingAction("html_encode", "HTML Encode", "IconEncode",
                 text => System.Net.WebUtility.HtmlEncode(text)),
             new EncodingAction("html_decode", "HTML Decode", "IconDecode",
@@ -86,7 +88,7 @@ public class ActionRegistry
             new EncodingAction("hex_encode", "Hex Encode", "IconEncode",
                 text => Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(text)).ToLowerInvariant()),
             new EncodingAction("hex_decode", "Hex Decode", "IconDecode",
-                text => { try { return System.Text.Encoding.UTF8.GetString(Convert.FromHexString(text.Trim())); } catch { return "[Invalid hex]"; } }),
+                text => new System.Text.UTF8Encoding(false, true).GetString(Convert.FromHexString(text.Trim()))),
             new EncodingAction("rot13", "ROT13", "IconEncode", Rot13),
 
             // Hash actions
@@ -126,14 +128,16 @@ public class ActionRegistry
     /// All action IDs known to the registry, including the generated `search_<engine.Id>` ones.
     /// Used by SettingsManager.PruneStaleActionIds to drop orphan entries on Load.
     /// </summary>
-    public static IReadOnlySet<string> GetAllKnownActionIds(IEnumerable<Config.SearchEngine> engines)
+    public static IReadOnlySet<string> GetAllKnownActionIds(IEnumerable<Config.SearchEngine> engines, IEnumerable<Config.UserAction>? userActions = null,
+        IEnumerable<Config.TextRecipeDefinition>? recipes = null)
     {
         // Reuse the cached fixed-ID set and just merge in the per-call search engine IDs. Previously
         // every call constructed a fresh ActionRegistry — fine for the single Load-time caller but
         // wasteful if anything else starts to use this API.
         var ids = new HashSet<string>(_fixedActionIds.Value, StringComparer.Ordinal);
         foreach (var e in engines) ids.Add($"search_{e.Id}");
-        foreach (var u in Config.SettingsManager.Current.UserActions) ids.Add($"user_{u.Id}");
+        foreach (var u in userActions ?? Config.SettingsManager.Current.UserActions) ids.Add($"user_{u.Id}");
+        foreach (var recipe in recipes ?? Config.SettingsManager.Current.TextRecipes) ids.Add($"recipe_{recipe.Id}");
         return ids;
     }
 
@@ -150,6 +154,11 @@ public class ActionRegistry
         var applicable = _allActions
             .Where(a => a.CanExecute(text, analysis) && !disabled.Contains(a.Id))
             .ToList();
+        foreach (var recipe in s.TextRecipes.Where(r => r.Enabled))
+        {
+            var action = new UserActions.TextRecipeAction(recipe, PureTextOperations());
+            if (!disabled.Contains(action.Id) && action.CanExecute(text, analysis)) applicable.Add(action);
+        }
 
         var contextActions = applicable.Where(a => a.Category == ActionCategory.Context).ToList();
 
@@ -179,7 +188,7 @@ public class ActionRegistry
         {
             var lang = s.SearchLanguage ?? "";
             var searchActions = s.SearchEngines
-                .Where(e => e.Enabled)
+                .Where(e => e.Enabled && !disabled.Contains($"search_{e.Id}"))
                 .Select(e => (IAction)new SearchActions.WebSearchAction(
                     e.Id, e.Name, "IconSearch", e.UrlTemplate,
                     e.UseLanguageFilter ? lang : "", e.LangMode))
@@ -194,7 +203,11 @@ public class ActionRegistry
     /// <summary>All fixed (non-search) actions as (id, name, category) — for the per-app profile
     /// editor in Settings, which lets the user choose actions to hide by name.</summary>
     public IEnumerable<(string Id, string Name, ActionCategory Category)> AllActionDescriptors() =>
-        _allActions.Select(a => (a.Id, a.Name, a.Category));
+        Enum.GetValues<ActionCategory>().SelectMany(GetAllActionsForCategory).Select(a => (a.Id, a.Name, a.Category));
+
+    public IReadOnlyDictionary<string, IAction> PureTextOperations() => _allActions
+        .Where(a => a.IsPreviewSafe && a.Category is ActionCategory.Transform or ActionCategory.Encode)
+        .ToDictionary(a => a.Id);
 
     /// <summary>Get all actions for a category (including disabled ones) for the edit mode UI.</summary>
     public List<IAction> GetAllActionsForCategory(ActionCategory category)
@@ -209,7 +222,12 @@ public class ActionRegistry
                     e.UseLanguageFilter ? lang : "", e.LangMode))
                 .ToList();
         }
-        return _allActions.Where(a => a.Category == category).ToList();
+        var actions = _allActions.Where(a => a.Category == category).ToList();
+        if (category == ActionCategory.Transform)
+            actions.AddRange(Config.SettingsManager.Current.TextRecipes.Select(r => new UserActions.TextRecipeAction(r, PureTextOperations())));
+        if (category == ActionCategory.Context)
+            actions.AddRange(Config.SettingsManager.Current.UserActions.Select(a => new UserActions.UserRecipeAction(a)));
+        return actions;
     }
 
     // Text transformation helpers

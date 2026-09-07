@@ -1,0 +1,40 @@
+<Window x:Class="SnapActions.UI.ActionPalette"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SnapActions — Action palette" Width="620" Height="610" MinWidth="420" MinHeight="420"
+        WindowStartupLocation="CenterScreen" Background="{DynamicResource BackgroundBrush}"
+        Foreground="{DynamicResource TextBrush}" ShowInTaskbar="False" Topmost="True"
+        PreviewKeyDown="Palette_KeyDown">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Text="Action palette" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12"/>
+        <TextBox x:Name="SearchBox" Grid.Row="1" FontSize="16" Padding="10,8" Margin="0,0,0,10"
+                 AutomationProperties.Name="Find an action" TextChanged="Search_Changed"/>
+        <StackPanel Grid.Row="2" Margin="0,0,0,10">
+            <TextBlock x:Name="SourceLabel" Text="Selected text" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+            <TextBox x:Name="SourceBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                     MaxHeight="80" VerticalScrollBarVisibility="Auto" MaxLength="32768"
+                     AutomationProperties.Name="Text to act on" TextChanged="Source_Changed"/>
+        </StackPanel>
+        <ListBox x:Name="ActionsList" Grid.Row="3" DisplayMemberPath="Name" SelectionChanged="Action_Changed"
+                 AutomationProperties.Name="Available actions" MouseDoubleClick="Run_Click"/>
+        <Border Grid.Row="4" Background="{DynamicResource SurfaceBrush}" CornerRadius="6" Padding="12" Margin="0,12,0,12">
+            <ScrollViewer MaxHeight="110" VerticalScrollBarVisibility="Auto">
+                <TextBlock x:Name="PreviewText" TextWrapping="Wrap" FontFamily="Consolas"/>
+            </ScrollViewer>
+        </Border>
+        <Grid Grid.Row="5">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="StatusText" Text="↑ ↓ choose · Enter run · Esc close" TextWrapping="Wrap"
+                       VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}"/>
+            <ComboBox x:Name="DestinationBox" Grid.Column="1" SelectedIndex="0" Margin="8,0" MinWidth="130"
+                      AutomationProperties.Name="Result destination" SelectionChanged="Destination_Changed">
+                <ComboBoxItem Content="Copy result"/><ComboBoxItem Content="Replace selection"/>
+            </ComboBox>
+            <Button x:Name="RunButton" Grid.Column="2" Content="Run" Padding="16,7" Click="Run_Click"/>
+        </Grid>
+    </Grid>
+</Window>

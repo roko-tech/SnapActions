@@ -17,43 +17,55 @@ public partial class ToolbarWindow
 {
     private const string PinnedDragFormat = "SnapActions.PinnedActionId";
 
-    private void BuildContextActions()
+    internal void RebuildInlineActions()
     {
         ContextActionsPanel.Children.Clear();
-        var cg = _actionGroups.FirstOrDefault(g => g.Name == "Context");
-        if (cg is { Actions.Count: > 0 })
+        PinnedActionsPanel.Children.Clear();
+        ContextSeparator.Visibility = PinnedSeparator.Visibility = MoreButton.Visibility = Visibility.Collapsed;
+        var all = _actionGroups.SelectMany(g => g.Actions).ToList();
+        var pinned = Config.SettingsManager.Current.PinnedActionIds
+            .Select(id => all.FirstOrDefault(a => a.Id == id)).Where(a => a != null).Cast<IAction>().DistinctBy(a => a.Id).ToList();
+        var pinnedIds = pinned.Select(a => a.Id).ToHashSet();
+        var context = all.Where(a => a.Category == ActionCategory.Context && !pinnedIds.Contains(a.Id)).ToList();
+        var overflow = new List<IAction>();
+        double reserved = 10 + 44 + 16; // border/padding, More, and the two inline separators
+        foreach (UIElement child in MainToolbar.Children)
         {
-            ContextSeparator.Visibility = Visibility.Visible;
-            int max = Math.Max(1, Config.SettingsManager.Current.MaxInlineContextActions);
-            foreach (var a in cg.Actions.Take(max))
-                ContextActionsPanel.Children.Add(CreateActionButton(a));
-            // If the user has more applicable context actions than the inline cap, surface the
-            // remainder via an overflow button instead of silently dropping them. Previously
-            // selecting a URL with translate/dictionary/QR/etc. could produce 5+ actions and
-            // anything past the cap was just gone from the UI.
-            if (cg.Actions.Count > max)
-                ContextActionsPanel.Children.Add(CreateContextOverflowButton(cg.Actions.Skip(max).ToList()));
+            if (child == ContextActionsPanel || child == PinnedActionsPanel || child == MoreButton || child.Visibility != Visibility.Visible) continue;
+            child.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            reserved += child.DesiredSize.Width;
         }
-        else ContextSeparator.Visibility = Visibility.Collapsed;
+        double remaining = Math.Max(0, MainBorder.MaxWidth - reserved);
+        bool pinsOverflowed = false;
+        foreach (var action in pinned)
+        {
+            var button = CreatePinnedButton(action);
+            button.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            if (pinsOverflowed || button.DesiredSize.Width > remaining)
+            { overflow.Add(action); pinsOverflowed = true; continue; }
+            PinnedActionsPanel.Children.Add(button);
+            remaining -= button.DesiredSize.Width;
+        }
+        int maxContext = Config.SettingsManager.Current.MaxInlineContextActions;
+        foreach (var action in context)
+        {
+            var button = CreateActionButton(action);
+            button.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            if (ContextActionsPanel.Children.Count >= maxContext || button.DesiredSize.Width > remaining)
+            { overflow.Add(action); continue; }
+            ContextActionsPanel.Children.Add(button);
+            remaining -= button.DesiredSize.Width;
+        }
+        ContextSeparator.Visibility = ContextActionsPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        PinnedSeparator.Visibility = PinnedActionsPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        MoreButton.Tag = overflow;
+        MoreButton.Visibility = overflow.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        MoreButton.ToolTip = $"More actions ({overflow.Count})";
     }
 
-    private Button CreateContextOverflowButton(List<IAction> overflow)
+    private void MoreButton_Click(object sender, RoutedEventArgs e)
     {
-        var btn = new Button
-        {
-            Style = (Style)FindResource("ActionButtonStyle"),
-            ToolTip = $"{overflow.Count} more action{(overflow.Count == 1 ? "" : "s")}",
-            Tag = overflow,
-            Content = new TextBlock
-            {
-                Text = "...", FontWeight = FontWeights.Bold,
-                Foreground = (Brush)FindResource("TextSecondaryBrush"),
-                VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Center
-            }
-        };
-        btn.Click += (_, _) => ShowContextOverflowSubMenu(overflow);
-        return btn;
+        if (MoreButton.Tag is List<IAction> actions) ShowContextOverflowSubMenu(actions);
     }
 
     private void ShowContextOverflowSubMenu(List<IAction> actions)
@@ -75,29 +87,6 @@ public partial class ToolbarWindow
         StartDismissTimer();
     }
 
-    private void BuildPinnedActions()
-    {
-        PinnedActionsPanel.Children.Clear();
-        var pinned = Config.SettingsManager.Current.PinnedActionIds;
-        if (pinned.Count == 0) { PinnedSeparator.Visibility = Visibility.Collapsed; return; }
-
-        var allActions = new List<IAction>();
-        foreach (var g in _actionGroups)
-            allActions.AddRange(g.Actions);
-
-        bool any = false;
-        foreach (var id in pinned)
-        {
-            var action = allActions.FirstOrDefault(a => a.Id == id);
-            if (action != null)
-            {
-                PinnedActionsPanel.Children.Add(CreatePinnedButton(action));
-                any = true;
-            }
-        }
-        PinnedSeparator.Visibility = any ? Visibility.Visible : Visibility.Collapsed;
-    }
-
     private Button CreateActionButton(IAction action)
     {
         var geo = TryFindResource(action.IconKey) as Geometry;
@@ -110,6 +99,7 @@ public partial class ToolbarWindow
                     FontSize = 10, Foreground = (Brush)FindResource("TextBrush"),
                     VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center } as object
         };
+        System.Windows.Automation.AutomationProperties.SetName(btn, action.Name);
         btn.Click += ActionButton_Click;
         // Hover preview — same MouseEnter/Leave handlers as submenu buttons but routed through
         // InlineButton_* so the popup opens in preview-only mode if it isn't already open.
@@ -126,7 +116,7 @@ public partial class ToolbarWindow
             Style = (Style)FindResource("ActionButtonStyle"),
             ToolTip = action.Name + "  (drag to reorder)",
             Tag = action,
-            Width = double.NaN, Padding = new Thickness(6, 4, 6, 4),
+            Width = double.NaN, MaxWidth = 160, Padding = new Thickness(6, 4, 6, 4),
             AllowDrop = true,
         };
         var sp = new StackPanel { Orientation = Orientation.Horizontal };
@@ -135,11 +125,12 @@ public partial class ToolbarWindow
                 Width = 12, Height = 12, Stretch = Stretch.Uniform, Margin = new Thickness(0, 0, 4, 0) });
         sp.Children.Add(new TextBlock
         {
-            Text = action.Name, FontSize = 10,
+            Text = action.Name, FontSize = 10, MaxWidth = 120, TextTrimming = TextTrimming.CharacterEllipsis,
             Foreground = (Brush)FindResource("TextBrush"),
             VerticalAlignment = VerticalAlignment.Center
         });
         btn.Content = sp;
+        System.Windows.Automation.AutomationProperties.SetName(btn, action.Name);
         btn.Click += ActionButton_Click;
         // Hover preview for pinned actions too — same routing as inline context buttons.
         btn.MouseEnter += InlineButton_MouseEnter;
@@ -192,7 +183,7 @@ public partial class ToolbarWindow
             if (from < to) to--;
             pinned.Insert(to, draggedId);
             Config.SettingsManager.Save();
-            BuildPinnedActions();
+            RebuildInlineActions();
         };
 
         // Right-click context menu remains for reorder by 1 + unpin (keyboardless users).
@@ -208,7 +199,7 @@ public partial class ToolbarWindow
             {
                 Config.SettingsManager.Current.PinnedActionIds.Remove(a.Id);
                 Config.SettingsManager.Save();
-                BuildPinnedActions();
+                RebuildInlineActions();
             }
         };
         menu.Items.Add(moveLeft);
@@ -229,7 +220,7 @@ public partial class ToolbarWindow
         if (idx < 0 || newIdx < 0 || newIdx >= pinned.Count) return;
         (pinned[idx], pinned[newIdx]) = (pinned[newIdx], pinned[idx]);
         Config.SettingsManager.Save();
-        BuildPinnedActions();
+        RebuildInlineActions();
     }
 
     private Button CreateSubMenuButton(IAction action, bool isEditMode)
@@ -322,6 +313,7 @@ public partial class ToolbarWindow
         }
 
         btn.Content = sp;
+        System.Windows.Automation.AutomationProperties.SetName(btn, action.Name);
         if (isEditMode)
         {
             btn.Click += ToggleActionButton_Click;

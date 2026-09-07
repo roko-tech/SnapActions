@@ -4,11 +4,15 @@ A free, open-source smart text-selection toolbar for Windows. Select text anywhe
 
 ![.NET 10](https://img.shields.io/badge/.NET-10.0-purple) ![WPF](https://img.shields.io/badge/WPF-Windows-blue) ![License](https://img.shields.io/badge/License-MIT-green) ![build](https://img.shields.io/github/actions/workflow/status/roko-tech/SnapActions/build.yml?branch=master)
 
+Version **2.4.0** adds a keyboard palette, explicit Copy/Replace destinations, local QR codes, link cleaning, text recipes, searchable Settings, and browser setup/health. See the [release notes](docs/releases/v2.4.0.md) for upgrade instructions and validation coverage.
+
 ## Install
 
-**[Download SnapActions.exe](https://github.com/roko-tech/SnapActions/releases/latest)** — single file (~75 MB, includes .NET runtime), no installer.
+**[Download the latest release](https://github.com/roko-tech/SnapActions/releases/latest)** — includes the .NET runtime, no installer. Extract the complete ZIP and keep `SnapActions.exe` and `browser-extension` together in a permanent location.
 
 Requires Windows 10 version 19041 or higher. Run the exe; a tray icon appears. That's it.
+
+For the optional Brave/Chrome/Edge companion, follow [browser setup](browser-extension/README.md). When upgrading an existing companion installation, update its files and reload the extension; v2.4.0 requires protocol version 1. Register the helper again in Settings → Browser if the executable's location changed. Existing settings are retained.
 
 ## Use
 
@@ -26,11 +30,13 @@ Select  a sentence                    →  Translate, Dictionary, Search
 
 **Hover any toolbar button to see the result before clicking.** Color hovers show a live swatch alongside the text.
 
-In editable text fields, transforms apply in-place: select text → click `Aa` → `lowercase` / `UPPERCASE` / `camelCase` / `snake_case` / etc. To bring up a paste menu without an existing selection, **long-press** the left mouse button (500 ms by default) inside any text input — or switch the trigger to double-click (on an empty editable field), or off, in Settings.
+Transforms now open a result preview with **Copy result** and, for a verified editable target, **Replace selection**. They also work on read-only selections. The source excerpt stays beside the result; replacement revalidates the original target before input. To bring up a paste menu without an existing selection, **long-press** the left mouse button (500 ms by default) inside any text input — or switch the trigger to double-click (on an empty editable field), or off, in Settings.
 
-Automatic highlight capture is clipboard-free: leave **Show toolbar automatically when I select text** on and SnapActions reads the selection through UI Automation without running a copy command or touching the clipboard. If an app does not expose its selection through UIA, turn on **Show toolbar when I press Ctrl+C** and copy explicitly to summon the toolbar there.
+Automatic highlight capture is clipboard-free: leave **Show toolbar automatically when I select text** on. The optional [browser companion](browser-extension/README.md) reads the browser's actual selected text, including mixed Arabic/English and selections spanning multiple lines. Other apps use UI Automation. Neither automatic path runs a copy command or touches the clipboard. For unsupported surfaces, turn on **Show toolbar when I press Ctrl+C** and copy explicitly to summon the toolbar there.
 
-When an action writes to the clipboard, a "Copied to clipboard" toast confirms it before the toolbar fades.
+Press **Ctrl+Shift+Space** for the searchable action palette. Use Up/Down to choose, Enter to run, and Esc to close. Pure actions preview their result before Copy or Replace. If no selection is readable, enter text in the palette. An unavailable shortcut is reported in Settings → Browser → Capture health.
+
+Mixed Arabic/English hover previews use the browser selection's text direction when available, with the selected phrase displayed separately from the English search label. This affects display only; copied text stays unchanged.
 
 ## What it detects
 
@@ -59,9 +65,9 @@ Translate, Dictionary, and Currency Converter open small popups near the cursor 
 
 Popups stay open until you press **Esc**, click the **X**, click **Copy**, click anywhere outside, or trigger another lookup (which replaces the current popup). They never auto-dismiss on cursor-leave.
 
-Translations are cached for 30 minutes (MyMemory has a 5k chars/day per IP free quota); currency rates for 6 hours per source currency.
+Successful translations are cached for 30 minutes; currency rates for 6 hours per source currency. Translation accepts up to 500 **UTF-8 bytes**, with explicit source and target language controls plus Swap. Search language is independent. The current dictionary endpoint supports English; an unsupported preference produces an error rather than silently looking up another language. Timeouts and service failures offer Retry and cannot be copied as successful results.
 
-## Transforms (in editable fields)
+## Transforms
 
 UPPERCASE · lowercase · Title Case (locale-invariant) · camelCase · PascalCase · snake_case · kebab-case · Reverse (grapheme-aware — emoji and combining marks survive) · Trim · Remove Extra Spaces · Remove Line Breaks · Sort Lines · Remove Duplicates (case-insensitive) · Wrap in quotes / brackets / braces / backticks
 
@@ -84,9 +90,9 @@ URL · Base64 · HTML · Hex · ROT13 · MD5 / SHA-1 / SHA-256 / SHA-512 (under 
 - **Hide** an action: edit mode, left-click to toggle visibility.
 - **Reorder** pinned actions: drag them on the toolbar, or right-click → Move Left/Right.
 - **Reorder** search engines: edit mode in the Search submenu, use ▲ ▼ arrows.
-- **Custom actions**: Settings → Custom Actions — build your own from a URL template (`{0}` = the selection) that either opens in the browser or fetches and shows the result (optionally a single JSON field). Scope it to any detected type or all selections.
-- **Per-app profiles**: Settings → App Profiles — hide specific actions when a chosen app is in the foreground.
-- **Settings**: double-click the tray icon. All settings auto-save.
+- **Custom actions**: Settings → Custom — build your own from a URL template (`{0}` = the selection) that either opens in the browser or fetches and shows the result (optionally a single JSON field). Scope it to any detected type or all selections.
+- **Per-app profiles**: Settings → Apps — hide specific actions when a chosen app is in the foreground.
+- **Settings**: double-click the tray icon. Changes auto-save with visible success or failure status.
 
 | Setting | Options | Default |
 |---|---|---|
@@ -97,10 +103,13 @@ URL · Base64 · HTML · Hex · ROT13 · MD5 / SHA-1 / SHA-256 / SHA-512 (under 
 | Show toolbar when I press Ctrl+C | On / Off | Off |
 | Long-press duration | 300 ms – 1 s | 500 ms |
 | Auto-dismiss after | 3 / 5 / 8 / 15 / 30 s, Never | 8 s |
-| Replace selection on transform | On / Off | On |
+| Prefer Replace in the keyboard palette (editable selections) | On / Off | On |
 | Restore previous clipboard after copy action | On / Off | Off |
 | Max inline context actions | 1 / 2 / 3 / 4 / 6 / 8 (rest fall into `…` overflow) | 4 |
-| Language (search filter + Translate/Dictionary target) | 13+ languages or no filter | No filter |
+| Search language filter | Supported search languages or no filter | No filter |
+| Translation languages | Explicit source and target, 23 choices | Choose source; target English |
+| Dictionary language | English | English |
+| Theme | System / Light / Dark | System |
 | Target currency | 15 (USD, EUR, SAR, GBP, JPY, …) | USD |
 | Allow online lookups (Translate / Dictionary / Currency) | On / Off | Off — asks on first use |
 | Action categories | Transform / Encode / Search | All on |
@@ -114,7 +123,8 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 
 - **Detection is local.** All detectors run in-process. No network calls for detection.
 - **Inline cloud popups (opt-in).** Translate, Dictionary, and Currency Converter send the selected text to MyMemory, dictionaryapi.dev, and open.er-api.com over HTTPS — the SnapActions process makes the request and shows the result inline. These run only after you allow online lookups; you're asked the first time, and any custom "fetch" action you add is gated the same way.
-- **Browser-handoff actions.** QR Code (api.qrserver.com) and IP Lookup (ipinfo.io) open a URL containing your selection in your default browser; SnapActions itself never makes the request. Web search engines work the same way.
+- **Browser-handoff actions.** IP Lookup (ipinfo.io) opens a URL containing your selection in your default browser; SnapActions itself never makes the request. Web search engines work the same way.
+- **QR codes are local.** QRCoder generates the image on the device, with Copy image and Save PNG. QR generation sends no text to an external service.
 - **Everything else stays local.** Format/minify, transform, encode/decode, hash, color/unit/timezone/JWT/Base64 — none of these touch the network.
 - **Password managers excluded by default.** No toolbar appears when the foreground process is a known password manager. Add your own via Settings → Excluded apps.
 - **Risky-extension prompt.** Opening files with code-bearing extensions (`.exe`, `.bat`, `.ps1`, `.iso`, `.docm`, `.lnk`, …) requires explicit confirmation. Without this, a malicious selection like `C:\Users\you\Downloads\invoice.exe` could be one click away from running.
@@ -125,20 +135,22 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 
 **Dedicated mouse-hook thread.** The low-level Windows mouse hook runs on its own STA background thread with its own dispatcher. UI thread work — WPF rendering, GC, layout — never delays mouse callbacks. Selection debounce uses `Environment.TickCount64` so NTP sync, hibernation resume, or manual clock changes never spuriously suppress or re-fire the hook.
 
-**Automatic text capture is UI Automation-only.** Mouse drag, double-click, and triple-click selection use `TextPattern.GetSelection` through the accessibility tree. SnapActions walks up to 6 parents of the focused element and also checks the element under the cursor, which covers browser content whose focus stays on a container. For Chromium, same-line drags reconstruct the characters from their on-screen geometry and map visual bidi runs back to logical text order; double-click reconstructs the clicked word and requires the same UTF-16 length as the provider selection. This avoids adjacent-run results in mixed LTR/RTL content. The path never sends `WM_COPY`, never injects `Ctrl+Insert`, and never reads, clears, or writes the clipboard.
+**Automatic text capture is clipboard-free.** With the browser companion connected, mouse selections come directly from the focused page's Selection API or input selection offsets. SnapActions verifies the browser window, tab, document, frame and range before using the text. This path supports mixed Arabic/English and selections across lines without reconstructing character geometry.
+
+Without the companion, mouse drag, double-click, and triple-click selection use `TextPattern.GetSelection` through the accessibility tree. SnapActions walks up to 6 parents of the focused element and also checks the element under the cursor. For Chromium, same-line drags reconstruct characters from their on-screen geometry and map visual bidi runs back to logical text order; double-click reconstructs the clicked word and requires the same UTF-16 length as the provider selection. This workaround has limits around mixed-direction content. Neither automatic path sends `WM_COPY`, injects `Ctrl+Insert`, or reads, clears, or writes the clipboard.
 
 UI Automation coverage is not universal. Java Swing, some browser/Electron contexts, and custom text renderers may expose no selected text, so the automatic toolbar cannot appear there without a copy operation. A Chromium gesture also fails closed when its geometry cannot be mapped safely (including cross-line bidi drags), or when a double-click word cannot confirm the provider-reported selection length, rather than showing possibly adjacent text. Enable **Show toolbar when I press Ctrl+C** for those cases: your physical copy supplies the exact text, and SnapActions only validates and reads the resulting clipboard value.
 
-**Clipboard behavior is explicit.** Automatic highlighting never touches it. A physical Ctrl+C changes it because you requested a copy. Toolbar actions that intentionally copy a result show a confirmation toast; **Restore previous clipboard after copy action** can put the prior contents back after about 3 seconds.
+**Clipboard behavior is explicit.** Automatic highlighting never touches it. A physical Ctrl+C changes it because you requested a copy. Result previews close after a successful explicit copy; **Restore previous clipboard after copy action** can put the prior contents back after about 3 seconds.
 
-**Editable-field detection.** Transforms and paste-mode use a multi-layer check:
+**Editable-field detection.** Replacement and paste-mode use a multi-layer check:
 - **Win32 caret presence** — covers Notepad and other native text controls
 - **UI Automation `ControlType.Edit`** — covers `<input>` / `<textarea>` in browsers
 - **`ControlType.Group + TextPattern`** — covers ProseMirror, CodeMirror, and similar rich-text editors in Electron apps (Claude Desktop, Slack, VS Code)
 
 **Per-monitor DPI throughout.** Toolbar positioning, hit-testing, and the sub-menu popup each look up the DPI of the monitor they're rendering on, including when the popup spills onto a different-DPI monitor than the toolbar.
 
-**Foreground-shift-safe synthetic input.** Every path that injects input back into the user's app — transforms in editable fields, long-press paste-mode, Paste Plain Text, Delete — snapshots the foreground HWND when the toolbar *appears* and aborts if focus has moved by injection time. An Alt-Tab before or after the button click can't redirect a paste (or a destructive Delete keystroke) into the wrong app.
+**Foreground-shift-safe synthetic input.** Every path that injects input back into the user's app — transforms in editable fields, long-press paste-mode, Paste Plain Text, Delete — carries the original event-time foreground and focused HWND, process/thread, and available UIA identity and aborts if focus has moved by injection time. An Alt-Tab before or after the button click can't redirect a paste (or a destructive Delete keystroke) into the wrong app.
 
 **When the toolbar appears (and when it doesn't).** Mouse-up after a drag, double/triple-click, or long-press *can* trigger the toolbar — but several gates have to agree before it shows. In order:
 
@@ -146,7 +158,7 @@ UI Automation coverage is not universal. Java Swing, some browser/Electron conte
 2. **Scrollbar-edge heuristic** (mouse-up) — a drag with both endpoints within ~25 px of the right (or left, in RTL layouts) edge AND primarily vertical is treated as a custom-scrollbar drag (Chrome, VS Code, Slack, Electron apps). Same with bottom edge + horizontal motion.
 3. **Cursor-shape gate** (mouse-down + mouse-up) — the OS shows the text (I-beam) cursor over selectable text, a more universal signal than UIA TextPattern. I-beam at either point permits capture. A *hard* non-text cursor (resize, crosshair, wait, no-drop, …) at both points — resizing a window, a busy app, dragging a slider — is dropped before UIA work. Arrow, link-hand, custom, and unreadable cursors remain eligible because browsers and custom controls can display them over real selectable text.
 4. **Excluded-app + self-PID checks** — anything in your Settings → Excluded apps list never sees a toolbar, and clicks on SnapActions's own toolbar are ignored.
-5. **UIA-only selection read** — SnapActions checks the focused element's tree and then the element under the cursor. A non-empty range supplies the toolbar text directly. A known non-text item (Explorer file, desktop icon, list row) stops capture, while empty or unavailable UIA data fails closed with no toolbar and no clipboard fallback.
+5. **Browser or UIA selection read** — a connected browser companion supplies the current page selection. Otherwise, SnapActions checks the focused element's accessibility tree and then the element under the cursor. A known non-text item stops capture. Empty or unavailable data produces no toolbar and no clipboard fallback.
 
 If a suppression case is misbehaving in your app, check the log file (`%AppData%\SnapActions\logs\YYYY-MM-DD.log`) — every gate that fires writes a line with the cursor position and reason. As an escape hatch, add the app's process name to **Settings → Excluded apps**.
 
@@ -159,36 +171,40 @@ dotnet build SnapActions/SnapActions.csproj -c Release
 dotnet test SnapActions.Tests/SnapActions.Tests.csproj
 ```
 
-For the single-file release exe:
+Build a complete verified package (Windows, .NET SDK 10.0.303, Node 22.23.1, and Python 3.11+):
 
-```bash
-cd SnapActions
-build.bat
+```powershell
+python tools/package.py
 ```
 
-Output: `bin\publish\SnapActions.exe` (~75 MB, includes .NET runtime, no install required).
+`SnapActions/build.bat` runs the same command. Each run writes a fresh directory under `artifacts`: a self-contained executable with companion sidecars, a ZIP, SHA-256 checksums, test receipts, and compiled WPF renders. It never replaces an existing installation. NuGet dependencies are locked; `global.json` and `.node-version` pin the toolchain.
+
+For isolated manual testing, set `SNAPACTIONS_DATA_DIR` to an **absolute path** before starting the executable. Settings, logs, mutex and browser pipe then use that separate instance. Startup registration and browser registration are disabled for isolated instances. `--self-test` requires this override and runs without global hooks or clipboard writes.
 
 ## Tests & CI
 
-334 xUnit tests cover every detector, the math evaluator (including the recursion-depth guard), unit converter, color conversion (alpha preservation, hue normalization, CSS Color Module 4), the locale-agnostic number parser, all transform / encode / wrap actions, hash known-vectors, action `CanExecute` predicates, registry ID consistency, `WebSearchAction.BuildUrl` substitution, the capture-gate policies (probe-outcome plans incl. the ambiguous-cursor drag keystroke and its file-manager exclusion, cursor-shape aggressiveness with the hard/ambiguous split, probe-safe drive detection), and the custom-action / per-app-profile logic.
+The xUnit suite covers detection, transforms, native target/clipboard ownership, partial input, selection generations, UIA single-flight gates, lookup failures and caching, settings migrations, local QR decoding, link cleaning, and recipe execution. Retired WM_COPY/Ctrl+Insert capture-planner tests were removed with the inactive planner; explicit paste/delete safety tests remain.
 
-GitHub Actions runs build + tests on every push and PR — see [`.github/workflows/build.yml`](.github/workflows/build.yml).
+The browser suite checks exact text, input/password restrictions, frames, navigation epochs, document-specific revalidation and protocol compatibility. CI runs the complete [package gate](tools/package.py), including the published executable's real UTF-8 native-host relay, desktop-disconnect recovery, and compiled WPF layout/state checks. See [the workflow](.github/workflows/build.yml), [CI runs](https://github.com/roko-tech/SnapActions/actions/workflows/build.yml), and [validation notes](docs/implementation-validation.md). Automated checks and compiled renders do not certify every live interaction; the remaining gaps are listed in the release notes.
+
+## Local tools and customization
+
+- **QR Code:** any nonblank selection up to 2,000 UTF-8 bytes, rendered offline with image copy/export.
+- **Clean tracking link:** previews removal of known tracking parameters while preserving remaining query bytes, duplicates and fragments. It does not remove generic parameters such as `ref` or `token`.
+- **Inspect text:** grapheme/code-point/byte counts and named whitespace/bidi controls. Counts cover the whole selection; the code-point list shows the first 256.
+- **Saved text recipes:** Settings → Custom → Create text recipe. Add/reorder up to 12 existing pure text operations and preview sample text. Save once, then use it from Transform or the palette. Intermediates never touch the clipboard; oversized output or a failed step cancels the result.
+- **App presets:** Settings → Apps → Configure app profiles. Reading, Writing and Development presets add hidden actions to the selected app, preserving existing choices. The editor includes built-in, search, custom and recipe actions.
+- **Settings:** resizable sections with search, dark/light/system appearance, advanced timing controls and visible autosave status/failures. A failed save keeps the window open for retry.
+
+OCR and AI rewriting remain deferred.
 
 ## Architecture
 
-```
-SnapActions/
-  Core/             Mouse hook (dedicated thread), UIA selection capture + explicit Ctrl+C observation,
-                    selection tracking, foreground-app + editable-field detection
-  Detection/        Text-type detectors + classifier pipeline
-  Actions/          Context, transform, encode, search, popups
-  UI/               WPF floating toolbar, result popup, settings window, system tray
-  Config/           JSON settings with migration, atomic writes, broken-file recovery
-  Helpers/          Math evaluator, unit converter, locale-agnostic number parser,
-                    screen / DPI utilities, file logger, shared P/Invoke
-SnapActions.Tests/  xUnit tests covering pure-function surfaces
-.github/workflows/  CI: build + test on push and PR
-```
+Selection events create an operation generation tied to the original target. `SelectionCoordinator` chooses the browser or UIA provider and returns an immutable `SelectionSnapshot`. The registry matches actions, the toolbar/palette presents them, and `ActionRunner` coordinates explicit effects. `ClipboardTransaction` owns native snapshots and rollback; `InputExecutor` owns guarded paste/delete. Automatic capture has no synthetic-copy branch.
+
+`LookupService` owns HTTP response budgets, provider parsing and success-only caches. `ResultPopup` owns loading/success/empty/error/cancelled presentation and stale-retry suppression. Settings parsing normalizes semantic data before migrations; native host and test instances have explicit runtime paths.
+
+Settings → Browser shows connection/capture health and a rolling 256-sample timing summary, without selected text. Timings separate event-time target identification, dispatcher queue, browser/UIA reads, validation, classification, matching and render-ready latency. Busy/timeout counters expose the cost of unavailable UIA providers. Render-ready excludes physical screen paint; these measurements are not a blanket performance claim. A hung UIA worker retains the single-flight gate to prevent thread accumulation. Process isolation remains conditional on measured provider hangs.
 
 ## Highlights
 

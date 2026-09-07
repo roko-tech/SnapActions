@@ -14,7 +14,11 @@ public class SelectionTracker
     private readonly TextClassifier _classifier;
     private readonly ActionRegistry _actionRegistry;
     private readonly SelectionOperationSource _operations = new();
+    private readonly BrowserSelectionBridge _browser = new();
     private ToolbarWindow? _toolbar;
+    private readonly SelectionCoordinator _coordinator;
+    private GlobalHotkey? _paletteHotkey;
+    private ActionPalette? _palette;
     // TickCount64 is monotonic — wall-clock jumps (NTP sync, hibernation resume, manual time
     // change) used to spuriously suppress or re-fire the debounce when DateTime.UtcNow drifted.
     private long _lastShowTicks;
@@ -46,6 +50,7 @@ public class SelectionTracker
 
     public SelectionTracker()
     {
+        _coordinator = new SelectionCoordinator(_browser);
         _mouseHook = new MouseHook();
         _classifier = new TextClassifier();
         _actionRegistry = new ActionRegistry();
@@ -59,18 +64,23 @@ public class SelectionTracker
 
     public void Start()
     {
+        _browser.Start();
         _mouseHook.Install();
         Application.Current.Dispatcher.InvokeAsync(() =>
         {
             _toolbar = new ToolbarWindow { Registry = _actionRegistry };
             _toolbar.Left = -9999; _toolbar.Top = -9999; _toolbar.Opacity = 0;
             _toolbar.Show(); _toolbar.Hide();
+            _paletteHotkey = new GlobalHotkey(OnPaletteRequested);
         });
     }
 
     public void Stop()
     {
         _operations.Invalidate();
+        _paletteHotkey?.Dispose();
+        _palette?.Close();
+        _browser.Dispose();
         KeyboardHook.CtrlCPressed -= OnCtrlCPressed;
         KeyboardHook.PhysicalCtrlInsertPressed -= OnPhysicalCtrlInsertPressed;
         KeyboardHook.EscPressed -= OnEscPressed;
@@ -109,7 +119,7 @@ public class SelectionTracker
         // Captured on the hook thread BEFORE CallNextHookEx delivers Ctrl+C to the app, so it's the
         // pre-copy clipboard observation. The handler accepts the result only when the sequence
         // changes and the target process owns it; otherwise it may be an unrelated clipboard write.
-        var clipboardBefore = TextCapture.ObserveClipboard();
+        var clipboardBefore = ClipboardTransaction.ObserveClipboard();
 
         Application.Current.Dispatcher.InvokeAsync(async () =>
         {
@@ -117,13 +127,14 @@ public class SelectionTracker
             {
                 if (!await operation.CanInjectInputAsync()) return;
                 if (!SettingsManager.Current.Enabled) return;
-                if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps)) return;
+                if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps))
+                { CaptureDiagnostics.SetStatus("App excluded by settings"); return; }
 
                 await Task.Delay(100); // let the OS finish placing the copied text on the clipboard
                 if (!await operation.CanInjectInputAsync()) return;
-                var clipboardAfter = TextCapture.ObserveClipboard();
-                if (!TextCapture.CanReadClipboardMutation(
-                        TextCapture.ClassifyClipboardMutation(
+                var clipboardAfter = ClipboardTransaction.ObserveClipboard();
+                if (!ClipboardTransaction.CanReadClipboardMutation(
+                        ClipboardTransaction.ClassifyClipboardMutation(
                         clipboardBefore,
                         clipboardAfter,
                         requestDelivered: true,
@@ -131,14 +142,14 @@ public class SelectionTracker
                         targetStillValid: ForegroundGuard.StillValid(operation.Target))))
                     return;
 
-                var text = await TextCapture.ReadCurrentClipboardTextAsync();
-                if (!TextCapture.ContinuesOwnedClipboard(
+                var text = await ClipboardTransaction.ReadCurrentClipboardTextAsync();
+                if (!ClipboardTransaction.ContinuesOwnedClipboard(
                         clipboardAfter,
-                        TextCapture.ObserveClipboard(),
+                        ClipboardTransaction.ObserveClipboard(),
                         operation.Target.ProcessId))
                     return;
                 if (!await operation.CanInjectInputAsync()) return;
-                if (string.IsNullOrWhiteSpace(text)) return;
+                if (string.IsNullOrWhiteSpace(text) || text.Length > SelectionSnapshot.MaximumTextLength) return;
 
                 SnapActions.Helpers.NativeMethods.GetCursorPos(out var pt);
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
@@ -154,7 +165,7 @@ public class SelectionTracker
 
                 _toolbar ??= new ToolbarWindow();
                 _toolbar.Registry = _actionRegistry;
-                _toolbar.Show(text, analysis, groups, pt.X, pt.Y, isEditable, operation);
+                _toolbar.Show(text, analysis, groups, pt.X, pt.Y, isEditable, operation, provider: SelectionProviderKind.ExplicitCopy);
             }
             catch (Exception ex)
             {
@@ -233,7 +244,7 @@ public class SelectionTracker
     ///         eligible (see CursorShape.DecideCaptureAggressiveness).</item>
     ///   <item>This method's pre-checks: self-PID, debounce, Enabled, IsPointInside (toolbar
     ///         self-click), ExcludedApps.</item>
-    ///   <item>TextCapture's UI Automation-only selection read. Automatic mouse capture never
+    ///   <item>Browser selection bridge, or the UI Automation selection read. Automatic mouse capture never
     ///         sends WM_COPY or Ctrl+Insert and never reads or mutates the clipboard. Empty
     ///         captured text aborts here — except when the trigger was a
     ///         multi-click AND <see cref="PasteModeTrigger.DoubleClick"/> is configured, in
@@ -246,7 +257,7 @@ public class SelectionTracker
     ///   • atDownTask (mouse-down UIA) — removed v1.6.12, blocks selections in apps with shallow UIA trees
     /// The lesson from those: UIA's TextPattern coverage is too inconsistent across apps to be
     /// a *required* gate (false negatives broke legitimate selections).
-    /// TextCapture.ProbeSelectionViaUIA (the capture inside the pipeline below) reads both the
+    /// UiaSelectionProvider.ProbeSelectionViaUIA (the capture inside the pipeline below) reads both the
     /// focused tree and the element under the cursor. A clearly non-text item is a hard stop;
     /// empty or ambiguous UIA results fail closed without touching the clipboard. In apps with
     /// incomplete providers (Java Swing, some Edge, custom Electron), users can explicitly copy
@@ -269,7 +280,7 @@ public class SelectionTracker
         // text) or right now (the gesture ended on text) → capture is eligible; a positively-
         // identified hard non-text cursor at BOTH points → suppress; a custom cursor we can't
         // classify stays eligible because some apps draw their own I-beam. Automatic capture is
-        // UIA-only regardless of cursor kind. Unreadable cursors (touch, full-screen) stay fully
+        // clipboard-free regardless of cursor kind. Unreadable cursors (touch, full-screen) stay fully
         // permissive. See CursorShape.DecideCaptureAggressiveness.
         // Checked before the debounce so a suppressed gesture doesn't burn it.
         var upCursor = CursorShape.Classify();
@@ -284,23 +295,23 @@ public class SelectionTracker
         }
         // Arrow/hand at both ends remains useful to the UIA item/container policy: web content may
         // expose selected text under the cursor, while a genuine Explorer item still suppresses.
-        bool ambiguousCursor = CursorShape.IsAmbiguousBothPoints(_mouseDownCursor, upCursor);
 
         if (!TryClaimDebounce()) return;
+        long captureStarted = System.Diagnostics.Stopwatch.GetTimestamp();
 
         var operation = _operations.Begin(default);
         operation = operation.WithTarget(
             ForegroundGuard.CaptureWithAutomationIdentity());
 
         var gesture = trigger == MouseHook.SelectionTrigger.Drag
-            ? new TextCapture.SelectionGesture(
+            ? new UiaSelectionProvider.SelectionGesture(
                 IsDrag: true,
                 ClickCount: clickCount,
                 StartX: _mouseDownPoint.X,
                 StartY: _mouseDownPoint.Y,
                 EndX: cursorPos.X,
                 EndY: cursorPos.Y)
-            : new TextCapture.SelectionGesture(
+            : new UiaSelectionProvider.SelectionGesture(
                 IsDrag: false,
                 ClickCount: clickCount,
                 StartX: cursorPos.X,
@@ -312,26 +323,23 @@ public class SelectionTracker
         // not whatever a later click might overwrite it with while we're awaiting UIA.
         IntPtr foregroundAtClick = _foregroundAtMouseDown;
 
+        long queued = System.Diagnostics.Stopwatch.GetTimestamp();
         Application.Current.Dispatcher.InvokeAsync(async () =>
         {
+            CaptureDiagnostics.Record("Dispatcher queue wait", queued);
             try
             {
                 if (!await operation.CanInjectInputAsync()) return;
                 if (!SettingsManager.Current.Enabled) return;
                 if (_toolbar is { IsVisible: true } && _toolbar.IsPointInside(cursorPos.X, cursorPos.Y)) return;
-                if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps)) return;
+                if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps))
+                { CaptureDiagnostics.SetStatus("App excluded by settings"); return; }
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
-                var capture = await TextCapture.CaptureSelectedTextAsync(
-                    operation,
-                    gesture,
-                    allowSyntheticKeys: false,
-                    allowClipboardCapture: false,
-                    ambiguousCursor: ambiguousCursor,
-                    cursorX: cursorPos.X, cursorY: cursorPos.Y);
-                operation = capture.Operation;
-                var text = capture.Text;
-                if (!await operation.CanInjectInputAsync()) return;
+                var snapshot = await _coordinator.CaptureAsync(operation, gesture, cursorPos.X, cursorPos.Y);
+                if (snapshot != null) operation = snapshot.Operation;
+                string? text = snapshot?.Text;
+                if (!operation.CanInjectInput) return;
                 if (string.IsNullOrWhiteSpace(text))
                 {
                     // Double-click on an empty editable input is the configured paste-mode
@@ -372,26 +380,45 @@ public class SelectionTracker
                 int showDelay = SettingsManager.Current.ToolbarShowDelay;
                 if (showDelay > 0) await Task.Delay(showDelay);
                 if (!await operation.CanInjectInputAsync()) return;
-
-                bool isEditable = await ForegroundGuard.RunBoundedAutomationAsync(
-                    ForegroundApp.IsEditableFieldFocused,
-                    onBusyOrTimeout: false,
-                    timeoutMs: UiAutomationTimeoutMs);
-                if (!await operation.CanInjectInputAsync()) return;
-
-                var analysis = _classifier.Classify(text);
+                bool isEditable = snapshot!.CanReplace;
+                var analysis = snapshot.Analysis;
+                long matchingStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 var groups = _actionRegistry.GetActions(text, analysis, ForegroundApp.GetActiveProcessName());
+                CaptureDiagnostics.Record("Action matching", matchingStarted);
                 if (groups.Count == 0) return;
 
                 _toolbar ??= new ToolbarWindow();
                 _toolbar.Registry = _actionRegistry;
-                _toolbar.Show(text, analysis, groups, cursorPos.X, cursorPos.Y, isEditable, operation);
+                _toolbar.Show(text, analysis, groups, cursorPos.X, cursorPos.Y, isEditable, operation,
+                    snapshot.RightToLeft, snapshot.Provider);
+                CaptureDiagnostics.Record("Gesture to render ready", captureStarted);
             }
             catch (Exception ex)
             {
                 SnapActions.Helpers.Log.Error("Selection-likely handler", ex);
             }
         });
+    }
+
+    private async void OnPaletteRequested()
+    {
+        if (!SettingsManager.Current.Enabled || IsSelfFocused()) return;
+        if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps))
+        { CaptureDiagnostics.SetStatus("App excluded by settings"); return; }
+        try
+        {
+            var operation = _operations.Begin(default).WithTarget(ForegroundGuard.CaptureWithAutomationIdentity());
+            SnapActions.Helpers.NativeMethods.GetCursorPos(out var point);
+            var snapshot = await _coordinator.CaptureAsync(operation,
+                new UiaSelectionProvider.SelectionGesture(false, 0, point.X, point.Y, point.X, point.Y), point.X, point.Y);
+            if (!operation.IsCurrent) return;
+            _toolbar?.HideToolbarIfOperationStale();
+            _palette?.Close();
+            _palette = new ActionPalette(snapshot, _actionRegistry);
+            _palette.Show();
+            _palette.Activate();
+        }
+        catch (Exception ex) { SnapActions.Helpers.Log.Error("Keyboard palette", ex); }
     }
 
     internal static bool ShouldCaptureMouseSelection(AppSettings settings) =>
@@ -416,7 +443,8 @@ public class SelectionTracker
                 // through. Re-check here so the in-flight press doesn't summon a menu the user
                 // has since disabled.
                 if (SettingsManager.Current.PasteModeTrigger != Config.PasteModeTrigger.LongPress) return;
-                if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps)) return;
+                if (ForegroundApp.IsExcluded(SettingsManager.Current.ExcludedApps))
+                { CaptureDiagnostics.SetStatus("App excluded by settings"); return; }
 
                 // Use the point-based check, not the focused-element check. Holding the mouse on
                 // a Chrome/Electron title bar leaves whatever was previously focused (search box,

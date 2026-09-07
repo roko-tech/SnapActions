@@ -17,12 +17,12 @@ public class DeleteTextAction : IAction, IOperationAction
     async Task<ActionResult> IOperationAction.ExecuteAsync(
         string text, TextAnalysis analysis, Core.SelectionOperation operation)
     {
-        var outcome = await Core.TextCapture.SimulateDeleteAsync(operation);
+        var outcome = await Core.InputExecutor.SimulateDeleteAsync(operation);
         return outcome.Status switch
         {
-            Core.TextCapture.InputInjectionStatus.Succeeded =>
+            Core.InputExecutor.InputInjectionStatus.Succeeded =>
                 new ActionResult(true),
-            Core.TextCapture.InputInjectionStatus.Partial =>
+            Core.InputExecutor.InputInjectionStatus.Partial =>
                 new ActionResult(
                     false,
                     Message: outcome.CleanupSucceeded

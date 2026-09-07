@@ -7,9 +7,7 @@ using Xunit;
 namespace SnapActions.Tests;
 
 /// <summary>
-/// Pins the pure gate-policy functions extracted in v2.1.0: which capture layers run for a given
-/// UIA probe outcome (TextCapture.DecidePlan), how the cursor shapes at press/release gate a
-/// gesture (CursorShape.DecideCaptureAggressiveness), and which paths are safe to existence-probe
+/// Pins selection provenance, bidi geometry, cursor gesture gates, and paths safe to existence-probe
 /// synchronously (FilePathDetector.IsProbeSafe).
 /// </summary>
 public class CapturePolicyTests
@@ -31,87 +29,54 @@ public class CapturePolicyTests
     }
 
     [Fact]
-    public void Plan_ClipboardFree_NeverUsesCopyLayers()
-    {
-        foreach (var outcome in Enum.GetValues<TextCapture.SelectionProbeOutcome>())
-        foreach (var isDrag in new[] { false, true })
-        foreach (var allowSyntheticKeys in new[] { false, true })
-        foreach (var ambiguousCursor in new[] { false, true })
-        {
-            var plan = TextCapture.DecidePlan(
-                outcome,
-                isDrag,
-                allowSyntheticKeys,
-                ambiguousCursor,
-                allowClipboardCapture: false);
-
-            Assert.False(plan.RunWmCopy);
-            Assert.False(plan.RunKeystroke);
-        }
-    }
-
-    [Fact]
-    public void Plan_ClipboardFree_UnknownRetainsUiaFallback()
-    {
-        var plan = TextCapture.DecidePlan(
-            TextCapture.SelectionProbeOutcome.Unknown,
-            isDrag: true,
-            allowSyntheticKeys: true,
-            ambiguousCursor: false,
-            allowClipboardCapture: false);
-
-        Assert.Equal(new TextCapture.CapturePlan(false, true, false), plan);
-    }
-
-    [Fact]
     public void UiaSelection_FromCursorPoint_ClipboardFree_ReturnsText()
     {
-        var probe = TextCapture.ClassifyUiaSelection(
+        var probe = UiaSelectionProvider.ClassifyUiaSelection(
             "selected text",
             fromCursorPoint: true,
             acceptCursorPointText: true);
 
-        Assert.Equal(TextCapture.SelectionProbeOutcome.HasText, probe.Outcome);
+        Assert.Equal(UiaSelectionProvider.SelectionProbeOutcome.HasText, probe.Outcome);
         Assert.Equal("selected text", probe.Text);
     }
 
     [Fact]
     public void UiaSelection_ClipboardFreeChromiumGesture_ReplacesWrongSameLengthBidiRun()
     {
-        var probe = TextCapture.ClassifyUiaSelection(
+        var probe = UiaSelectionProvider.ClassifyUiaSelection(
             "ب ثاني ",
             fromCursorPoint: false,
             gestureText: "ChatGPT",
             requireGestureText: true);
 
-        Assert.Equal(TextCapture.SelectionProbeOutcome.HasText, probe.Outcome);
+        Assert.Equal(UiaSelectionProvider.SelectionProbeOutcome.HasText, probe.Outcome);
         Assert.Equal("ChatGPT", probe.Text);
     }
 
     [Fact]
     public void UiaSelection_ClipboardFreeChromiumDoubleClick_RejectsDifferentLengthGuess()
     {
-        var probe = TextCapture.ClassifyUiaSelection(
+        var probe = UiaSelectionProvider.ClassifyUiaSelection(
             "selected text",
             fromCursorPoint: false,
             gestureText: "word",
             requireGestureText: true);
 
-        Assert.Equal(TextCapture.SelectionProbeOutcome.UntrustedText, probe.Outcome);
+        Assert.Equal(UiaSelectionProvider.SelectionProbeOutcome.UntrustedText, probe.Outcome);
         Assert.Null(probe.Text);
     }
 
     [Fact]
     public void UiaSelection_ClipboardFreeChromiumDrag_AcceptsDifferentLengthMixedBidiRange()
     {
-        var probe = TextCapture.ClassifyUiaSelection(
+        var probe = UiaSelectionProvider.ClassifyUiaSelection(
             "كلمات عربية مجاورة",
             fromCursorPoint: false,
             gestureText: "هل تريد ChatGPT الآن؟",
             requireGestureText: true,
             acceptGestureLengthMismatch: true);
 
-        Assert.Equal(TextCapture.SelectionProbeOutcome.HasText, probe.Outcome);
+        Assert.Equal(UiaSelectionProvider.SelectionProbeOutcome.HasText, probe.Outcome);
         Assert.Equal("هل تريد ChatGPT الآن؟", probe.Text);
     }
 
@@ -122,7 +87,7 @@ public class CapturePolicyTests
         int startX,
         int endX)
     {
-        var gesture = new TextCapture.SelectionGesture(
+        var gesture = new UiaSelectionProvider.SelectionGesture(
             IsDrag: true,
             ClickCount: 1,
             StartX: startX,
@@ -130,13 +95,13 @@ public class CapturePolicyTests
             EndX: endX,
             EndY: 1485);
 
-        Assert.False(TextCapture.IsCharacterInsideDrag(
+        Assert.False(UiaSelectionProvider.IsCharacterInsideDrag(
             [
                 new System.Windows.Rect(1439, 1453, 1, 57),
                 new System.Windows.Rect(2491, 1453, 32, 57),
             ],
             gesture));
-        Assert.True(TextCapture.IsCharacterInsideDrag(
+        Assert.True(UiaSelectionProvider.IsCharacterInsideDrag(
             [new System.Windows.Rect(1439, 1453, 12, 57)],
             gesture));
     }
@@ -145,11 +110,11 @@ public class CapturePolicyTests
     public void ChromiumDragGeometry_RotatesEnglishRunBackToLogicalOrder()
     {
         const string visualLine = "ChatGPTمرحبا ";
-        var text = TextCapture.MapVisualSelectionToLogicalText(
+        var text = UiaSelectionProvider.MapVisualSelectionToLogicalText(
             visualLine,
             [
-                new TextCapture.Utf16Span(0, "ChatGPT".Length),
-                new TextCapture.Utf16Span(visualLine.Length - 1, 1),
+                new UiaSelectionProvider.Utf16Span(0, "ChatGPT".Length),
+                new UiaSelectionProvider.Utf16Span(visualLine.Length - 1, 1),
             ],
             "earlier line\nمرحبا ChatGPT\nlater line");
 
@@ -160,12 +125,12 @@ public class CapturePolicyTests
     public void ChromiumDragGeometry_ReturnsMixedSelectionInLogicalOrder()
     {
         const string visualLine = "ChatGPTمرحبا ";
-        var text = TextCapture.MapVisualSelectionToLogicalText(
+        var text = UiaSelectionProvider.MapVisualSelectionToLogicalText(
             visualLine,
             [
-                new TextCapture.Utf16Span(0, "ChatGPT".Length),
-                new TextCapture.Utf16Span(visualLine.Length - 2, 1),
-                new TextCapture.Utf16Span(visualLine.Length - 1, 1),
+                new UiaSelectionProvider.Utf16Span(0, "ChatGPT".Length),
+                new UiaSelectionProvider.Utf16Span(visualLine.Length - 2, 1),
+                new UiaSelectionProvider.Utf16Span(visualLine.Length - 1, 1),
             ],
             "مرحبا ChatGPT");
 
@@ -176,11 +141,11 @@ public class CapturePolicyTests
     public void ChromiumDragGeometry_RejectsNoncontiguousLogicalGuess()
     {
         const string visualLine = "ChatGPTمرحبا ";
-        var text = TextCapture.MapVisualSelectionToLogicalText(
+        var text = UiaSelectionProvider.MapVisualSelectionToLogicalText(
             visualLine,
             [
-                new TextCapture.Utf16Span(0, "ChatGPT".Length),
-                new TextCapture.Utf16Span("ChatGPT".Length, 1),
+                new UiaSelectionProvider.Utf16Span(0, "ChatGPT".Length),
+                new UiaSelectionProvider.Utf16Span("ChatGPT".Length, 1),
             ],
             "مرحبا ChatGPT");
 
@@ -188,163 +153,14 @@ public class CapturePolicyTests
     }
 
     [Fact]
-    public void Plan_ClipboardFree_UntrustedText_FailsClosed()
-    {
-        var plan = TextCapture.DecidePlan(
-            TextCapture.SelectionProbeOutcome.UntrustedText,
-            isDrag: true,
-            allowSyntheticKeys: false,
-            allowClipboardCapture: false);
-
-        Assert.Equal(new TextCapture.CapturePlan(false, false, false), plan);
-    }
-
-    // ── TextCapture.DecidePlan ───────────────────────────────────────────────
-
-    [Fact]
-    public void Plan_ItemElement_RunsNothing()
-    {
-        // Explorer file / desktop icon / list row — WM_COPY would "succeed" by copying the
-        // item's name, so every layer must stay off.
-        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.SuppressItemElement,
-            isDrag: true, allowSyntheticKeys: true);
-        Assert.Equal(new TextCapture.CapturePlan(false, false, false), plan);
-    }
-
-    [Fact]
-    public void Plan_EmptyTextPattern_Drag_KeepsKeystrokeFallback()
-    {
-        // The lying-provider case: TextPattern reports empty against a drag that passed the
-        // I-beam and distance gates. Full fallback (minus the redundant UIA re-walk) — a real
-        // no-selection drag makes Ctrl+Insert a no-op anyway (sequence number won't change).
-        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.EmptyTextPattern,
-            isDrag: true, allowSyntheticKeys: true);
-        Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: false, RunKeystroke: true), plan);
-    }
-
-    [Fact]
-    public void Plan_EmptyTextPattern_MultiClick_IsQuiet()
-    {
-        // Double-click is the gesture most prone to non-text false positives: WM_COPY only
-        // (silent, self-gating), never a synthetic keystroke.
-        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.EmptyTextPattern,
-            isDrag: false, allowSyntheticKeys: true);
-        Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: false, RunKeystroke: false), plan);
-    }
-
-    [Fact]
-    public void Plan_QuietAggressiveness_NeverInjectsKeys()
-    {
-        // A quiet capture (custom/unknown cursor) must not inject keys regardless of outcome.
-        foreach (var outcome in new[]
-                 {
-                     TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact,
-                     TextCapture.SelectionProbeOutcome.EmptyTextPattern,
-                     TextCapture.SelectionProbeOutcome.Unknown
-                 })
-        {
-            Assert.False(TextCapture.DecidePlan(outcome, isDrag: true, allowSyntheticKeys: false).RunKeystroke);
-            Assert.False(TextCapture.DecidePlan(outcome, isDrag: false, allowSyntheticKeys: false).RunKeystroke);
-        }
-    }
-
-    [Fact]
-    public void Plan_Unknown_WithExactCopy_SkipsUia()
-    {
-        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.Unknown,
-            isDrag: false, allowSyntheticKeys: true);
-        Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: false, RunKeystroke: true), plan);
-    }
-
-    [Fact]
-    public void Plan_AmbiguousMultiClick_Unknown_RunsNothing()
-    {
-        // Arrow/hand + multi-click (NOT a drag) + no keystroke: UIA can't confirm text, so withhold
-        // everything — a double-click is the ambiguous gesture we stay cautious on, and a WM_COPY on
-        // a text-bearing item could pop a spurious toolbar.
-        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.Unknown,
-            isDrag: false, allowSyntheticKeys: false, ambiguousCursor: true);
-        Assert.Equal(new TextCapture.CapturePlan(false, false, false), plan);
-    }
-
-    [Fact]
-    public void Plan_AmbiguousDrag_Unknown_RunsKeystrokeCascade()
-    {
-        // THE X/Twitter feed fix: an arrow/hand DRAG (strong selection signal) whose text UIA can't
-        // see runs the exact clipboard cascade including Ctrl+Insert (the caller sets keys=true
-        // for it). A second UIA read must not preempt that exact copy with an adjacent bidi run.
-        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.Unknown,
-            isDrag: true, allowSyntheticKeys: true, ambiguousCursor: true);
-        Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: false, RunKeystroke: true), plan);
-    }
-
-    [Fact]
-    public void Plan_AmbiguousDrag_ItemSuppress_IsOverriddenToKeystrokeCascade()
-    {
-        // A feed tweet is a ListItem+SelectionItemPattern that HOLDS selectable text; an ambiguous
-        // drag over it must not hard-stop on the item signal — run the exact clipboard cascade.
-        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.SuppressItemElement,
-            isDrag: true, allowSyntheticKeys: true, ambiguousCursor: true);
-        Assert.Equal(new TextCapture.CapturePlan(true, false, true), plan);
-    }
-
-    [Fact]
-    public void Plan_ItemSuppress_NonAmbiguous_StillRunsNothing()
-    {
-        // A genuine Explorer/desktop item (not an ambiguous drag) still hard-stops before any capture.
-        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.SuppressItemElement,
-            isDrag: true, allowSyntheticKeys: true, ambiguousCursor: false);
-        Assert.Equal(new TextCapture.CapturePlan(false, false, false), plan);
-    }
-
-    [Fact]
-    public void Plan_AmbiguousDrag_ItemSuppress_ShellGated_RunsNothing()
-    {
-        // Explorer / file-manager exclusion: the caller clears allowSyntheticKeys there, which
-        // disables the item-suppress override — so a file row still hard-stops and no Ctrl+Insert
-        // fires to copy files or downgrade a pending Ctrl+X cut. (ambiguous drag, but keys=false.)
-        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.SuppressItemElement,
-            isDrag: true, allowSyntheticKeys: false, ambiguousCursor: true);
-        Assert.Equal(new TextCapture.CapturePlan(false, false, false), plan);
-    }
-
-    [Fact]
-    public void Plan_ConfirmedTextPreferExact_UsesClipboardCopyNotUia()
-    {
-        // ChatGPT/Twitter can expose selectable message/feed text inside a focused ListItem.
-        // UIA proves that a selection exists, but the app's copy path must supply the exact text.
-        var plan = TextCapture.DecidePlan(
-            TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact,
-            isDrag: true,
-            allowSyntheticKeys: true);
-        Assert.Equal(
-            new TextCapture.CapturePlan(
-                RunWmCopy: true, RunUia: false, RunKeystroke: true),
-            plan);
-    }
-
-    [Fact]
-    public void Plan_ConfirmedTextPreferExact_WithoutSyntheticKeys_UsesWmCopyOnly()
-    {
-        var plan = TextCapture.DecidePlan(
-            TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact,
-            isDrag: true,
-            allowSyntheticKeys: false);
-        Assert.Equal(
-            new TextCapture.CapturePlan(
-                RunWmCopy: true, RunUia: false, RunKeystroke: false),
-            plan);
-    }
-
-    [Fact]
     public void UiaSelection_FromCursorPoint_DiscardsPossiblyWrongText()
     {
-        var probe = TextCapture.ClassifyUiaSelection(
+        var probe = UiaSelectionProvider.ClassifyUiaSelection(
             "نص مجاور غير محدد",
             fromCursorPoint: true);
 
         Assert.Equal(
-            TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact,
+            UiaSelectionProvider.SelectionProbeOutcome.ConfirmedTextPreferExact,
             probe.Outcome);
         Assert.Null(probe.Text);
     }
@@ -352,12 +168,12 @@ public class CapturePolicyTests
     [Fact]
     public void UiaSelection_FromFocusedTree_ReturnsTextDirectly()
     {
-        var probe = TextCapture.ClassifyUiaSelection(
+        var probe = UiaSelectionProvider.ClassifyUiaSelection(
             "selected text",
             fromCursorPoint: false,
             automationRuntimeId: "42,1");
 
-        Assert.Equal(TextCapture.SelectionProbeOutcome.HasText, probe.Outcome);
+        Assert.Equal(UiaSelectionProvider.SelectionProbeOutcome.HasText, probe.Outcome);
         Assert.Equal("selected text", probe.Text);
         Assert.Equal("42,1", probe.AutomationRuntimeId);
     }
@@ -365,37 +181,17 @@ public class CapturePolicyTests
     [Fact]
     public void UiaSelection_FromFocusedTree_WithExactCopy_DiscardsPossiblyWrongBidiText()
     {
-        var probe = TextCapture.ClassifyUiaSelection(
+        var probe = UiaSelectionProvider.ClassifyUiaSelection(
             "دراما العائلي الكوري",
             fromCursorPoint: false,
             preferExactCopy: true,
             automationRuntimeId: "42,1");
 
         Assert.Equal(
-            TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact,
+            UiaSelectionProvider.SelectionProbeOutcome.ConfirmedTextPreferExact,
             probe.Outcome);
         Assert.Null(probe.Text);
         Assert.Equal("42,1", probe.AutomationRuntimeId);
-    }
-
-    [Fact]
-    public void Plan_AmbiguousCursor_EmptyTextPattern_KeepsWmCopy()
-    {
-        // The feed's lying-provider path must survive: arrow/hand + EmptyTextPattern keeps WM_COPY
-        // (never a keystroke under a quiet/ambiguous capture). Only the Unknown outcome is withheld.
-        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.EmptyTextPattern,
-            isDrag: true, allowSyntheticKeys: false, ambiguousCursor: true);
-        Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: false, RunKeystroke: false), plan);
-    }
-
-    [Fact]
-    public void Plan_NonAmbiguousCursor_Unknown_KeepsWmCopyFallback()
-    {
-        // A custom-cursor quiet capture (Unknown cursor KIND, not ambiguous) keeps the WM_COPY
-        // fallback — custom-I-beam editors/terminals that expose no UIA TextPattern rely on it.
-        var plan = TextCapture.DecidePlan(TextCapture.SelectionProbeOutcome.Unknown,
-            isDrag: true, allowSyntheticKeys: false, ambiguousCursor: false);
-        Assert.Equal(new TextCapture.CapturePlan(RunWmCopy: true, RunUia: true, RunKeystroke: false), plan);
     }
 
     // ── CursorShape.DecideCaptureAggressiveness ─────────────────────────────

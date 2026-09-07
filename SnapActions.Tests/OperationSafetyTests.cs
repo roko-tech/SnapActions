@@ -130,22 +130,22 @@ public class OperationSafetyTests
     }
 
     [Theory]
-    [InlineData((int)TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact)]
-    [InlineData((int)TextCapture.SelectionProbeOutcome.EmptyTextPattern)]
-    [InlineData((int)TextCapture.SelectionProbeOutcome.SuppressItemElement)]
-    [InlineData((int)TextCapture.SelectionProbeOutcome.Unknown)]
+    [InlineData((int)UiaSelectionProvider.SelectionProbeOutcome.ConfirmedTextPreferExact)]
+    [InlineData((int)UiaSelectionProvider.SelectionProbeOutcome.EmptyTextPattern)]
+    [InlineData((int)UiaSelectionProvider.SelectionProbeOutcome.SuppressItemElement)]
+    [InlineData((int)UiaSelectionProvider.SelectionProbeOutcome.Unknown)]
     public void SelectionProbe_BindsIdentityAfterEventTimeMiss(
         int outcomeValue)
     {
         var outcome =
-            (TextCapture.SelectionProbeOutcome)outcomeValue;
-        var probe = new TextCapture.SelectionProbe(
+            (UiaSelectionProvider.SelectionProbeOutcome)outcomeValue;
+        var probe = new UiaSelectionProvider.SelectionProbe(
             outcome,
             Text: null,
             Reason: "probe completed",
             AutomationRuntimeId: "42,1");
 
-        var bound = TextCapture.BindProbeIdentity(Target, probe);
+        var bound = UiaSelectionProvider.BindProbeIdentity(Target, probe);
 
         Assert.Equal(Target with { AutomationRuntimeId = "42,1" }, bound);
     }
@@ -154,24 +154,24 @@ public class OperationSafetyTests
     public void ProbeIdentity_DoesNotReplaceEventTimeIdentity()
     {
         var target = Target with { AutomationRuntimeId = "42,1" };
-        var probe = new TextCapture.SelectionProbe(
-            TextCapture.SelectionProbeOutcome.ConfirmedTextPreferExact,
+        var probe = new UiaSelectionProvider.SelectionProbe(
+            UiaSelectionProvider.SelectionProbeOutcome.ConfirmedTextPreferExact,
             Text: null,
             Reason: "selection confirmed",
             AutomationRuntimeId: "42,2");
 
-        Assert.Equal(target, TextCapture.BindProbeIdentity(target, probe));
+        Assert.Equal(target, UiaSelectionProvider.BindProbeIdentity(target, probe));
     }
 
     [Fact]
     public void ProbeIdentity_DoesNotBindMissingObservedIdentity()
     {
-        var probe = new TextCapture.SelectionProbe(
-            TextCapture.SelectionProbeOutcome.Unknown,
+        var probe = new UiaSelectionProvider.SelectionProbe(
+            UiaSelectionProvider.SelectionProbeOutcome.Unknown,
             Text: null,
             Reason: "no selection");
 
-        Assert.Equal(Target, TextCapture.BindProbeIdentity(Target, probe));
+        Assert.Equal(Target, UiaSelectionProvider.BindProbeIdentity(Target, probe));
     }
 
     [Theory]
@@ -194,60 +194,60 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardSnapshot_CustomFormatIsDeferredToNativeBackup()
     {
-        var observation = new TextCapture.ClipboardObservation(
+        var observation = new ClipboardTransaction.ClipboardObservation(
             Sequence: 10, OwnerWindow: new IntPtr(20), OwnerProcessId: 30);
         var reads = new[]
         {
-            new TextCapture.ClipboardFormatRead(
+            new ClipboardTransaction.ClipboardFormatRead(
                 "Chromium internal source RFH token",
                 ReadSucceeded: false,
                 HasValue: false),
         };
 
-        Assert.True(TextCapture.IsCompleteSnapshot(observation, observation, reads));
+        Assert.True(ClipboardTransaction.IsCompleteSnapshot(observation, observation, reads));
     }
 
     [Fact]
     public void ClipboardSnapshot_SupportedFormatReadFailureIsIncomplete()
     {
-        var observation = new TextCapture.ClipboardObservation(
+        var observation = new ClipboardTransaction.ClipboardObservation(
             Sequence: 10, OwnerWindow: new IntPtr(20), OwnerProcessId: 30);
         var reads = new[]
         {
-            new TextCapture.ClipboardFormatRead(
+            new ClipboardTransaction.ClipboardFormatRead(
                 System.Windows.DataFormats.UnicodeText, ReadSucceeded: false, HasValue: false),
         };
 
-        Assert.False(TextCapture.IsCompleteSnapshot(observation, observation, reads));
+        Assert.False(ClipboardTransaction.IsCompleteSnapshot(observation, observation, reads));
     }
 
     [Fact]
     public void ClipboardSnapshot_SequenceChangeDuringReadIsIncomplete()
     {
-        var before = new TextCapture.ClipboardObservation(
+        var before = new ClipboardTransaction.ClipboardObservation(
             Sequence: 10, OwnerWindow: new IntPtr(20), OwnerProcessId: 30);
         var reads = new[]
         {
-            new TextCapture.ClipboardFormatRead(
+            new ClipboardTransaction.ClipboardFormatRead(
                 System.Windows.DataFormats.UnicodeText, ReadSucceeded: true, HasValue: true),
         };
 
-        Assert.False(TextCapture.IsCompleteSnapshot(
+        Assert.False(ClipboardTransaction.IsCompleteSnapshot(
             before, before with { Sequence = 11 }, reads));
     }
 
     [Fact]
     public void ClipboardSnapshot_OwnerChangeBeforeSequenceMovesIsIncomplete()
     {
-        var before = new TextCapture.ClipboardObservation(
+        var before = new ClipboardTransaction.ClipboardObservation(
             Sequence: 10, OwnerWindow: new IntPtr(20), OwnerProcessId: 30);
         var reads = new[]
         {
-            new TextCapture.ClipboardFormatRead(
+            new ClipboardTransaction.ClipboardFormatRead(
                 System.Windows.DataFormats.UnicodeText, ReadSucceeded: true, HasValue: true),
         };
 
-        Assert.False(TextCapture.IsCompleteSnapshot(
+        Assert.False(ClipboardTransaction.IsCompleteSnapshot(
             before,
             before with { OwnerWindow = new IntPtr(21), OwnerProcessId = 31 },
             reads));
@@ -256,20 +256,20 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardSnapshot_EmptyClipboardIsComplete()
     {
-        var observation = new TextCapture.ClipboardObservation(
+        var observation = new ClipboardTransaction.ClipboardObservation(
             Sequence: 10, OwnerWindow: IntPtr.Zero, OwnerProcessId: 0);
-        Assert.True(TextCapture.IsCompleteSnapshot(
-            observation, observation, Array.Empty<TextCapture.ClipboardFormatRead>()));
+        Assert.True(ClipboardTransaction.IsCompleteSnapshot(
+            observation, observation, Array.Empty<ClipboardTransaction.ClipboardFormatRead>()));
     }
 
     [Fact]
     public void ClipboardMutation_SequencePlusOneFromForeignOwnerIsAmbiguous()
     {
-        var before = new TextCapture.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
-        var after = new TextCapture.ClipboardObservation(21, new IntPtr(31), OwnerProcessId: 41);
+        var before = new ClipboardTransaction.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
+        var after = new ClipboardTransaction.ClipboardObservation(21, new IntPtr(31), OwnerProcessId: 41);
 
-        Assert.Equal(TextCapture.ClipboardMutationOwnership.Ambiguous,
-            TextCapture.ClassifyClipboardMutation(
+        Assert.Equal(ClipboardTransaction.ClipboardMutationOwnership.Ambiguous,
+            ClipboardTransaction.ClassifyClipboardMutation(
                 before, after, requestDelivered: true, expectedOwnerProcessId: 40,
                 targetStillValid: true));
     }
@@ -277,11 +277,11 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardMutation_ExpectedOwnerAndValidTargetIsOwned()
     {
-        var before = new TextCapture.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
-        var after = new TextCapture.ClipboardObservation(21, new IntPtr(31), OwnerProcessId: 40);
+        var before = new ClipboardTransaction.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
+        var after = new ClipboardTransaction.ClipboardObservation(21, new IntPtr(31), OwnerProcessId: 40);
 
-        Assert.Equal(TextCapture.ClipboardMutationOwnership.Owned,
-            TextCapture.ClassifyClipboardMutation(
+        Assert.Equal(ClipboardTransaction.ClipboardMutationOwnership.Owned,
+            ClipboardTransaction.ClassifyClipboardMutation(
                 before, after, requestDelivered: true, expectedOwnerProcessId: 40,
                 targetStillValid: true));
     }
@@ -289,11 +289,11 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardMutation_DelayedRenderOwnerTransferIsOwnedBeforeSequenceMoves()
     {
-        var before = new TextCapture.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
-        var after = new TextCapture.ClipboardObservation(20, new IntPtr(31), OwnerProcessId: 99);
+        var before = new ClipboardTransaction.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
+        var after = new ClipboardTransaction.ClipboardObservation(20, new IntPtr(31), OwnerProcessId: 99);
 
-        Assert.Equal(TextCapture.ClipboardMutationOwnership.Owned,
-            TextCapture.ClassifyClipboardMutation(
+        Assert.Equal(ClipboardTransaction.ClipboardMutationOwnership.Owned,
+            ClipboardTransaction.ClassifyClipboardMutation(
                 before, after, requestDelivered: true, expectedOwnerProcessId: 99,
                 targetStillValid: true));
     }
@@ -301,11 +301,11 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardMutation_InvalidTargetIsAmbiguousEvenWithExpectedOwner()
     {
-        var before = new TextCapture.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
-        var after = new TextCapture.ClipboardObservation(21, new IntPtr(31), OwnerProcessId: 40);
+        var before = new ClipboardTransaction.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
+        var after = new ClipboardTransaction.ClipboardObservation(21, new IntPtr(31), OwnerProcessId: 40);
 
-        Assert.Equal(TextCapture.ClipboardMutationOwnership.Ambiguous,
-            TextCapture.ClassifyClipboardMutation(
+        Assert.Equal(ClipboardTransaction.ClipboardMutationOwnership.Ambiguous,
+            ClipboardTransaction.ClassifyClipboardMutation(
                 before, after, requestDelivered: true, expectedOwnerProcessId: 40,
                 targetStillValid: false));
     }
@@ -313,29 +313,29 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardMutation_MultiFormatExpectedOwnerIsReadableButUnrestorable()
     {
-        var before = new TextCapture.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
-        var after = new TextCapture.ClipboardObservation(22, new IntPtr(31), OwnerProcessId: 40);
+        var before = new ClipboardTransaction.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
+        var after = new ClipboardTransaction.ClipboardObservation(22, new IntPtr(31), OwnerProcessId: 40);
 
-        var ownership = TextCapture.ClassifyClipboardMutation(
+        var ownership = ClipboardTransaction.ClassifyClipboardMutation(
             before, after, requestDelivered: true, expectedOwnerProcessId: 40,
             targetStillValid: true);
 
         Assert.Equal(
-            TextCapture.ClipboardMutationOwnership.OwnedUnrestorable,
+            ClipboardTransaction.ClipboardMutationOwnership.OwnedUnrestorable,
             ownership);
-        Assert.True(TextCapture.CanReadClipboardMutation(ownership));
-        Assert.False(TextCapture.CanRestoreCapturedClipboard(
+        Assert.True(ClipboardTransaction.CanReadClipboardMutation(ownership));
+        Assert.False(ClipboardTransaction.CanRestoreCapturedClipboard(
             ownership, after, after));
     }
 
     [Fact]
     public void ClipboardMutation_MultiFormatUndeliveredRequestRemainsAmbiguous()
     {
-        var before = new TextCapture.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
-        var after = new TextCapture.ClipboardObservation(22, new IntPtr(31), OwnerProcessId: 40);
+        var before = new ClipboardTransaction.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
+        var after = new ClipboardTransaction.ClipboardObservation(22, new IntPtr(31), OwnerProcessId: 40);
 
-        Assert.Equal(TextCapture.ClipboardMutationOwnership.Ambiguous,
-            TextCapture.ClassifyClipboardMutation(
+        Assert.Equal(ClipboardTransaction.ClipboardMutationOwnership.Ambiguous,
+            ClipboardTransaction.ClassifyClipboardMutation(
                 before, after, requestDelivered: false, expectedOwnerProcessId: 40,
                 targetStillValid: true));
     }
@@ -343,11 +343,11 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardMutation_UnstablePreCopyObservationRemainsAmbiguous()
     {
-        var after = new TextCapture.ClipboardObservation(
+        var after = new ClipboardTransaction.ClipboardObservation(
             22, new IntPtr(31), OwnerProcessId: 40);
 
-        Assert.Equal(TextCapture.ClipboardMutationOwnership.Ambiguous,
-            TextCapture.ClassifyClipboardMutation(
+        Assert.Equal(ClipboardTransaction.ClipboardMutationOwnership.Ambiguous,
+            ClipboardTransaction.ClassifyClipboardMutation(
                 before: default, after, requestDelivered: true,
                 expectedOwnerProcessId: 40, targetStillValid: true));
     }
@@ -355,17 +355,17 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardMutation_RestoreAuthorityRequiresUnchangedSingleStepWrite()
     {
-        var accepted = new TextCapture.ClipboardObservation(
+        var accepted = new ClipboardTransaction.ClipboardObservation(
             21, new IntPtr(31), OwnerProcessId: 40);
 
-        Assert.True(TextCapture.CanRestoreCapturedClipboard(
-            TextCapture.ClipboardMutationOwnership.Owned,
+        Assert.True(ClipboardTransaction.CanRestoreCapturedClipboard(
+            ClipboardTransaction.ClipboardMutationOwnership.Owned,
             accepted, accepted));
-        Assert.False(TextCapture.CanRestoreCapturedClipboard(
-            TextCapture.ClipboardMutationOwnership.Owned,
+        Assert.False(ClipboardTransaction.CanRestoreCapturedClipboard(
+            ClipboardTransaction.ClipboardMutationOwnership.Owned,
             accepted, accepted with { Sequence = 22 }));
-        Assert.False(TextCapture.CanRestoreCapturedClipboard(
-            TextCapture.ClipboardMutationOwnership.OwnedUnrestorable,
+        Assert.False(ClipboardTransaction.CanRestoreCapturedClipboard(
+            ClipboardTransaction.ClipboardMutationOwnership.OwnedUnrestorable,
             accepted, accepted));
     }
 
@@ -389,41 +389,41 @@ public class OperationSafetyTests
     [Fact]
     public void LockedClipboardWrite_UsesWriterOwnerRatherThanSequenceArithmetic()
     {
-        var before = new TextCapture.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
-        var after = new TextCapture.ClipboardObservation(23, new IntPtr(31), OwnerProcessId: 99);
+        var before = new ClipboardTransaction.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
+        var after = new ClipboardTransaction.ClipboardObservation(23, new IntPtr(31), OwnerProcessId: 99);
 
-        Assert.Equal(TextCapture.ClipboardMutationOwnership.Owned,
-            TextCapture.ClassifyLockedClipboardWrite(
+        Assert.Equal(ClipboardTransaction.ClipboardMutationOwnership.Owned,
+            ClipboardTransaction.ClassifyLockedClipboardWrite(
                 before, after, writerProcessId: 99));
-        Assert.Equal(TextCapture.ClipboardMutationOwnership.Ambiguous,
-            TextCapture.ClassifyLockedClipboardWrite(
+        Assert.Equal(ClipboardTransaction.ClipboardMutationOwnership.Ambiguous,
+            ClipboardTransaction.ClassifyLockedClipboardWrite(
                 before, after, writerProcessId: 40));
     }
 
     [Fact]
     public void LockedClipboardWrite_DelayedOwnerTransferIsOwnedBeforeSequenceMoves()
     {
-        var before = new TextCapture.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
-        var after = new TextCapture.ClipboardObservation(20, new IntPtr(31), OwnerProcessId: 99);
+        var before = new ClipboardTransaction.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
+        var after = new ClipboardTransaction.ClipboardObservation(20, new IntPtr(31), OwnerProcessId: 99);
 
-        Assert.Equal(TextCapture.ClipboardMutationOwnership.Owned,
-            TextCapture.ClassifyLockedClipboardWrite(
+        Assert.Equal(ClipboardTransaction.ClipboardMutationOwnership.Owned,
+            ClipboardTransaction.ClassifyLockedClipboardWrite(
                 before, after, writerProcessId: 99));
     }
 
     [Fact]
     public void ClosedClipboardWrite_RequiresSuccessfulCloseAndExactOwnerWindow()
     {
-        var before = new TextCapture.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
-        var ours = new TextCapture.ClipboardObservation(21, new IntPtr(31), OwnerProcessId: 99);
+        var before = new ClipboardTransaction.ClipboardObservation(20, new IntPtr(30), OwnerProcessId: 40);
+        var ours = new ClipboardTransaction.ClipboardObservation(21, new IntPtr(31), OwnerProcessId: 99);
 
-        Assert.True(TextCapture.CanAcceptClosedClipboardWrite(
+        Assert.True(ClipboardTransaction.CanAcceptClosedClipboardWrite(
             before, ours, writerWindow: new IntPtr(31), writerProcessId: 99,
             clipboardClosed: true));
-        Assert.False(TextCapture.CanAcceptClosedClipboardWrite(
+        Assert.False(ClipboardTransaction.CanAcceptClosedClipboardWrite(
             before, ours, writerWindow: new IntPtr(31), writerProcessId: 99,
             clipboardClosed: false));
-        Assert.False(TextCapture.CanAcceptClosedClipboardWrite(
+        Assert.False(ClipboardTransaction.CanAcceptClosedClipboardWrite(
             before, ours with { OwnerWindow = new IntPtr(32) },
             writerWindow: new IntPtr(31), writerProcessId: 99,
             clipboardClosed: true));
@@ -432,28 +432,28 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardRestore_RequiresExactAcceptedObservation()
     {
-        var accepted = new TextCapture.ClipboardObservation(21, new IntPtr(31), OwnerProcessId: 40);
+        var accepted = new ClipboardTransaction.ClipboardObservation(21, new IntPtr(31), OwnerProcessId: 40);
 
-        Assert.True(TextCapture.CanRestoreClipboard(accepted, accepted));
-        Assert.False(TextCapture.CanRestoreClipboard(
+        Assert.True(ClipboardTransaction.CanRestoreClipboard(accepted, accepted));
+        Assert.False(ClipboardTransaction.CanRestoreClipboard(
             accepted, accepted with { Sequence = accepted.Sequence + 1 }));
-        Assert.False(TextCapture.CanRestoreClipboard(
+        Assert.False(ClipboardTransaction.CanRestoreClipboard(
             accepted, accepted with { OwnerProcessId = 99 }));
     }
 
     [Fact]
     public void ClipboardRestoreBoundary_ForeignWriterDuringLockWinsOnlyAfterClose()
     {
-        var accepted = new TextCapture.ClipboardObservation(
+        var accepted = new ClipboardTransaction.ClipboardObservation(
             Sequence: 21, OwnerWindow: new IntPtr(31), OwnerProcessId: 40);
         bool clipboardOpen = false;
         bool foreignWritePending = false;
         string clipboardValue = "SnapActions";
         var events = new List<string>();
-        using var snapshot = new TextCapture.ClipboardSnapshot(
+        using var snapshot = new ClipboardTransaction.ClipboardSnapshot(
             new Dictionary<string, object>(),
             accepted,
-            new List<TextCapture.NativeClipboardFormatBackup>());
+            new List<ClipboardTransaction.NativeClipboardFormatBackup>());
         var nativeClipboard = CreateClipboardNativeApi(
             open: () =>
             {
@@ -489,7 +489,7 @@ public class OperationSafetyTests
                 return true;
             });
 
-        bool restored = TextCapture.RestoreClipboardIfUnchanged(
+        bool restored = ClipboardTransaction.RestoreClipboardIfUnchanged(
             snapshot, accepted, nativeClipboard);
 
         Assert.True(restored);
@@ -502,7 +502,7 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardRestoreBoundary_ChangedBeforeLockedObservationDoesNotMutate()
     {
-        var accepted = new TextCapture.ClipboardObservation(
+        var accepted = new ClipboardTransaction.ClipboardObservation(
             Sequence: 21, OwnerWindow: new IntPtr(31), OwnerProcessId: 40);
         var foreign = accepted with
         {
@@ -513,10 +513,10 @@ public class OperationSafetyTests
         bool clipboardOpen = false;
         bool restoreCalled = false;
         bool closeCalled = false;
-        using var snapshot = new TextCapture.ClipboardSnapshot(
+        using var snapshot = new ClipboardTransaction.ClipboardSnapshot(
             new Dictionary<string, object>(),
             accepted,
-            new List<TextCapture.NativeClipboardFormatBackup>());
+            new List<ClipboardTransaction.NativeClipboardFormatBackup>());
         var nativeClipboard = CreateClipboardNativeApi(
             open: () =>
             {
@@ -541,7 +541,7 @@ public class OperationSafetyTests
                 return true;
             });
 
-        bool restored = TextCapture.RestoreClipboardIfUnchanged(
+        bool restored = ClipboardTransaction.RestoreClipboardIfUnchanged(
             snapshot, accepted, nativeClipboard);
 
         Assert.False(restored);
@@ -552,17 +552,17 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardRestoreBoundary_FormatFailureRollsBackBeforeClose()
     {
-        var accepted = new TextCapture.ClipboardObservation(
+        var accepted = new ClipboardTransaction.ClipboardObservation(
             Sequence: 21, OwnerWindow: new IntPtr(31), OwnerProcessId: 40);
         int emptyCalls = 0;
         int restoreCalls = 0;
         bool clipboardOpen = false;
-        using var snapshot = new TextCapture.ClipboardSnapshot(
+        using var snapshot = new ClipboardTransaction.ClipboardSnapshot(
             new Dictionary<string, object> { ["original"] = "value" },
             accepted,
-            new List<TextCapture.NativeClipboardFormatBackup>
+            new List<ClipboardTransaction.NativeClipboardFormatBackup>
             {
-                new(1, IntPtr.Zero, TextCapture.NativeClipboardHandleKind.GlobalMemory),
+                new(1, IntPtr.Zero, ClipboardTransaction.NativeClipboardHandleKind.GlobalMemory),
             });
         var nativeClipboard = CreateClipboardNativeApi(
             open: () =>
@@ -589,9 +589,9 @@ public class OperationSafetyTests
             },
             duplicateFormats: () =>
             [
-                new TextCapture.NativeClipboardFormatBackup(
+                new ClipboardTransaction.NativeClipboardFormatBackup(
                     13, IntPtr.Zero,
-                    TextCapture.NativeClipboardHandleKind.GlobalMemory),
+                    ClipboardTransaction.NativeClipboardHandleKind.GlobalMemory),
             ],
             restoreFormats: _ =>
             {
@@ -600,7 +600,7 @@ public class OperationSafetyTests
                 return restoreCalls > 1;
             });
 
-        bool restored = TextCapture.RestoreClipboardIfUnchanged(
+        bool restored = ClipboardTransaction.RestoreClipboardIfUnchanged(
             snapshot, accepted, nativeClipboard);
 
         Assert.False(restored);
@@ -611,15 +611,15 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardFormatTransfer_RelinquishesOnlySuccessfulHandles()
     {
-        var backups = new List<TextCapture.NativeClipboardFormatBackup>
+        var backups = new List<ClipboardTransaction.NativeClipboardFormatBackup>
         {
-            new(1, new IntPtr(101), TextCapture.NativeClipboardHandleKind.GlobalMemory),
-            new(2, new IntPtr(102), TextCapture.NativeClipboardHandleKind.GdiObject),
-            new(3, new IntPtr(103), TextCapture.NativeClipboardHandleKind.GlobalMemory),
+            new(1, new IntPtr(101), ClipboardTransaction.NativeClipboardHandleKind.GlobalMemory),
+            new(2, new IntPtr(102), ClipboardTransaction.NativeClipboardHandleKind.GdiObject),
+            new(3, new IntPtr(103), ClipboardTransaction.NativeClipboardHandleKind.GlobalMemory),
         };
         var transferredFormats = new List<uint>();
 
-        bool restored = TextCapture.RestoreNativeClipboardBackups(
+        bool restored = ClipboardTransaction.RestoreNativeClipboardBackups(
             backups,
             (format, handle) =>
             {
@@ -637,12 +637,12 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardSnapshot_NativeRestorePayloadIsOneShot()
     {
-        var observation = new TextCapture.ClipboardObservation(
+        var observation = new ClipboardTransaction.ClipboardObservation(
             Sequence: 20, OwnerWindow: IntPtr.Zero, OwnerProcessId: 0);
-        using var snapshot = new TextCapture.ClipboardSnapshot(
+        using var snapshot = new ClipboardTransaction.ClipboardSnapshot(
             new Dictionary<string, object>(),
             observation,
-            new List<TextCapture.NativeClipboardFormatBackup>());
+            new List<ClipboardTransaction.NativeClipboardFormatBackup>());
 
         Assert.True(snapshot.HasNativeRestorePayload);
         Assert.NotNull(snapshot.TakeNativeBackups());
@@ -653,13 +653,13 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardOwnership_ContinuesAcrossDelayedRenderingSequenceAdvance()
     {
-        var accepted = new TextCapture.ClipboardObservation(
+        var accepted = new ClipboardTransaction.ClipboardObservation(
             Sequence: 20, OwnerWindow: new IntPtr(31), OwnerProcessId: 99);
         var rendered = accepted with { Sequence = 23 };
 
-        Assert.True(TextCapture.ContinuesOwnedClipboard(
+        Assert.True(ClipboardTransaction.ContinuesOwnedClipboard(
             accepted, rendered, expectedOwnerProcessId: 99));
-        Assert.False(TextCapture.ContinuesOwnedClipboard(
+        Assert.False(ClipboardTransaction.ContinuesOwnedClipboard(
             accepted, rendered with { OwnerWindow = new IntPtr(32) },
             expectedOwnerProcessId: 99));
     }
@@ -667,12 +667,12 @@ public class OperationSafetyTests
     [Fact]
     public void ClipboardWrite_DoesNotStartAfterSnapshotObservationChanges()
     {
-        var observed = new TextCapture.ClipboardObservation(
+        var observed = new ClipboardTransaction.ClipboardObservation(
             Sequence: 20, OwnerWindow: new IntPtr(30), OwnerProcessId: 40);
-        var snapshot = new TextCapture.ClipboardSnapshot(new Dictionary<string, object>(), observed);
+        var snapshot = new ClipboardTransaction.ClipboardSnapshot(new Dictionary<string, object>(), observed);
 
-        Assert.True(TextCapture.CanStartClipboardWrite(snapshot, observed));
-        Assert.False(TextCapture.CanStartClipboardWrite(
+        Assert.True(ClipboardTransaction.CanStartClipboardWrite(snapshot, observed));
+        Assert.False(ClipboardTransaction.CanStartClipboardWrite(
             snapshot, observed with { Sequence = 21 }));
     }
 
@@ -680,10 +680,10 @@ public class OperationSafetyTests
     public void PasteBoundary_RejectsTargetChangeAfterClipboardWrite()
     {
         var expectedTarget = Target with { AutomationRuntimeId = "42,1" };
-        var written = new TextCapture.ClipboardObservation(
+        var written = new ClipboardTransaction.ClipboardObservation(
             Sequence: 21, OwnerWindow: new IntPtr(31), OwnerProcessId: 99);
 
-        Assert.False(TextCapture.CanInjectAtBoundary(
+        Assert.False(InputExecutor.CanInjectAtBoundary(
             operationCurrent: true,
             expectedTarget,
             expectedTarget with { AutomationRuntimeId = "42,2" },
@@ -695,10 +695,10 @@ public class OperationSafetyTests
     public void PasteBoundary_RejectsClipboardChangeAfterWrite()
     {
         var expectedTarget = Target with { AutomationRuntimeId = "42,1" };
-        var written = new TextCapture.ClipboardObservation(
+        var written = new ClipboardTransaction.ClipboardObservation(
             Sequence: 21, OwnerWindow: new IntPtr(31), OwnerProcessId: 99);
 
-        Assert.False(TextCapture.CanInjectAtBoundary(
+        Assert.False(InputExecutor.CanInjectAtBoundary(
             operationCurrent: true,
             expectedTarget,
             expectedTarget,
@@ -715,7 +715,7 @@ public class OperationSafetyTests
             AutomationRuntimeId = null,
         };
 
-        Assert.False(TextCapture.CanInjectAtBoundary(
+        Assert.False(InputExecutor.CanInjectAtBoundary(
             operationCurrent: true,
             sharedWindowTarget,
             sharedWindowTarget,
@@ -726,7 +726,7 @@ public class OperationSafetyTests
     [Fact]
     public void PasteBoundary_RejectsNativeChildWithoutLogicalFocusIdentity()
     {
-        Assert.False(TextCapture.CanInjectAtBoundary(
+        Assert.False(InputExecutor.CanInjectAtBoundary(
             operationCurrent: true,
             Target,
             Target,
@@ -738,10 +738,10 @@ public class OperationSafetyTests
     public void PasteBoundary_AcceptsExactLogicalTargetAndClipboardObservation()
     {
         var exactTarget = Target with { AutomationRuntimeId = "42,1" };
-        var written = new TextCapture.ClipboardObservation(
+        var written = new ClipboardTransaction.ClipboardObservation(
             Sequence: 21, OwnerWindow: new IntPtr(31), OwnerProcessId: 99);
 
-        Assert.True(TextCapture.CanInjectAtBoundary(
+        Assert.True(InputExecutor.CanInjectAtBoundary(
             operationCurrent: true,
             exactTarget,
             exactTarget,
@@ -755,13 +755,13 @@ public class OperationSafetyTests
         var strokes = BuildPasteStrokes();
         int calls = 0;
 
-        var outcome = TextCapture.SendKeySequence(strokes, _ =>
+        var outcome = InputExecutor.SendKeySequence(strokes, _ =>
         {
             calls++;
             return 0;
         });
 
-        Assert.Equal(TextCapture.InputInjectionStatus.Rejected, outcome.Status);
+        Assert.Equal(InputExecutor.InputInjectionStatus.Rejected, outcome.Status);
         Assert.True(outcome.CleanupSucceeded);
         Assert.Equal(0u, outcome.AcceptedCount);
         Assert.Equal(1, calls);
@@ -773,13 +773,13 @@ public class OperationSafetyTests
         var strokes = BuildPasteStrokes();
         int calls = 0;
 
-        var outcome = TextCapture.SendKeySequence(strokes, batch =>
+        var outcome = InputExecutor.SendKeySequence(strokes, batch =>
         {
             calls++;
             return (uint)batch.Count;
         });
 
-        Assert.Equal(TextCapture.InputInjectionStatus.Succeeded, outcome.Status);
+        Assert.Equal(InputExecutor.InputInjectionStatus.Succeeded, outcome.Status);
         Assert.True(outcome.CleanupSucceeded);
         Assert.Equal((uint)strokes.Length, outcome.AcceptedCount);
         Assert.Equal(1, calls);
@@ -792,8 +792,8 @@ public class OperationSafetyTests
     public void KeySequence_EveryPartialPastePrefixReleasesPressedKeys(
         int accepted, ushort[] expectedReleases)
     {
-        var calls = new List<TextCapture.KeyStroke[]>();
-        var outcome = TextCapture.SendKeySequence(
+        var calls = new List<InputExecutor.KeyStroke[]>();
+        var outcome = InputExecutor.SendKeySequence(
             BuildPasteStrokes(),
             batch =>
             {
@@ -803,7 +803,7 @@ public class OperationSafetyTests
                     : (uint)batch.Count;
             });
 
-        Assert.Equal(TextCapture.InputInjectionStatus.Partial, outcome.Status);
+        Assert.Equal(InputExecutor.InputInjectionStatus.Partial, outcome.Status);
         Assert.True(outcome.CleanupSucceeded);
         Assert.Equal((uint)accepted, outcome.AcceptedCount);
         Assert.Equal(
@@ -817,20 +817,20 @@ public class OperationSafetyTests
     [Fact]
     public void KeySequence_PartialDeleteReleasesDelete()
     {
-        TextCapture.KeyStroke[] strokes =
+        InputExecutor.KeyStroke[] strokes =
         [
             new(0x2E, KeyUp: false, Extended: true),
             new(0x2E, KeyUp: true, Extended: true),
         ];
-        var calls = new List<TextCapture.KeyStroke[]>();
+        var calls = new List<InputExecutor.KeyStroke[]>();
 
-        var outcome = TextCapture.SendKeySequence(strokes, batch =>
+        var outcome = InputExecutor.SendKeySequence(strokes, batch =>
         {
             calls.Add(batch.ToArray());
             return calls.Count == 1 ? 1u : (uint)batch.Count;
         });
 
-        Assert.Equal(TextCapture.InputInjectionStatus.Partial, outcome.Status);
+        Assert.Equal(InputExecutor.InputInjectionStatus.Partial, outcome.Status);
         Assert.True(outcome.CleanupSucceeded);
         Assert.Equal(1u, outcome.AcceptedCount);
         var release = Assert.Single(Assert.Single(calls.Skip(1)));
@@ -843,7 +843,7 @@ public class OperationSafetyTests
     public void KeySequence_ReportsIncompleteKeyUpCleanup()
     {
         int calls = 0;
-        var outcome = TextCapture.SendKeySequence(
+        var outcome = InputExecutor.SendKeySequence(
             BuildPasteStrokes(),
             batch =>
             {
@@ -851,7 +851,7 @@ public class OperationSafetyTests
                 return calls == 1 ? 2u : 0u;
             });
 
-        Assert.Equal(TextCapture.InputInjectionStatus.Partial, outcome.Status);
+        Assert.Equal(InputExecutor.InputInjectionStatus.Partial, outcome.Status);
         Assert.False(outcome.CleanupSucceeded);
         Assert.Equal(2u, outcome.AcceptedCount);
         Assert.Equal(3, calls);
@@ -860,19 +860,19 @@ public class OperationSafetyTests
     [Fact]
     public void PartialPasteRollback_RequiresOnlyModifierAcceptedAndCleanupSucceeded()
     {
-        Assert.True(TextCapture.CanRollbackAfterPartialPaste(
-            new TextCapture.InputInjectionOutcome(
-                TextCapture.InputInjectionStatus.Partial,
+        Assert.True(InputExecutor.CanRollbackAfterPartialPaste(
+            new InputExecutor.InputInjectionOutcome(
+                InputExecutor.InputInjectionStatus.Partial,
                 CleanupSucceeded: true,
                 AcceptedCount: 1)));
-        Assert.False(TextCapture.CanRollbackAfterPartialPaste(
-            new TextCapture.InputInjectionOutcome(
-                TextCapture.InputInjectionStatus.Partial,
+        Assert.False(InputExecutor.CanRollbackAfterPartialPaste(
+            new InputExecutor.InputInjectionOutcome(
+                InputExecutor.InputInjectionStatus.Partial,
                 CleanupSucceeded: true,
                 AcceptedCount: 2)));
-        Assert.False(TextCapture.CanRollbackAfterPartialPaste(
-            new TextCapture.InputInjectionOutcome(
-                TextCapture.InputInjectionStatus.Partial,
+        Assert.False(InputExecutor.CanRollbackAfterPartialPaste(
+            new InputExecutor.InputInjectionOutcome(
+                InputExecutor.InputInjectionStatus.Partial,
                 CleanupSucceeded: false,
                 AcceptedCount: 1)));
     }
@@ -886,7 +886,7 @@ public class OperationSafetyTests
         operation.InvalidateIfCurrent();
         bool sent = false;
 
-        bool started = TextCapture.TrySendKeySequenceForOperation(
+        bool started = InputExecutor.TrySendKeySequenceForOperation(
             operation,
             BuildPasteStrokes(),
             batch =>
@@ -898,7 +898,7 @@ public class OperationSafetyTests
 
         Assert.False(started);
         Assert.False(sent);
-        Assert.Equal(TextCapture.InputInjectionStatus.Rejected, outcome.Status);
+        Assert.Equal(InputExecutor.InputInjectionStatus.Rejected, outcome.Status);
     }
 
     [Fact]
@@ -909,10 +909,10 @@ public class OperationSafetyTests
         bool invoked = false;
         source.Invalidate();
 
-        var written = TextCapture.TryCommitClipboardWrite(operation, () =>
+        var written = ClipboardTransaction.TryCommitClipboardWrite(operation, () =>
         {
             invoked = true;
-            return new TextCapture.ClipboardObservation(
+            return new ClipboardTransaction.ClipboardObservation(
                 Sequence: 21, OwnerWindow: new IntPtr(31), OwnerProcessId: 99);
         });
 
@@ -925,14 +925,14 @@ public class OperationSafetyTests
     {
         var source = new SelectionOperationSource();
         var operation = source.Begin(Target);
-        var expected = new TextCapture.ClipboardObservation(
+        var expected = new ClipboardTransaction.ClipboardObservation(
             Sequence: 20, OwnerWindow: new IntPtr(30), OwnerProcessId: 40);
         var currentAfterLock = expected with { Sequence = 21 };
         bool wrote = false;
 
-        var written = TextCapture.TryCommitClipboardWrite(operation, () =>
+        var written = ClipboardTransaction.TryCommitClipboardWrite(operation, () =>
         {
-            if (!TextCapture.CanRestoreClipboard(expected, currentAfterLock))
+            if (!ClipboardTransaction.CanRestoreClipboard(expected, currentAfterLock))
                 return null;
             wrote = true;
             return currentAfterLock;
@@ -947,12 +947,12 @@ public class OperationSafetyTests
     {
         var source = new SelectionOperationSource();
         var operation = source.Begin(Target);
-        var observation = new TextCapture.ClipboardObservation(
+        var observation = new ClipboardTransaction.ClipboardObservation(
             Sequence: 20, OwnerWindow: new IntPtr(30), OwnerProcessId: 40);
         Assert.True(operation.TryClaim());
         operation.InvalidateIfCurrent();
 
-        Assert.False(TextCapture.TryClaimClipboardMutationAtBoundary(
+        Assert.False(ClipboardTransaction.TryClaimClipboardMutationAtBoundary(
             operation, observation, observation));
     }
 
@@ -964,7 +964,7 @@ public class OperationSafetyTests
         bool wrote = false;
         source.Invalidate();
 
-        bool committed = TextCapture.TryCommitClipboardMutation(operation, () =>
+        bool committed = ClipboardTransaction.TryCommitClipboardMutation(operation, () =>
         {
             wrote = true;
             return true;
@@ -1153,13 +1153,13 @@ public class OperationSafetyTests
         Assert.Equal(2, await retry);
     }
 
-    private static TextCapture.ClipboardNativeApi CreateClipboardNativeApi(
+    private static ClipboardTransaction.ClipboardNativeApi CreateClipboardNativeApi(
         Func<bool> open,
-        Func<TextCapture.ClipboardObservation> observe,
+        Func<ClipboardTransaction.ClipboardObservation> observe,
         Func<bool> empty,
         Func<bool> close,
-        Func<List<TextCapture.NativeClipboardFormatBackup>?>? duplicateFormats = null,
-        Func<List<TextCapture.NativeClipboardFormatBackup>, bool>? restoreFormats = null) =>
+        Func<List<ClipboardTransaction.NativeClipboardFormatBackup>?>? duplicateFormats = null,
+        Func<List<ClipboardTransaction.NativeClipboardFormatBackup>, bool>? restoreFormats = null) =>
         new(
             GetOwnerWindow: () => new IntPtr(50),
             Open: _ => open(),
@@ -1173,7 +1173,7 @@ public class OperationSafetyTests
                                 "Format restoration was not expected")),
             Close: close);
 
-    private static TextCapture.KeyStroke[] BuildPasteStrokes() =>
+    private static InputExecutor.KeyStroke[] BuildPasteStrokes() =>
     [
         new(0x10, KeyUp: false, Extended: false),
         new(0x2D, KeyUp: false, Extended: true),

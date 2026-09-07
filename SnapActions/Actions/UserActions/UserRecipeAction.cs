@@ -1,4 +1,3 @@
-using System.Net.Http;
 using System.Text.Json;
 using SnapActions.Config;
 using SnapActions.Detection;
@@ -37,19 +36,8 @@ public class UserRecipeAction(UserAction def) : IAction
         // FetchText: routed through ResultPopup, which applies the online-lookup consent gate before
         // anything leaves the machine.
         var field = def.JsonField;
-        UI.ResultPopup.ShowNearCursor(def.Name, (http, ct) => Fetch(http, url, field, ct));
+        UI.ResultPopup.ShowNearCursor(def.Name, ct => Services.LookupService.Shared.FetchText(url, field, ct));
         return new ActionResult(true);
-    }
-
-    internal static async Task<string> Fetch(HttpClient http, string url, string jsonField,
-        System.Threading.CancellationToken ct)
-    {
-        string body;
-        try { body = await http.GetStringAsync(url, ct); }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex) { Log.Warn($"User action fetch failed: {ex.Message}"); return "Request failed"; }
-
-        return ExtractField(body, jsonField);
     }
 
     /// <summary>

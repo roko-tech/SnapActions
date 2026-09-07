@@ -17,222 +17,32 @@ public partial class ToolbarWindow
     private async void ActionButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: IAction action }) return;
-        int actionGeneration = _generation;
+        int generation = _generation;
         if (!TryStartToolbarAction(out var operation)) return;
-        ActionResult result;
-        try
+        var selection = new SelectionSnapshot(_selectedText, _analysis, operation,
+            _isEditable || _isPasteMode, _isPasteMode ? SelectionProviderKind.Clipboard : _selectionProvider,
+            _selectionFlowDirection == FlowDirection.RightToLeft);
+        var result = await ActionRunner.ExecuteAsync(action, selection);
+        if (_generation != generation) return;
+        if (!result.Success)
         {
-            if (action is IOperationAction operationAction)
-            {
-                result = operation.TryClaim()
-                    ? await operationAction.ExecuteAsync(
-                        _selectedText, _analysis, operation)
-                    : new ActionResult(
-                        false, Message: "Selection changed — action cancelled");
-            }
-            else
-            {
-                ActionResult? claimedResult = null;
-                bool started = operation.TryCommit(() =>
-                {
-                    claimedResult = action.Execute(_selectedText, _analysis);
-                    return true;
-                });
-                result = started
-                    ? claimedResult!
-                    : new ActionResult(
-                        false, Message: "Selection changed — action cancelled");
-            }
-        }
-        catch (Exception ex) { result = new ActionResult(false, Message: $"Error: {ex.Message}"); }
-
-        // A newer selection reshowed the singleton toolbar while a targeted action was awaiting.
-        if (_generation != actionGeneration) return;
-
-        if (!result.Success && !string.IsNullOrEmpty(result.Message))
-        {
-            // Surface the failure in the same band that hover preview uses, then dismiss.
-            // Without this, click-on-failed-action just made the toolbar disappear — silent failure.
-            await ShowFailureAndHide(result.Message);
+            await ShowFailureAndHide(result.Message ?? "The action could not be completed");
             return;
         }
-
         if (result.ResultText != null)
         {
-            // Determine whether we'll be in the plain copy-to-clipboard path (not paste-mode,
-            // not the editable+transform auto-paste path). The restore-after-copy setting only
-            // applies there — for paste-mode the result IS the paste, no restore wanted.
-            bool willPaste = _isPasteMode || (_isEditable && Config.SettingsManager.Current.ReplaceSelectionOnTransform
-                                              && action.Category == ActionCategory.Transform);
-
-            // Modifier waits and both target checks happen before the clipboard write. This closes
-            // the old window where an Alt-Tab could cancel paste only after the result had already
-            // replaced the user's clipboard.
-            if (willPaste)
-            {
-                bool prepared = await TextCapture.PreparePasteAsync(operation);
-                if (_generation != actionGeneration) return;
-                if (!prepared)
-                {
-                    await ShowFailureAndHide("Focus moved — paste cancelled");
-                    return;
-                }
-            }
-
-            // Snapshot before any paste (for rollback on a final target/input failure), and before
-            // ordinary copy when the user explicitly enabled restore-after-copy.
-            bool restoreAfterCopy = !willPaste
-                                    && Config.SettingsManager.Current.RestoreClipboardAfterAction;
-            TextCapture.ClipboardSnapshot? previous = null;
-            if (willPaste || restoreAfterCopy)
-            {
-                previous = TextCapture.SnapshotClipboard();
-                if (previous == null)
-                {
-                    await ShowFailureAndHide("Clipboard formats couldn't be preserved safely");
-                    return;
-                }
-                if (!TextCapture.CanStartClipboardWrite(
-                        previous, TextCapture.ObserveClipboard()))
-                {
-                    previous.Dispose();
-                    await ShowFailureAndHide("Clipboard changed — action cancelled");
-                    return;
-                }
-            }
-
-            TextCapture.ClipboardObservation? written = null;
-            bool writeSucceeded;
-            if (previous != null)
-            {
-                written = await TextCapture.TrySetClipboardTextForOperationAsync(
-                    operation,
-                    previous,
-                    result.ResultText,
-                    requireExactTarget: willPaste);
-                writeSucceeded = written != null;
-            }
-            else
-            {
-                // An ordinary explicit copy does not target the foreground app, but it still
-                // belongs to this operation: a newer selection must suppress the stale write.
-                writeSucceeded = TextCapture.TryCommitClipboardMutation(
-                    operation,
-                    () => TrySetClipboardText(result.ResultText));
-            }
-
-            if (_generation != actionGeneration)
-            {
-                if (previous != null && written is { } supersededWrite)
-                {
-                    if (willPaste)
-                        TextCapture.RestoreClipboardIfUnchanged(
-                            previous, supersededWrite);
-                    else
-                        ScheduleClipboardRestore(previous, supersededWrite);
-                }
-                else
-                {
-                    previous?.Dispose();
-                }
-                return;
-            }
-            if (!writeSucceeded)
-            {
-                previous?.Dispose();
-                await ShowFailureAndHide(
-                    "Clipboard changed or couldn't be written — action cancelled");
-                return;
-            }
-
-            if (willPaste)
-            {
-                var expectedClipboard = written!.Value;
-                var pasteOutcome = await TextCapture.TrySimulatePasteAsync(
-                    operation, expectedClipboard);
-                if (pasteOutcome.Status
-                    == TextCapture.InputInjectionStatus.Partial)
-                {
-                    bool restored =
-                        TextCapture.CanRollbackAfterPartialPaste(pasteOutcome)
-                        && previous != null
-                        && written is { } partialWrite
-                        && TextCapture.RestoreClipboardIfUnchanged(
-                            previous, partialWrite);
-                    previous?.Dispose();
-                    if (_generation != actionGeneration) return;
-                    await ShowFailureAndHide(
-                        restored
-                            ? "Windows rejected the paste shortcut after the held key was safely released"
-                            : pasteOutcome.CleanupSucceeded
-                                ? "Windows accepted only part of the paste shortcut; clipboard restoration was skipped for safety"
-                            : "Windows accepted part of the paste shortcut and key release was incomplete");
-                    return;
-                }
-                if (pasteOutcome.Status
-                    != TextCapture.InputInjectionStatus.Succeeded)
-                {
-                    if (previous != null && written is { } failedWrite)
-                        TextCapture.RestoreClipboardIfUnchanged(previous, failedWrite);
-                    previous?.Dispose();
-                    if (_generation != actionGeneration) return;
-                    await ShowFailureAndHide("Focus moved — paste cancelled");
-                    return;
-                }
-                if (_generation != actionGeneration)
-                {
-                    previous?.Dispose();
-                    return;
-                }
-                previous?.Dispose();
-                HideToolbar();
-                return;
-            }
-            // Plain copy-to-clipboard path: flash a confirmation so the user knows it happened.
-            int gen = _generation;
-            await ShowCopiedToast();
-            if (previous != null && written is { } acceptedWrite)
-                ScheduleClipboardRestore(previous, acceptedWrite);
-            // A new selection during the toast reshowed the toolbar — leave it up.
-            if (_generation != gen) return;
+            // Transfer this operation to the result preview; hiding its old view must not invalidate it.
+            Volatile.Write(ref _operationContext, null);
+            _dismissTimer.Stop();
+            SubMenuPopup.IsOpen = false;
+            Hide();
+            ResultPopup.ShowActionResult(action.Name, result.ResultText, selection);
+            return;
         }
         HideToolbar();
     }
 
-    /// <summary>
-    /// Restore the snapshot to the clipboard ~3 seconds after we wrote our action's result.
-    /// Long enough that the user has had time to Alt-Tab + Ctrl+V somewhere; short enough that
-    /// the restore isn't surprising. The exact accepted sequence and owner must still match, so
-    /// another copy of even identical text is never overwritten.
-    /// </summary>
-    private static void ScheduleClipboardRestore(
-        TextCapture.ClipboardSnapshot snapshot,
-        TextCapture.ClipboardObservation acceptedWrite)
-    {
-        Application.Current.Dispatcher.InvokeAsync(async () =>
-        {
-            try
-            {
-                await Task.Delay(3000);
-                if (!TextCapture.RestoreClipboardIfUnchanged(snapshot, acceptedWrite))
-                    Log.Info("Clipboard restore skipped because ownership changed");
-            }
-            finally
-            {
-                snapshot.Dispose();
-            }
-        }, DispatcherPriority.Background);
-    }
-
-    private static bool TrySetClipboardText(string text)
-    {
-        try { Clipboard.SetText(text); return true; }
-        catch (Exception ex)
-        {
-            Log.Warn($"Clipboard.SetText failed: {ex.Message}");
-            return false;
-        }
-    }
+    private static bool TrySetClipboardText(string text) => ActionRunner.TryCopy(text);
 
     // ── Edit mode (gear toggle) ──────────────────────────────────
 
@@ -374,23 +184,20 @@ public partial class ToolbarWindow
     {
         // Build a submenu with: Plain paste + all transform actions on clipboard text
         _currentSubMenuGroup = "Paste As";
-        _currentSubMenuCategory = ActionCategory.Transform;
+        _currentSubMenuCategory = null;
         _hoverPreviewMode = false;
 
         SubMenuPanel.Children.Clear();
         ResetPreview();
         SubMenuTitle.Text = "Paste As";
-        GearButton.Visibility = Visibility.Visible; // real Transform category — edit mode works here
+        GearButton.Visibility = Visibility.Collapsed;
 
         if (Registry != null)
         {
-            var disabled = Config.SettingsManager.Current.DisabledActionIds;
-            var transforms = Registry.GetAllActionsForCategory(ActionCategory.Transform)
-                .Where(a => !disabled.Contains(a.Id) && a.CanExecute(_selectedText, _analysis))
-                .ToList();
-            var encodes = Registry.GetAllActionsForCategory(ActionCategory.Encode)
-                .Where(a => !disabled.Contains(a.Id) && a.CanExecute(_selectedText, _analysis))
-                .ToList();
+            var applicable = Registry.GetActions(_selectedText, _analysis, ForegroundApp.GetActiveProcessName())
+                .SelectMany(g => g.Actions).Where(a => a.IsPreviewSafe).ToList();
+            var transforms = applicable.Where(a => a.Category == ActionCategory.Transform).ToList();
+            var encodes = applicable.Where(a => a.Category == ActionCategory.Encode).ToList();
 
             foreach (var a in transforms) SubMenuPanel.Children.Add(CreateSubMenuButton(a, false));
             if (encodes.Count > 0)

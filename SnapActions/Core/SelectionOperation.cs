@@ -8,13 +8,16 @@ internal readonly struct SelectionOperation
 {
     private readonly SelectionOperationSource? _source;
     private readonly long _generation;
+    private readonly Func<Task<bool>>? _validateSelection;
 
     internal SelectionOperation(
-        SelectionOperationSource source, long generation, ForegroundTarget target)
+        SelectionOperationSource source, long generation, ForegroundTarget target,
+        Func<Task<bool>>? validateSelection = null)
     {
         _source = source;
         _generation = generation;
         Target = target;
+        _validateSelection = validateSelection;
     }
 
     internal ForegroundTarget Target { get; }
@@ -28,6 +31,11 @@ internal readonly struct SelectionOperation
     internal async Task<bool> CanInjectInputAsync() =>
         IsCurrent
         && await ForegroundGuard.StillValidAsync(Target)
+        && await CanUseSelectionAsync();
+
+    internal async Task<bool> CanUseSelectionAsync() =>
+        IsCurrent
+        && (_validateSelection == null || await _validateSelection())
         && IsCurrent;
 
     internal bool TryCommit(Func<bool> action) =>
@@ -42,7 +50,10 @@ internal readonly struct SelectionOperation
     internal SelectionOperation WithTarget(ForegroundTarget target) =>
         _source == null
             ? default
-            : new SelectionOperation(_source, _generation, target);
+            : new SelectionOperation(_source, _generation, target, _validateSelection);
+
+    internal SelectionOperation WithSelectionValidation(Func<Task<bool>> validateSelection) =>
+        _source == null ? default : new SelectionOperation(_source, _generation, Target, validateSelection);
 }
 
 internal sealed class SelectionOperationSource

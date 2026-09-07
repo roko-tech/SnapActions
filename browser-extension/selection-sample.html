@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SnapActions selection sample</title>
+<style>
+body{font:18px/1.7 system-ui,sans-serif;max-width:850px;margin:48px auto;padding:0 24px;color:#202b40;background:#f6f8fc}section{background:white;border:1px solid #d6deeb;border-radius:12px;padding:24px;margin:20px 0}h1,h2{line-height:1.2}h2{font-size:20px}textarea,input{font:inherit;box-sizing:border-box;width:100%;padding:12px;border:1px solid #8291a7;border-radius:5px}iframe{width:100%;height:150px;border:1px solid #8291a7}code{word-break:break-all}small{color:#526078}
+</style>
+<h1>Try your selection</h1>
+<p>Select text below and compare the toolbar preview with your highlight. Try dragging in both directions, double-clicking a word, and using Ctrl+Shift+Space.</p>
+<small>If this file is open locally, enable “Allow access to file URLs” for the companion on your browser's Extensions page. Internal browser pages cannot expose selections.</small>
+<section><h2>Ordinary text and multiple lines</h2><p>First line: Keep the exact words you selected.<br>Second line: include punctuation, numbers (42), and emoji 👋.</p></section>
+<section dir="rtl"><h2>Arabic and English together</h2><p>هل تريد استخدام ChatGPT الآن؟ اختر النص (42) واختبر الاتجاهين.</p><p>نص عربي مع English words و 👋 دون تغيير ترتيب الأحرف.</p></section>
+<section><h2>Editable targets</h2><input aria-label="Single line editor" value="  Hello mixed العربية  "><p><textarea aria-label="Multiple line editor" rows="4">First line
+Second line with العربية and ChatGPT
+Third line</textarea></p><div contenteditable="true" role="textbox" aria-label="Rich text editor" style="border:1px solid #8291a7;padding:12px">Select <b>formatted text</b> inside this editor.</div></section>
+<section><h2>Selection inside a frame</h2><iframe title="Selection frame" srcdoc="<!doctype html><meta charset='utf-8'><p style='font:20px system-ui'>Frame selection: Hello مرحبا 👋</p><input aria-label='Frame editor' value='Editable frame text'>"></iframe></section>
+<section><h2>Try local actions</h2><p><code>https://example.com/page?q=hello%20world&amp;utm_source=sample&amp;fbclid=test#section</code></p><p>Select this URL for Clean tracking link or QR Code. Try Inspect text on this line containing a zero-width space: A&#x200b;B.</p></section>
+</html>

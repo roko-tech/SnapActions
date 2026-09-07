@@ -19,8 +19,7 @@ public static class Log
     private const long MaxBytesPerFile = 10L * 1024 * 1024; // 10 MB
     private const int MaxRotatedFiles = 4; // .1, .2, .3, .4
 
-    private static readonly string LogDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SnapActions", "logs");
+    private static readonly string LogDir = Path.Combine(Config.RuntimePaths.DataDirectory, "logs");
     // Prune old log files at most once every 24 hours of process uptime — keeps long-running
     // sessions from filling the log dir without doing the work on every write. Touched only by
     // the writer thread.

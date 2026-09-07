@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>SnapActions browser selection check</title>
+<style>
+  body { font: 22px/1.8 "Segoe UI", sans-serif; margin: 40px; max-width: 900px; }
+  .sample { border: 1px solid #888; padding: 24px; margin: 16px 0; }
+  #wrapped { width: 390px; }
+  input, textarea { font: inherit; width: 100%; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 16px/1.6 monospace; background: #eee; padding: 16px; }
+</style>
+<h1>SnapActions browser selection check</h1>
+<p>Highlight these samples. The receipt below shows the browser's own selected string.</p>
+<p class="sample" dir="rtl">استخدم ChatGPT مع العربية، ثم جرّب English (42)!</p>
+<p class="sample" id="wrapped" dir="rtl">هذه جملة عربية مع ChatGPT وبعض English words لاختبار التحديد عبر عدة أسطر مع الأرقام 123 وعلامات الترقيم (test).</p>
+<input value="قبل ChatGPT بعد English 42" aria-label="Mixed text input">
+<textarea aria-label="Mixed multiline input">السطر الأول ChatGPT
+English في السطر الثاني</textarea>
+<iframe title="Mixed text frame" srcdoc="<meta charset='utf-8'><p style='font:24px Segoe UI' dir='rtl'>داخل iframe مع ChatGPT والعربية</p>"></iframe>
+<h2>Browser selection receipt</h2>
+<pre id="receipt">No selection</pre>
+<script>
+  document.addEventListener('selectionchange', () => {
+    const element = document.activeElement;
+    const text = ['INPUT', 'TEXTAREA'].includes(element?.tagName)
+      ? element.value.slice(element.selectionStart, element.selectionEnd)
+      : window.getSelection().toString();
+    document.getElementById('receipt').textContent = JSON.stringify(text);
+  });
+</script>
+</html>

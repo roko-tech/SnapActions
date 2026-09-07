@@ -6,8 +6,7 @@ namespace SnapActions.Config;
 
 public static class SettingsManager
 {
-    private static readonly string SettingsDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SnapActions");
+    private static readonly string SettingsDir = RuntimePaths.DataDirectory;
     private static readonly string SettingsFile = Path.Combine(SettingsDir, "settings.json");
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -20,8 +19,9 @@ public static class SettingsManager
             if (File.Exists(SettingsFile))
             {
                 var json = File.ReadAllText(SettingsFile);
-                Current = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new();
+                Current = Parse(json);
             }
+            else Current = Parse("{}");
         }
         catch (Exception ex)
         {
@@ -40,15 +40,21 @@ public static class SettingsManager
                 }
             }
             catch { /* best effort */ }
-            Current = new AppSettings();
+            Current = Parse("{}");
         }
 
-        // Migrate: update built-in search engines to latest defaults
-        MigrateSearchEngines();
-        MigrateActionIds();
-        MigrateExcludedAppsDefaults();
-        PruneStaleActionIds();
         PruneStaleBackups();
+    }
+
+    internal static AppSettings Parse(string json)
+    {
+        var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new();
+        SettingsValidator.Normalize(settings);
+        MigrateSearchEngines(settings);
+        MigrateActionIds(settings);
+        MigrateExcludedAppsDefaults(settings);
+        PruneStaleActionIds(settings);
+        return settings;
     }
 
     /// <summary>
@@ -68,17 +74,17 @@ public static class SettingsManager
         (Version: 1, Apps: new[] { "PotPlayerMini64", "PotPlayerMini" }),
     };
 
-    private static void MigrateExcludedAppsDefaults()
+    private static void MigrateExcludedAppsDefaults(AppSettings settings)
     {
         foreach (var (version, apps) in ExcludedAppsDefaultsHistory)
         {
-            if (Current.ExcludedAppsDefaultsVersion >= version) continue;
+            if (settings.ExcludedAppsDefaultsVersion >= version) continue;
             foreach (var app in apps)
             {
-                if (!Current.ExcludedApps.Any(e => e.Equals(app, StringComparison.OrdinalIgnoreCase)))
-                    Current.ExcludedApps.Add(app);
+                if (!settings.ExcludedApps.Any(e => e.Equals(app, StringComparison.OrdinalIgnoreCase)))
+                    settings.ExcludedApps.Add(app);
             }
-            Current.ExcludedAppsDefaultsVersion = version;
+            settings.ExcludedAppsDefaultsVersion = version;
         }
     }
 
@@ -109,37 +115,37 @@ public static class SettingsManager
     /// Drops Pinned/Disabled IDs that no longer correspond to any action. Avoids unbounded growth
     /// when users delete custom search engines or after action renames in future versions.
     /// </summary>
-    private static void PruneStaleActionIds()
+    private static void PruneStaleActionIds(AppSettings settings)
     {
         // Single source of truth: ask the registry for the full ID list.
-        var validIds = SnapActions.Actions.ActionRegistry.GetAllKnownActionIds(Current.SearchEngines);
-        Current.PinnedActionIds.RemoveAll(id => !validIds.Contains(id));
-        Current.DisabledActionIds.RemoveAll(id => !validIds.Contains(id));
+        var validIds = SnapActions.Actions.ActionRegistry.GetAllKnownActionIds(settings.SearchEngines, settings.UserActions, settings.TextRecipes);
+        settings.PinnedActionIds.RemoveAll(id => !validIds.Contains(id));
+        settings.DisabledActionIds.RemoveAll(id => !validIds.Contains(id));
         // Same for per-app hidden lists; drop now-empty app entries so they don't accumulate.
-        foreach (var app in Current.AppHiddenActions.Keys.ToList())
+        foreach (var app in settings.AppHiddenActions.Keys.ToList())
         {
-            Current.AppHiddenActions[app].RemoveAll(id => !validIds.Contains(id));
-            if (Current.AppHiddenActions[app].Count == 0)
-                Current.AppHiddenActions.Remove(app);
+            settings.AppHiddenActions[app].RemoveAll(id => !validIds.Contains(id));
+            if (settings.AppHiddenActions[app].Count == 0)
+                settings.AppHiddenActions.Remove(app);
         }
     }
 
-    private static void MigrateActionIds()
+    private static void MigrateActionIds(AppSettings settings)
     {
         // wrap_wrap_X -> wrap_X (B10 fix in WrapAction.Id)
-        for (int i = 0; i < Current.PinnedActionIds.Count; i++)
-            Current.PinnedActionIds[i] = MigrateId(Current.PinnedActionIds[i]);
-        for (int i = 0; i < Current.DisabledActionIds.Count; i++)
-            Current.DisabledActionIds[i] = MigrateId(Current.DisabledActionIds[i]);
+        for (int i = 0; i < settings.PinnedActionIds.Count; i++)
+            settings.PinnedActionIds[i] = MigrateId(settings.PinnedActionIds[i]);
+        for (int i = 0; i < settings.DisabledActionIds.Count; i++)
+            settings.DisabledActionIds[i] = MigrateId(settings.DisabledActionIds[i]);
     }
 
     private static string MigrateId(string id) =>
         id.StartsWith("wrap_wrap_", StringComparison.Ordinal) ? id["wrap_".Length..] : id;
 
-    private static void MigrateSearchEngines()
+    private static void MigrateSearchEngines(AppSettings settings)
     {
         var defaults = AppSettings.GetDefaultEngines();
-        var existing = Current.SearchEngines;
+        var existing = settings.SearchEngines;
 
         foreach (var def in defaults)
         {
@@ -169,7 +175,9 @@ public static class SettingsManager
     // invariant above is what keeps the serializer safe; the lock is only for the file write.
     private static readonly object _saveLock = new();
 
-    public static void Save()
+    public static string? LastSaveError { get; private set; }
+
+    public static bool Save()
     {
         // Enforce the single-threaded invariant the serializer relies on: Current is mutated only on
         // the UI dispatcher, so Save must run there too — otherwise JsonSerializer.Serialize can
@@ -188,10 +196,14 @@ public static class SettingsManager
                 var tmp = SettingsFile + ".tmp";
                 File.WriteAllText(tmp, json);
                 File.Move(tmp, SettingsFile, overwrite: true);
+                LastSaveError = null;
+                return true;
             }
             catch (Exception ex)
             {
                 SnapActions.Helpers.Log.Error("Failed to save settings", ex);
+                LastSaveError = "Settings could not be saved. Check file access and try again.";
+                return false;
             }
         }
     }
@@ -205,6 +217,7 @@ public static class SettingsManager
 
     public static void SetAutoStart(bool enable)
     {
+        if (RuntimePaths.IsIsolated) return; // Test instances never change the user's login entry.
         lock (_autoStartLock)
         {
         // Apply the registry change first, then commit Current/Save only on success — otherwise

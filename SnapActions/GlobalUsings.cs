@@ -13,3 +13,4 @@ global using DragDropEffects = System.Windows.DragDropEffects;
 global using DragDrop = System.Windows.DragDrop;
 global using HorizontalAlignment = System.Windows.HorizontalAlignment;
 global using VerticalAlignment = System.Windows.VerticalAlignment;
+global using FlowDirection = System.Windows.FlowDirection;

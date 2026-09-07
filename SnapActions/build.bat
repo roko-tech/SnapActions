@@ -1,9 +1,9 @@
 @echo off
-echo Building SnapActions...
-dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o bin\publish
+echo Building and verifying a fresh SnapActions package...
+python "%~dp0..\tools\package.py"
 if %ERRORLEVEL% EQU 0 (
     echo.
-    echo Build successful! Output: bin\publish\SnapActions.exe
+    echo Package verified. See the artifacts directory for the ZIP and checksums.
 ) else (
     echo.
     echo Build failed!

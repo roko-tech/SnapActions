@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
+using System.Text;
 using SnapActions.Actions;
 using SnapActions.Detection;
 
@@ -33,6 +35,7 @@ public partial class ToolbarWindow
     private void UpdatePreviewBand(IAction action)
     {
         string preview;
+        string? label = null;
         string? swatchHex = null;
 
         // Preview is opt-in via IAction.IsPreviewSafe — only pure actions run on hover.
@@ -55,7 +58,10 @@ public partial class ToolbarWindow
             catch { preview = action.Name; }
         }
         else if (action.Category == ActionCategory.Search)
-            preview = $"Search {action.Name} for: \"{Truncate(_selectedText, 50)}\"";
+        {
+            label = $"Search {action.Name} for: ";
+            preview = Truncate(_selectedText, 50);
+        }
         else
             preview = action.Name;
 
@@ -63,7 +69,8 @@ public partial class ToolbarWindow
         if (_analysis.Type == TextType.ColorCode && swatchHex == null)
             swatchHex = _selectedText;
 
-        PreviewText.Text = preview;
+        SetPreviewContent(PreviewText, preview, label,
+            label != null || action.Category == ActionCategory.Transform ? _selectionFlowDirection : null);
         PreviewText.Opacity = 1;
         SetSwatch(swatchHex);
     }
@@ -145,7 +152,7 @@ public partial class ToolbarWindow
             SubMenuPopup.IsOpen = true;
         }
         SetSwatch(null);
-        PreviewText.Text = "Copied to clipboard";
+        SetPreviewContent(PreviewText, "Copied to clipboard");
         PreviewText.Opacity = 1;
         await Task.Delay(450);
     }
@@ -161,12 +168,45 @@ public partial class ToolbarWindow
             GearButton.Visibility = Visibility.Collapsed;
             SubMenuPopup.IsOpen = true;
         }
-        PreviewText.Text = message;
+        SetPreviewContent(PreviewText, message);
         PreviewText.Opacity = 1;
         // Short visible window — long enough to read, short enough not to feel sticky.
         await Task.Delay(1500);
         // Don't hide if a new selection reshowed the toolbar during the delay.
         if (_generation == gen) HideToolbar();
+    }
+
+    // A Span gives the selected phrase its own bidi scope; the English search label must not
+    // determine its reading direction. This changes WPF presentation only, never _selectedText.
+    internal static void SetPreviewContent(TextBlock target, string text, string? label = null,
+        FlowDirection? direction = null)
+    {
+        var textDirection = direction ?? GetPreviewFlowDirection(text);
+        target.Inlines.Clear();
+        target.FlowDirection = label == null ? textDirection : FlowDirection.LeftToRight;
+        if (label == null)
+            target.Inlines.Add(new Run(text));
+        else
+        {
+            target.Inlines.Add(new Run(label));
+            target.Inlines.Add(new Span(new Run($"\"{text}\"")) { FlowDirection = textDirection });
+        }
+    }
+
+    internal static FlowDirection GetPreviewFlowDirection(string text)
+    {
+        foreach (var rune in text.EnumerateRunes())
+        {
+            int value = rune.Value;
+            if (value is 0x200F or 0x061C) return FlowDirection.RightToLeft;
+            if (value == 0x200E) return FlowDirection.LeftToRight;
+            if (!Rune.IsLetter(rune)) continue;
+            return value is >= 0x0590 and <= 0x08FF
+                or >= 0xFB1D and <= 0xFDFF or >= 0xFE70 and <= 0xFEFF
+                or >= 0x1EE00 and <= 0x1EEFF
+                ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
+        }
+        return FlowDirection.LeftToRight;
     }
 
     // Internal for tests. Backs up one UTF-16 unit when the cut would split a surrogate pair,

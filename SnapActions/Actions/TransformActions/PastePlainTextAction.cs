@@ -25,14 +25,14 @@ public class PastePlainTextAction : IAction, IOperationAction
     {
         // Wait out physical modifiers and validate the immutable target before touching clipboard
         // data. If focus changes during the wait, the user's rich clipboard remains untouched.
-        if (!await TextCapture.PreparePasteAsync(operation))
+        if (!await InputExecutor.PreparePasteAsync(operation))
             return new ActionResult(false, Message: "Focus moved — paste cancelled");
 
-        TextCapture.ClipboardSnapshot? original = null;
+        ClipboardTransaction.ClipboardSnapshot? original = null;
         bool deferredRestoreOwnsSnapshot = false;
         try
         {
-            original = TextCapture.SnapshotClipboard();
+            original = ClipboardTransaction.SnapshotClipboard();
             if (original == null)
                 return new ActionResult(
                     false, Message: "Clipboard formats couldn't be preserved safely");
@@ -47,11 +47,11 @@ public class PastePlainTextAction : IAction, IOperationAction
 
             if (!await operation.CanInjectInputAsync())
                 return new ActionResult(false, Message: "Focus moved — paste cancelled");
-            if (!TextCapture.CanStartClipboardWrite(
-                    original, TextCapture.ObserveClipboard()))
+            if (!ClipboardTransaction.CanStartClipboardWrite(
+                    original, ClipboardTransaction.ObserveClipboard()))
                 return new ActionResult(false, Message: "Clipboard changed — paste cancelled");
 
-            var written = await TextCapture.TrySetClipboardTextForOperationAsync(
+            var written = await ClipboardTransaction.TrySetClipboardTextForOperationAsync(
                 operation,
                 original,
                 plain,
@@ -59,24 +59,24 @@ public class PastePlainTextAction : IAction, IOperationAction
             if (written == null)
                 return new ActionResult(false, Message: "Clipboard changed — paste cancelled");
 
-            var pasteOutcome = await TextCapture.TrySimulatePasteAsync(
+            var pasteOutcome = await InputExecutor.TrySimulatePasteAsync(
                 operation, written.Value);
-            if (pasteOutcome.Status == TextCapture.InputInjectionStatus.Partial)
+            if (pasteOutcome.Status == InputExecutor.InputInjectionStatus.Partial)
             {
-                if (TextCapture.CanRollbackAfterPartialPaste(pasteOutcome))
-                    TextCapture.RestoreClipboardIfUnchanged(
+                if (InputExecutor.CanRollbackAfterPartialPaste(pasteOutcome))
+                    ClipboardTransaction.RestoreClipboardIfUnchanged(
                         original, written.Value);
                 return new ActionResult(
                     false,
-                    Message: TextCapture.CanRollbackAfterPartialPaste(pasteOutcome)
+                    Message: InputExecutor.CanRollbackAfterPartialPaste(pasteOutcome)
                         ? "Windows rejected the paste shortcut after the held key was safely released"
                         : pasteOutcome.CleanupSucceeded
                             ? "Windows accepted only part of the paste shortcut; clipboard restoration was skipped for safety"
                         : "Windows accepted part of the paste shortcut and key release was incomplete");
             }
-            if (pasteOutcome.Status != TextCapture.InputInjectionStatus.Succeeded)
+            if (pasteOutcome.Status != InputExecutor.InputInjectionStatus.Succeeded)
             {
-                TextCapture.RestoreClipboardIfUnchanged(original, written.Value);
+                ClipboardTransaction.RestoreClipboardIfUnchanged(original, written.Value);
                 return new ActionResult(false, Message: "Focus moved — paste cancelled");
             }
 
@@ -88,7 +88,7 @@ public class PastePlainTextAction : IAction, IOperationAction
                 try
                 {
                     await Task.Delay(200);
-                    TextCapture.RestoreClipboardIfUnchanged(
+                    ClipboardTransaction.RestoreClipboardIfUnchanged(
                         restoreSnapshot, written.Value);
                 }
                 finally

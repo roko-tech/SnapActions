@@ -19,10 +19,8 @@ public partial class SettingsWindow : Window
     public SettingsWindow()
     {
         InitializeComponent();
-        _textBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xCD, 0xD6, 0xF4));
-        _secondaryBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xA6, 0xAD, 0xC8));
-        _textBrush.Freeze();
-        _secondaryBrush.Freeze();
+        _textBrush = (Brush)FindResource("TextBrush");
+        _secondaryBrush = (Brush)FindResource("TextSecondaryBrush");
 
         // Show the version pulled from the assembly. ToString(3) drops the .0 build-revision
         // component so "1.6.13.0" displays as "v1.6.13" — matches the csproj <Version> and
@@ -39,19 +37,19 @@ public partial class SettingsWindow : Window
         {
             _saveDebounce.Stop();
             FlushPendingTextEdits();
-            SettingsManager.Save();
+            SaveWithStatus();
         };
 
         // Flush any pending change immediately on close so users don't lose edits.
         // Save synchronously so it can't lose the race against process exit if the user
         // closes Settings and then immediately Exits from the tray menu.
-        Closing += (_, _) =>
+        Closing += (_, e) =>
         {
-            if (_saveDebounce.IsEnabled)
+            if (_saveDebounce.IsEnabled || SettingsManager.LastSaveError != null)
             {
                 _saveDebounce.Stop();
                 FlushPendingTextEdits();
-                SettingsManager.Save();
+                e.Cancel = !SaveWithStatus();
             }
         };
 
@@ -71,9 +69,10 @@ public partial class SettingsWindow : Window
         if (_loading) return;
         _saveDebounce.Stop();
         _saveDebounce.Start();
+        SaveStatusText.Text = "Saving…";
     }
 
-    private void LoadSettings()
+    internal void LoadSettings()
     {
         var s = SettingsManager.Current;
         EnabledCheck.IsChecked = s.Enabled;
@@ -100,6 +99,7 @@ public partial class SettingsWindow : Window
         BuildSearchEnginesList();
         BuildUserActionsList();
         BuildAppProfilesList();
+        LoadAdditionalSettings();
         ExcludedAppsBox.Text = string.Join("\n", s.ExcludedApps);
     }
 
@@ -307,7 +307,7 @@ public partial class SettingsWindow : Window
             Width = 380, Height = 480,
             WindowStartupLocation = WindowStartupLocation.CenterOwner, Owner = this,
             ResizeMode = ResizeMode.CanResize,
-            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x1E, 0x2E)),
+            Background = (Brush)FindResource("BackgroundBrush"),
         };
 
         // Apps to choose from: existing profiles + currently-running apps with a visible window.
@@ -367,8 +367,8 @@ public partial class SettingsWindow : Window
         {
             Content = "Close", Padding = new Thickness(16, 4, 16, 4), Margin = new Thickness(8),
             HorizontalAlignment = HorizontalAlignment.Right,
-            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x89, 0xB4, 0xFA)),
-            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x1E, 0x2E)),
+            Background = (Brush)FindResource("AccentBrush"),
+            Foreground = (Brush)FindResource("BackgroundBrush"),
             BorderThickness = new Thickness(0),
         };
         closeBtn.Click += (_, _) => dlg.Close();
@@ -382,10 +382,23 @@ public partial class SettingsWindow : Window
             Content = listPanel,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
-        Grid.SetRow(appCombo, 0);
+        var topPanel = new StackPanel();
+        topPanel.Children.Add(appCombo);
+        var presetRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 0, 8, 8) };
+        var presets = new ComboBox { Width = 150, ItemsSource = new[] { "Reading", "Writing", "Development" }, SelectedIndex = 0 };
+        System.Windows.Automation.AutomationProperties.SetName(presets, "App profile preset");
+        var applyPreset = new System.Windows.Controls.Button { Content = "Apply preset", Margin = new Thickness(8, 0, 0, 0), Padding = new Thickness(8, 3, 8, 3) };
+        applyPreset.Click += (_, _) =>
+        {
+            if (appCombo.SelectedItem is not string app || presets.SelectedItem is not string preset) return;
+            foreach (var id in AppProfilePresets.HiddenActions(preset, new SnapActions.Actions.ActionRegistry())) ToggleHiddenAction(app, id, true);
+            RefreshChecks();
+        };
+        presetRow.Children.Add(presets); presetRow.Children.Add(applyPreset); topPanel.Children.Add(presetRow);
+        Grid.SetRow(topPanel, 0);
         Grid.SetRow(scroll, 1);
         Grid.SetRow(closeBtn, 2);
-        grid.Children.Add(appCombo);
+        grid.Children.Add(topPanel);
         grid.Children.Add(scroll);
         grid.Children.Add(closeBtn);
         dlg.Content = grid;
@@ -420,6 +433,10 @@ public partial class SettingsWindow : Window
         // UI-thread mutations of SettingsManager.Current (JsonSerializer.Serialize iterating
         // a List<T> that's being mutated throws InvalidOperationException).
         SettingsManager.SetAutoStart(enable);
+        _loading = true;
+        AutoStartCheck.IsChecked = SettingsManager.Current.AutoStart;
+        _loading = false;
+        SaveStatusText.Text = SettingsManager.Current.AutoStart == enable ? "Saved" : "Windows startup setting could not be changed.";
     }
 
     private void ShowDelay_Changed(object sender, SelectionChangedEventArgs e)
@@ -601,7 +618,7 @@ public partial class SettingsWindow : Window
     {
         _saveDebounce.Stop();
         FlushPendingTextEdits();
-        SettingsManager.Save();
+        SaveWithStatus();
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
@@ -617,13 +634,13 @@ public partial class SettingsWindow : Window
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this,
             ResizeMode = ResizeMode.CanResize,
-            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x1E, 0x2E)),
+            Background = (Brush)FindResource("BackgroundBrush"),
         };
         var list = new System.Windows.Controls.ListBox
         {
-            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2D, 0x2D, 0x3D)),
+            Background = (Brush)FindResource("SurfaceBrush"),
             Foreground = _textBrush,
-            BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3D, 0x3D, 0x50)),
+            BorderBrush = (Brush)FindResource("BorderBrush"),
             FontFamily = new System.Windows.Media.FontFamily("Consolas"),
             Margin = new Thickness(8),
         };
@@ -665,8 +682,8 @@ public partial class SettingsWindow : Window
         var addBtn = new System.Windows.Controls.Button
         {
             Content = "Add", Padding = new Thickness(16, 4, 16, 4),
-            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x89, 0xB4, 0xFA)),
-            Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x1E, 0x2E)),
+            Background = (Brush)FindResource("AccentBrush"),
+            Foreground = (Brush)FindResource("BackgroundBrush"),
             BorderThickness = new Thickness(0),
             Margin = new Thickness(0, 0, 8, 0),
         };
@@ -678,9 +695,9 @@ public partial class SettingsWindow : Window
         var cancelBtn = new System.Windows.Controls.Button
         {
             Content = "Cancel", Padding = new Thickness(16, 4, 16, 4),
-            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2D, 0x2D, 0x3D)),
+            Background = (Brush)FindResource("SurfaceBrush"),
             Foreground = _textBrush,
-            BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3D, 0x3D, 0x50)),
+            BorderBrush = (Brush)FindResource("BorderBrush"),
         };
         cancelBtn.Click += (_, _) => picker.Close();
 

@@ -18,12 +18,14 @@ namespace SnapActions.UI;
 public partial class ToolbarWindow : Window
 {
     private string _selectedText = "";
+    private FlowDirection _selectionFlowDirection;
     private TextAnalysis _analysis = TextAnalysis.PlainText;
     private List<ActionGroup> _actionGroups = [];
     private readonly DispatcherTimer _dismissTimer;
     private double _dpiX = 1.0, _dpiY = 1.0;
     private bool _isEditable;
     private bool _isPasteMode;
+    private SelectionProviderKind _selectionProvider;
     private ToolbarOperationContext? _operationContext;
 
     private sealed class ToolbarOperationContext(SelectionOperation operation)
@@ -74,7 +76,7 @@ public partial class ToolbarWindow : Window
         SourceInitialized += (_, _) =>
         {
             var hwnd = new WindowInteropHelper(this).Handle;
-            TextCapture.SetClipboardOwnerWindow(hwnd);
+            ClipboardTransaction.SetClipboardOwnerWindow(hwnd);
             // Use the IntPtr variants so 64-bit ex-styles (e.g. anything past bit 31) survive.
             // SetWindowLong silently truncates to 32 bits on x64, which would corrupt high-bit flags.
             var style = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
@@ -89,7 +91,7 @@ public partial class ToolbarWindow : Window
         Closed += (_, _) =>
         {
             KeyboardHook.EscPressed -= OnGlobalEsc;
-            TextCapture.SetClipboardOwnerWindow(IntPtr.Zero);
+            ClipboardTransaction.SetClipboardOwnerWindow(IntPtr.Zero);
         };
     }
 
@@ -112,13 +114,19 @@ public partial class ToolbarWindow : Window
     // ── Show ─────────────────────────────────────────────────────
 
     internal void Show(string text, TextAnalysis analysis, List<ActionGroup> groups,
-                       double x, double y, bool isEditable, SelectionOperation operation)
+                       double x, double y, bool isEditable, SelectionOperation operation,
+                       bool? rightToLeft = null, SelectionProviderKind provider = SelectionProviderKind.UiAutomation)
     {
         Volatile.Write(
             ref _operationContext, new ToolbarOperationContext(operation));
         _selectedText = text;
+        _selectionProvider = provider;
+        _selectionFlowDirection = rightToLeft.HasValue
+            ? (rightToLeft.Value ? FlowDirection.RightToLeft : FlowDirection.LeftToRight)
+            : GetPreviewFlowDirection(text);
         _analysis = analysis;
-        _actionGroups = groups;
+        _actionGroups = groups.Select(g => g with { Actions = g.Actions.Where(a => isEditable || a is not IOperationAction).ToList() })
+            .Where(g => g.Actions.Count > 0).ToList();
         _isEditable = isEditable;
         _isPasteMode = false;
         _editMode = false;
@@ -126,9 +134,11 @@ public partial class ToolbarWindow : Window
         CopyButton.Visibility = Visibility.Visible;
         PasteButton.Visibility = Visibility.Collapsed;
         BuildToolbarButtons();
-        BuildContextActions();
-        BuildPinnedActions();
         UpdateTypeBadge();
+        var bounds = ScreenHelper.GetScreenBounds(new Point(x, y));
+        var dpi = ScreenHelper.GetDpiForPoint(new Point(x, y));
+        MainBorder.MaxWidth = Math.Min(600, Math.Max(240, bounds.Width / Math.Max(1, dpi.X) - 16));
+        RebuildInlineActions();
         PositionAndShow(x, y);
     }
 
@@ -156,6 +166,7 @@ public partial class ToolbarWindow : Window
         SearchSeparator.Visibility = Visibility.Collapsed;
         SearchButton.Visibility = Visibility.Collapsed;
         TypeBadge.Visibility = Visibility.Collapsed;
+        MoreButton.Visibility = Visibility.Collapsed;
 
         PositionAndShow(x, y);
 
@@ -164,7 +175,7 @@ public partial class ToolbarWindow : Window
         if (!string.IsNullOrEmpty(_selectedText)) ShowPasteAsMenu();
     }
 
-    /// <summary>Only show transform/encode buttons when text is in an editable field.</summary>
+    /// <summary>Pure transforms remain useful on read-only selections; replacement is a separate capability.</summary>
     private void BuildToolbarButtons()
     {
         var s = Config.SettingsManager.Current;
@@ -173,8 +184,8 @@ public partial class ToolbarWindow : Window
         var groupNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var g in _actionGroups) groupNames.Add(g.Name);
 
-        bool hasTransform = _isEditable && s.ShowTransformActions && groupNames.Contains("Transform");
-        bool hasEncode = _isEditable && s.ShowEncodeActions && groupNames.Contains("Encode");
+        bool hasTransform = s.ShowTransformActions && groupNames.Contains("Transform");
+        bool hasEncode = s.ShowEncodeActions && groupNames.Contains("Encode");
         bool hasSearch = s.ShowSearchActions && groupNames.Contains("Search");
         // The separator before Transform also serves the encode-only case.
         TransformSeparator.Visibility = (hasTransform || hasEncode) ? Visibility.Visible : Visibility.Collapsed;
@@ -359,14 +370,19 @@ public partial class ToolbarWindow : Window
 
     private async void CopyButton_Click(object sender, RoutedEventArgs e)
     {
+        int gen = _generation;
         if (!TryStartToolbarAction(out var operation)) return;
-        if (!TextCapture.TryCommitClipboardMutation(
+        if (!await operation.CanUseSelectionAsync())
+        {
+            if (_generation == gen) await ShowFailureAndHide("Selection changed — copy cancelled");
+            return;
+        }
+        if (!ClipboardTransaction.TryCommitClipboardMutation(
                 operation, () => TrySetClipboardText(_selectedText)))
         {
             await ShowFailureAndHide("Couldn't write to clipboard — try again");
             return;
         }
-        int gen = _generation;
         await ShowCopiedToast();
         // Don't hide if a new selection reshowed the toolbar during the toast.
         if (_generation == gen) HideToolbar();
@@ -376,17 +392,17 @@ public partial class ToolbarWindow : Window
     {
         int generation = _generation;
         if (!TryStartToolbarAction(out var operation)) return;
-        var pasteOutcome = await TextCapture.SimulatePasteAsync(operation);
+        var pasteOutcome = await InputExecutor.SimulatePasteAsync(operation);
         if (_generation != generation) return;
-        if (pasteOutcome.Status == TextCapture.InputInjectionStatus.Succeeded)
+        if (pasteOutcome.Status == InputExecutor.InputInjectionStatus.Succeeded)
         {
             HideToolbar();
             return;
         }
-        if (pasteOutcome.Status == TextCapture.InputInjectionStatus.Partial)
+        if (pasteOutcome.Status == InputExecutor.InputInjectionStatus.Partial)
         {
             await ShowFailureAndHide(
-                TextCapture.CanRollbackAfterPartialPaste(pasteOutcome)
+                InputExecutor.CanRollbackAfterPartialPaste(pasteOutcome)
                     ? "Windows rejected the paste shortcut after the held key was safely released"
                     : pasteOutcome.CleanupSucceeded
                         ? "Windows accepted only part of the paste shortcut"

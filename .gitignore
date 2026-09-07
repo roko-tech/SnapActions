@@ -6,3 +6,4 @@ obj/
 *.DotSettings.user
 publish/
 publish-*/
+artifacts/

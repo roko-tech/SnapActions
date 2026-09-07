@@ -15,9 +15,25 @@ public partial class App : Application
     private TrayIconManager? _trayIcon;
     private SelectionTracker? _tracker;
 
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
-        const string mutexName = "SnapActions_SingleInstance_Mutex";
+        if (e.Args.Length > 0 && e.Args[0].StartsWith("chrome-extension://", StringComparison.Ordinal))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            if (e.Args[0] == BrowserNativeHost.ExtensionOrigin)
+                await BrowserNativeHost.RunAsync();
+            Shutdown();
+            return;
+        }
+
+        if (e.Args is ["--self-test"])
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            Shutdown(await Diagnostics.PackageSelfTest.RunAsync());
+            return;
+        }
+
+        var mutexName = "SnapActions_SingleInstance_Mutex" + RuntimePaths.InstanceSuffix;
         _mutex = new Mutex(true, mutexName, out bool createdNew);
         _ownsMutex = createdNew;
 
@@ -59,6 +75,7 @@ public partial class App : Application
         Log.Info($"SnapActions starting (PID {Environment.ProcessId}, .NET {Environment.Version})");
 
         SettingsManager.Load();
+        ThemeManager.Start();
 
         _trayIcon = new TrayIconManager();
         _trayIcon.Initialize();
@@ -77,6 +94,7 @@ public partial class App : Application
     {
         Log.Info("SnapActions shutting down");
         KeyboardHook.Uninstall();
+        ThemeManager.Stop();
         _tracker?.Stop();
         _trayIcon?.Dispose();
         if (_ownsMutex)

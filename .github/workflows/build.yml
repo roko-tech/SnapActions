@@ -21,13 +21,17 @@ jobs:
 
       - uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 # v4.1.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.303'
 
-      - name: Restore
-        run: dotnet restore SnapActions/SnapActions.csproj
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: '.node-version'
 
-      - name: Build (Release)
-        run: dotnet build SnapActions/SnapActions.csproj -c Release --no-restore
+      - name: Build, test, publish and verify package
+        run: python tools/package.py --output artifacts/ci
 
-      - name: Test
-        run: dotnet test SnapActions.Tests/SnapActions.Tests.csproj -c Release --logger "console;verbosity=normal"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: windows-package-and-checks
+          path: artifacts/ci

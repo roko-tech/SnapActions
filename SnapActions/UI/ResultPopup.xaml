@@ -4,10 +4,10 @@
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ShowInTaskbar="False" Topmost="True" ResizeMode="NoResize"
         SizeToContent="WidthAndHeight"
-        MaxWidth="450" MaxHeight="350">
+        MaxWidth="480" MaxHeight="500" ShowActivated="False">
 
-    <Border Background="{StaticResource BackgroundBrush}"
-            BorderBrush="{StaticResource BorderBrush}"
+    <Border Background="{DynamicResource BackgroundBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
             BorderThickness="1" CornerRadius="10" Padding="12"
             MinWidth="200" MinHeight="60">
         <Border.Effect>
@@ -16,32 +16,47 @@
         <StackPanel>
             <DockPanel Margin="0,0,0,8">
                 <TextBlock x:Name="TitleText" FontSize="12" FontWeight="SemiBold"
-                           Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center"/>
+                           Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center"/>
                 <Button DockPanel.Dock="Right" Content="X" Width="20" Height="20" FontSize="10"
-                        Background="Transparent" Foreground="{StaticResource TextSecondaryBrush}"
+                        Background="Transparent" Foreground="{DynamicResource TextSecondaryBrush}"
                         BorderThickness="0" Click="Close_Click" Cursor="Hand"/>
             </DockPanel>
 
-            <TextBlock x:Name="LoadingText" Text="Loading..." FontSize="12"
-                       Foreground="{StaticResource TextSecondaryBrush}" Visibility="Visible"/>
+            <StackPanel x:Name="LanguagePanel" Visibility="Collapsed" Margin="0,0,0,8">
+                <ComboBox x:Name="SourceLanguage" DisplayMemberPath="Name" SelectedValuePath="Code"
+                          AutomationProperties.Name="Source language" Margin="0,0,0,4"/>
+                <ComboBox x:Name="TargetLanguage" DisplayMemberPath="Name" SelectedValuePath="Code"
+                          AutomationProperties.Name="Target language" Margin="0,0,0,4"/>
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="Translate" Click="Translate_Click" Padding="10,4"/>
+                    <Button Content="Swap languages" Click="SwapLanguages_Click" Margin="6,0,0,0" Padding="10,4"/>
+                </StackPanel>
+            </StackPanel>
+
+            <TextBlock x:Name="SourceText" Visibility="Collapsed" TextWrapping="Wrap" MaxHeight="60"
+                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,8"/>
+            <TextBlock x:Name="LoadingText" Text="Loading..." FontSize="12" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextSecondaryBrush}" Visibility="Visible"/>
 
             <ScrollViewer MaxHeight="250" VerticalScrollBarVisibility="Auto">
                 <TextBlock x:Name="ResultText" FontSize="13" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextBrush}" Visibility="Collapsed"/>
+                           Foreground="{DynamicResource TextBrush}" Visibility="Collapsed"/>
             </ScrollViewer>
 
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,8,0,0">
-                <Button x:Name="CopyButton" Content="Copy" Visibility="Collapsed" Padding="12,4"
-                        Background="{StaticResource SurfaceBrush}"
-                        Foreground="{StaticResource TextBrush}"
-                        BorderBrush="{StaticResource BorderBrush}"
+                <Button x:Name="CopyButton" Content="Copy result" Visibility="Collapsed" Padding="12,4"
+                        Background="{DynamicResource SurfaceBrush}"
+                        Foreground="{DynamicResource TextBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}"
                         Click="Copy_Click" Cursor="Hand"/>
                 <Button x:Name="RetryButton" Content="Retry" Visibility="Collapsed"
                         Margin="8,0,0,0" Padding="12,4"
-                        Background="{StaticResource SurfaceBrush}"
-                        Foreground="{StaticResource TextBrush}"
-                        BorderBrush="{StaticResource BorderBrush}"
+                        Background="{DynamicResource SurfaceBrush}"
+                        Foreground="{DynamicResource TextBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}"
                         Click="Retry_Click" Cursor="Hand"/>
+                <Button x:Name="ReplaceButton" Content="Replace selection" Visibility="Collapsed"
+                        Margin="8,0,0,0" Padding="12,4" Click="Replace_Click"/>
             </StackPanel>
         </StackPanel>
     </Border>

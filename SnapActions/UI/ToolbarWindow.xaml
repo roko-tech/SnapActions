@@ -36,8 +36,8 @@
     <!-- Grid separates the toolbar from the popup so popup can't affect toolbar layout -->
     <Grid>
         <Border x:Name="MainBorder"
-                Background="{StaticResource BackgroundBrush}"
-                BorderBrush="{StaticResource BorderBrush}"
+                Background="{DynamicResource BackgroundBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="1" CornerRadius="10" Padding="4" MaxWidth="600"
                 VerticalAlignment="Top">
             <Border.RenderTransform><TranslateTransform/></Border.RenderTransform>
@@ -47,45 +47,47 @@
 
             <StackPanel Orientation="Vertical">
                 <Border x:Name="TypeBadge" Visibility="Collapsed"
-                        Background="{StaticResource SurfaceBrush}"
+                        Background="{DynamicResource SurfaceBrush}"
                         CornerRadius="4" Padding="6,2" Margin="2,2,2,4"
                         HorizontalAlignment="Left">
                     <TextBlock x:Name="TypeLabel" FontSize="10"
-                               Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"/>
+                               Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold"/>
                 </Border>
 
                 <StackPanel x:Name="MainToolbar" Orientation="Horizontal">
-                    <Button x:Name="CopyButton" Style="{StaticResource ActionButtonStyle}"
+                    <Button x:Name="CopyButton" AutomationProperties.Name="Copy selection" Style="{StaticResource ActionButtonStyle}"
                             ToolTip="Copy" Click="CopyButton_Click">
-                        <Path Data="{StaticResource IconCopy}" Fill="{StaticResource TextBrush}"
+                        <Path Data="{StaticResource IconCopy}" Fill="{DynamicResource TextBrush}"
                               Width="16" Height="16" Stretch="Uniform"/>
                     </Button>
 
-                    <Button x:Name="PasteButton" Style="{StaticResource ActionButtonStyle}"
+                    <Button x:Name="PasteButton" AutomationProperties.Name="Paste clipboard" Style="{StaticResource ActionButtonStyle}"
                             ToolTip="Paste" Click="PasteButton_Click" Visibility="Collapsed"
                             MouseEnter="PasteButton_MouseEnter">
                         <TextBlock Text="V" FontSize="14" FontWeight="Bold"
-                                   Foreground="{StaticResource TextBrush}"/>
+                                   Foreground="{DynamicResource TextBrush}"/>
                     </Button>
-
-                    <Border x:Name="ContextSeparator" Style="{StaticResource ToolbarSeparator}" Visibility="Collapsed"/>
-                    <StackPanel x:Name="ContextActionsPanel" Orientation="Horizontal"/>
 
                     <!-- Pinned actions (user-selected favorites) -->
                     <Border x:Name="PinnedSeparator" Style="{StaticResource ToolbarSeparator}" Visibility="Collapsed"/>
                     <StackPanel x:Name="PinnedActionsPanel" Orientation="Horizontal"/>
 
+                    <Border x:Name="ContextSeparator" Style="{StaticResource ToolbarSeparator}" Visibility="Collapsed"/>
+                    <StackPanel x:Name="ContextActionsPanel" Orientation="Horizontal"/>
+
                     <Border x:Name="TransformSeparator" Style="{StaticResource ToolbarSeparator}"/>
-                    <Button x:Name="TransformButton" Style="{StaticResource CategoryButtonStyle}"
+                    <Button x:Name="TransformButton" AutomationProperties.Name="Text transforms" Style="{StaticResource CategoryButtonStyle}"
                             Content="Aa" Click="TransformButton_Click" ToolTip="Text Transforms"/>
-                    <Button x:Name="EncodeButton" Style="{StaticResource CategoryButtonStyle}"
+                    <Button x:Name="EncodeButton" AutomationProperties.Name="Encode and decode" Style="{StaticResource CategoryButtonStyle}"
                             Content="&lt;/&gt;" Click="EncodeButton_Click" ToolTip="Encode/Decode"/>
                     <Border x:Name="SearchSeparator" Style="{StaticResource ToolbarSeparator}"/>
-                    <Button x:Name="SearchButton" Style="{StaticResource CategoryButtonStyle}"
+                    <Button x:Name="SearchButton" AutomationProperties.Name="Search" Style="{StaticResource CategoryButtonStyle}"
                             Click="SearchButton_Click" ToolTip="Search">
-                        <Path Data="{StaticResource IconSearch}" Fill="{StaticResource TextSecondaryBrush}"
+                        <Path Data="{StaticResource IconSearch}" Fill="{DynamicResource TextSecondaryBrush}"
                               Width="14" Height="14" Stretch="Uniform"/>
                     </Button>
+                    <Button x:Name="MoreButton" Style="{StaticResource ActionButtonStyle}" Content="…"
+                            AutomationProperties.Name="More actions" Visibility="Collapsed" Click="MoreButton_Click"/>
                 </StackPanel>
             </StackPanel>
         </Border>
@@ -93,8 +95,8 @@
         <!-- Popup is outside the Border so opening it cannot affect toolbar layout/size -->
         <Popup x:Name="SubMenuPopup" StaysOpen="True" AllowsTransparency="True"
                PopupAnimation="Fade" Placement="Bottom" PlacementTarget="{Binding ElementName=MainBorder}">
-            <Border Background="{StaticResource BackgroundBrush}"
-                    BorderBrush="{StaticResource BorderBrush}"
+            <Border Background="{DynamicResource BackgroundBrush}"
+                    BorderBrush="{DynamicResource BorderBrush}"
                     BorderThickness="1" CornerRadius="8" Padding="4"
                     MaxWidth="420" MaxHeight="400">
                 <Border.Effect>
@@ -103,13 +105,13 @@
                 <StackPanel>
                     <DockPanel Margin="4,2,4,4">
                         <TextBlock x:Name="SubMenuTitle" FontSize="10" FontWeight="SemiBold"
-                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
                                    VerticalAlignment="Center"/>
-                        <Button x:Name="GearButton" Style="{StaticResource ActionButtonStyle}"
+                        <Button x:Name="GearButton" AutomationProperties.Name="Customize actions" Style="{StaticResource ActionButtonStyle}"
                                 DockPanel.Dock="Right" Width="24" Height="24"
                                 ToolTip="Toggle actions" Click="GearButton_Click">
                             <Path Data="{StaticResource IconSettings}"
-                                  Fill="{StaticResource TextSecondaryBrush}"
+                                  Fill="{DynamicResource TextSecondaryBrush}"
                                   Width="12" Height="12" Stretch="Uniform"/>
                         </Button>
                     </DockPanel>
@@ -117,15 +119,15 @@
                         <WrapPanel x:Name="SubMenuPanel" Orientation="Horizontal" MaxWidth="400"/>
                     </ScrollViewer>
                     <Border x:Name="PreviewBorder"
-                            Background="{StaticResource SurfaceBrush}"
+                            Background="{DynamicResource SurfaceBrush}"
                             CornerRadius="4" Padding="8,6" Margin="4,4,4,2"
                             Height="32">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <Border x:Name="ColorSwatch" Width="16" Height="16" CornerRadius="3"
-                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                                     Margin="0,0,8,0" Visibility="Collapsed"/>
                             <TextBlock x:Name="PreviewText" FontSize="12" Opacity="0"
-                                       Foreground="{StaticResource AccentBrush}"
+                                       Foreground="{DynamicResource AccentBrush}"
                                        FontFamily="Consolas" TextWrapping="NoWrap"
                                        TextTrimming="CharacterEllipsis"
                                        VerticalAlignment="Center"/>

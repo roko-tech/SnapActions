@@ -35,10 +35,10 @@ public class DictionaryAction : IAction
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
         var word = text.Trim();
-        var lang = Config.SettingsManager.Current.SearchLanguage;
+        var lang = Config.SettingsManager.Current.DictionaryLanguage;
         if (string.IsNullOrEmpty(lang)) lang = "en";
         ResultPopup.ShowNearCursor($"Define: {word}",
-            (http, ct) => ResultPopup.FetchDefinition(http, word, lang, ct));
+            ct => Services.LookupService.Shared.Define(word, lang, ct));
         return new ActionResult(true);
     }
 }

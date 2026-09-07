@@ -14,7 +14,8 @@ public class EncodingAction(string id, string name, string iconKey, Func<string,
 
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
-        var result = transform(text);
-        return new ActionResult(true, result, name);
+        try { return new ActionResult(true, transform(text), name); }
+        catch (Exception ex) when (ex is FormatException or System.Text.DecoderFallbackException)
+        { return new ActionResult(false, Message: $"{name}: input is not valid encoded UTF-8 text"); }
     }
 }

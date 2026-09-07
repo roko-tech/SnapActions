@@ -80,14 +80,21 @@ internal sealed class SingleFlightWorkerGate
         if (!TryStart(work, out Task<T>? worker))
         {
             if (busyHandoff == null)
+            {
+                CaptureDiagnostics.UiaOutcome(busy: true);
                 return onBusyOrTimeout;
+            }
             await busyHandoff();
             if (!TryStart(work, out worker))
+            {
+                CaptureDiagnostics.UiaOutcome(busy: true);
                 return onBusyOrTimeout;
+            }
         }
 
         var completed = await Task.WhenAny(
             worker!, timeout());
+        CaptureDiagnostics.UiaOutcome(timedOut: completed != worker);
         return completed == worker
             ? await worker
             : onBusyOrTimeout;
@@ -152,6 +159,9 @@ internal static class ForegroundGuard
 
     internal static ForegroundTarget CaptureWithAutomationIdentity()
     {
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
         var target = Capture();
         if (!target.IsComplete) return target;
 
@@ -162,6 +172,8 @@ internal static class ForegroundGuard
         return activeWorker.Wait(EventAutomationIdentityTimeoutMs)
             ? activeWorker.GetAwaiter().GetResult()
             : target;
+        }
+        finally { CaptureDiagnostics.Record("Event-time target identity", started); }
     }
 
     internal static bool StillValid(ForegroundTarget expected) =>

@@ -1,97 +1,104 @@
-using SnapActions.UI;
+using System.Net;
+using System.Net.Http;
+using SnapActions.Config;
+using SnapActions.Helpers;
+using SnapActions.Services;
 using Xunit;
 
 namespace SnapActions.Tests;
 
-/// <summary>
-/// Pure-function tests for ResultPopup helpers. Network-touching paths
-/// (FetchTranslation/FetchDefinition/FetchCurrencyConversion) need a stubbed
-/// HttpClient and stay out of scope here.
-/// </summary>
 public class ResultPopupTests
 {
-    private static (int start, int length) NumPos(string text, string number)
+    [Theory]
+    [InlineData("-$33", -33, "USD")]
+    [InlineData("-33 USD", -33, "USD")]
+    [InlineData("USD -33", -33, "USD")]
+    [InlineData("€1.234,56", 1234.56, "EUR")]
+    [InlineData("1,234.56 QAR", 1234.56, "QAR")]
+    [InlineData("£99.99", 99.99, "GBP")]
+    [InlineData("¥10000", 10000, "JPY")]
+    public void MoneyKeepsItsSignedAmountAndCurrency(string text, decimal amount, string code)
     {
-        int idx = text.IndexOf(number, System.StringComparison.Ordinal);
-        return (idx, number.Length);
-    }
-
-    [Fact]
-    public void DetectSourceCurrency_PrefersAdjacentSymbol()
-    {
-        // $ is adjacent to 50; EUR is far away. The proximity heuristic should pick USD.
-        var (s, l) = NumPos("$50 last EUR-trip", "50");
-        Assert.Equal("USD", ResultPopup.DetectSourceCurrency("$50 last EUR-trip", s, l));
-    }
-
-    [Fact]
-    public void DetectSourceCurrency_TrailingCode()
-    {
-        var (s, l) = NumPos("100 USD", "100");
-        Assert.Equal("USD", ResultPopup.DetectSourceCurrency("100 USD", s, l));
-    }
-
-    [Fact]
-    public void DetectSourceCurrency_LeadingCode()
-    {
-        var (s, l) = NumPos("EUR 200", "200");
-        Assert.Equal("EUR", ResultPopup.DetectSourceCurrency("EUR 200", s, l));
+        Assert.True(MoneyValue.TryParse(text, out var value));
+        Assert.Equal(new MoneyValue(amount, code), value);
     }
 
     [Theory]
-    [InlineData("€1500", "EUR")]
-    [InlineData("£99.99", "GBP")]
-    [InlineData("¥10000", "JPY")]
-    public void DetectSourceCurrency_RecognizesUnicodeSymbols(string text, string expected)
+    [InlineData("2 items at $50")]
+    [InlineData("100 monkeys")]
+    [InlineData("$10 + $20")]
+    [InlineData("-$-33")]
+    [InlineData("50 USD EUR")]
+    [InlineData("1..2 USD")]
+    public void AmbiguousMoneyIsNotOffered(string text) => Assert.False(MoneyValue.TryParse(text, out _));
+
+    [Fact]
+    public void EveryCurrencyTokenUsesTheSameContract()
     {
-        var num = System.Text.RegularExpressions.Regex.Match(text, @"[\d][\d.,]*").Value;
-        var (s, l) = NumPos(text, num);
-        Assert.Equal(expected, ResultPopup.DetectSourceCurrency(text, s, l));
+        foreach (var (code, tokens) in MoneyValue.Currencies)
+            foreach (var token in tokens)
+            {
+                Assert.True(MoneyValue.TryParse($"{token} 42", out var value));
+                Assert.Equal(code, value.Currency);
+            }
     }
 
     [Fact]
-    public void DetectSourceCurrency_FallsBackToUsdWhenNoSymbol()
+    public async Task TimeoutIsAnErrorButUserCancellationIsSilent()
     {
-        var (s, l) = NumPos("just 100 monkeys", "100");
-        Assert.Equal("USD", ResultPopup.DetectSourceCurrency("just 100 monkeys", s, l));
-    }
-
-    // ── DetectSourceLang: cross-script text gets an explicit source (fixes autodetect resolving
-    //    to the target and failing with "PLEASE SELECT TWO DISTINCT LANGUAGES") ──
-
-    [Fact]
-    public void DetectSourceLang_LatinWordToArabicTarget_IsEnglish()
-    {
-        // The reported bug: "literacy" selected with an Arabic (ar) target. autodetect returned
-        // ar (== target) → same-language error. Latin script ≠ Arabic → force en|ar.
-        Assert.Equal("en", ResultPopup.DetectSourceLang("literacy", "ar"));
-    }
-
-    [Theory]
-    [InlineData("مرحبا", "en", "ar")]       // Arabic word, English target → ar|en
-    [InlineData("Привет", "en", "ru")]      // Cyrillic → ru|en
-    [InlineData("שלום", "en", "he")]        // Hebrew → he|en
-    [InlineData("Ελληνικά", "en", "el")]    // Greek → el|en
-    public void DetectSourceLang_CrossScript_PicksScriptLanguage(string text, string to, string expected)
-    {
-        Assert.Equal(expected, ResultPopup.DetectSourceLang(text, to));
-    }
-
-    [Theory]
-    [InlineData("bonjour", "de")]   // French (Latin) → German (Latin): same script, let MyMemory detect fr
-    [InlineData("hola", "en")]      // Spanish (Latin) → English (Latin): same script
-    [InlineData("مرحبا", "ar")]     // Arabic → Arabic: same script (genuinely same-language)
-    [InlineData("你好", "en")]       // CJK is ambiguous (shared Han) → autodetect
-    [InlineData("12345", "ar")]     // no letters → autodetect
-    public void DetectSourceLang_SameScriptOrAmbiguous_FallsBackToAutodetect(string text, string to)
-    {
-        Assert.Equal("autodetect", ResultPopup.DetectSourceLang(text, to));
+        var timeout = await LookupExecution.RunAsync(_ => throw new TaskCanceledException(), CancellationToken.None);
+        Assert.Equal(LookupStatus.Error, timeout.Status);
+        Assert.Contains("timed out", timeout.Text);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var cancelled = await LookupExecution.RunAsync(_ => throw new TaskCanceledException(), cts.Token);
+        Assert.Equal(LookupStatus.Cancelled, cancelled.Status);
     }
 
     [Fact]
-    public void DetectSourceLang_MixedText_UsesDominantScript()
+    public async Task ExplicitTranslationLanguagesAreSentAndSuccessIsCached()
     {
-        // A mostly-Arabic selection that trails an English word still reads as Arabic-dominant.
-        Assert.Equal("ar", ResultPopup.DetectSourceLang("أحيانا أحس media", "en"));
+        var handler = new RoadmapRegressionTests.StubHandler("{\"responseStatus\":200,\"responseData\":{\"translatedText\":\"مرحبا\"}}");
+        using var http = new HttpClient(handler);
+        var service = new LookupService(http);
+        var result = await service.Translate("Bonjour", "fr", "ar");
+        Assert.Equal(LookupStatus.Success, result.Status);
+        Assert.Equal("مرحبا", result.Text);
+        Assert.Contains("langpair=fr%7Car", handler.LastUri!.OriginalString);
+        Assert.Equal(result, await service.Translate("Bonjour", "fr", "ar"));
+    }
+
+    [Fact]
+    public async Task ProviderBusinessErrorIsNotCopyable()
+    {
+        using var http = new HttpClient(new RoadmapRegressionTests.StubHandler("{\"responseStatus\":403,\"responseData\":{\"translatedText\":\"quota exceeded\"}}"));
+        Assert.Equal(LookupStatus.Error, (await new LookupService(http).Translate("Hello", "en", "ar")).Status);
+    }
+
+    [Fact]
+    public async Task MissingDictionaryEntryIsEmpty()
+    {
+        using var http = new HttpClient(new RoadmapRegressionTests.StubHandler("{}", HttpStatusCode.NotFound));
+        Assert.Equal(LookupStatus.Empty, (await new LookupService(http).Define("absent", "en")).Status);
+    }
+
+    [Fact]
+    public async Task OversizedBodyIsRejectedBeforeDisplay()
+    {
+        using var http = new HttpClient(new RoadmapRegressionTests.StubHandler(new string('x', BoundedHttp.MaxResponseBytes + 1)));
+        var result = await LookupExecution.RunAsync(ct => new LookupService(http).FetchText("https://example.com", "", ct), default);
+        Assert.Equal(LookupStatus.Error, result.Status);
+        Assert.Contains("too large", result.Text);
+    }
+
+    [Fact]
+    public void NullCollectionsAndInvalidNumbersRecoverBeforeMigration()
+    {
+        var settings = SettingsManager.Parse("{\"SearchEngines\":null,\"ExcludedApps\":[null],\"AppHiddenActions\":{\"editor\":null},\"PinnedActionIds\":null,\"UserActions\":[null],\"ToolbarDismissTimeout\":-1,\"MaxInlineContextActions\":1000}");
+        Assert.NotEmpty(settings.SearchEngines);
+        Assert.Empty(settings.PinnedActionIds);
+        Assert.Empty(settings.UserActions);
+        Assert.InRange(settings.ToolbarDismissTimeout, 1000, 60000);
+        Assert.InRange(settings.MaxInlineContextActions, 0, 10);
     }
 }

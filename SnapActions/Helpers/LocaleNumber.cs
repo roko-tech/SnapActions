@@ -18,8 +18,18 @@ public static class LocaleNumber
     /// </summary>
     public static bool TryParse(string s, out double value)
     {
-        value = 0;
-        if (string.IsNullOrEmpty(s)) return false;
+        return double.TryParse(Normalize(s),
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out value) && double.IsFinite(value);
+    }
+
+    public static bool TryParseDecimal(string s, out decimal value) =>
+        decimal.TryParse(Normalize(s), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out value);
+
+    private static string? Normalize(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return null;
 
         int lastComma = s.LastIndexOf(',');
         int lastDot = s.LastIndexOf('.');
@@ -55,8 +65,6 @@ public static class LocaleNumber
             }
         }
 
-        return double.TryParse(normalized,
-            System.Globalization.NumberStyles.Float,
-            System.Globalization.CultureInfo.InvariantCulture, out value);
+        return normalized;
     }
 }

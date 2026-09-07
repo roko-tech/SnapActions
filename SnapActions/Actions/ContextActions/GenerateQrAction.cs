@@ -1,5 +1,6 @@
 using SnapActions.Detection;
-using SnapActions.Helpers;
+using SnapActions.Services;
+using SnapActions.UI;
 
 namespace SnapActions.Actions.ContextActions;
 
@@ -11,12 +12,12 @@ public class GenerateQrAction : IAction
     public ActionCategory Category => ActionCategory.Context;
 
     public bool CanExecute(string text, TextAnalysis analysis) =>
-        analysis.Type == TextType.Url && text.Length <= 900;
+        !string.IsNullOrWhiteSpace(text) && System.Text.Encoding.UTF8.GetByteCount(text) <= LocalQr.MaximumBytes;
 
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
-        var encoded = Uri.EscapeDataString(text.Trim());
-        var url = $"https://api.qrserver.com/v1/create-qr-code/?data={encoded}&size=300x300";
-        return ProcessHelper.TryShellOpen(url, "QR code opened");
+        if (!CanExecute(text, analysis)) return new(false, Message: "QR codes support up to 2,000 UTF-8 bytes.");
+        new QrCodeWindow(text).Show();
+        return new(true, Message: "QR code generated locally");
     }
 }

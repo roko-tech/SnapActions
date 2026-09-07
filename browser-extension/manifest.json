@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "SnapActions Browser Selection",
+  "version": "1.0.0",
+  "description": "Read highlighted text directly for the SnapActions Windows toolbar, without using the clipboard.",
+  "minimum_chrome_version": "106",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm5wSTIoYkyUdISLt64Qtzc+aksnbKuFKCQJ9aIJK8QTVa7AtOIb53Tg9vIUA7nIiWMu7oib6b96XSdTRPEi0TeE2zX/FvT8zr4k0JUH37V4BesV4zeW0W+yjnZaL+gs6t2oN8AZan4dpYy3OlG7VOFvSWKmeQuVDQBfwqpQoEZoXx7NxrkjpzA7IryLmOjnmCgBb19OIbBPsMnk80EKF5Z1MPCOkpgT96G7Zb7+BdT5tdqmyzxNFLrR41sZ1jnUuT6/OzmQ2j6yOUIv9CJK3VHWmd2/suFEbOC6GMOu3c46OyXdvHySpG10eHI/22vuRASkKz4RVVvT7uxZmo8wm2wIDAQAB",
+  "permissions": ["nativeMessaging", "scripting"],
+  "host_permissions": ["http://*/*", "https://*/*", "file:///*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "SnapActions: reconnect browser selection" }
+}
