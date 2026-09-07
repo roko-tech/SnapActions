@@ -219,4 +219,4 @@ Settings → Browser shows connection/capture health and a rolling 256-sample ti
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Release ZIPs also include the [license notices](licenses/README.md) for QRCoder and the bundled .NET runtime.
