@@ -300,6 +300,13 @@ public partial class ResultPopup : Window
         var result = await ActionRunner.ApplyTextAsync(_resultText, _selection, destination);
         if (_closed) return;
         if (result.Success) { SafeClose(); return; }
+        if (result.CanRetry && await _selection.Operation.CanUseSelectionAsync())
+        {
+            if (_closed) return;
+            _applyGate.AllowRetry();
+            CopyButton.IsEnabled = true;
+            ReplaceButton.IsEnabled = _selection.CanReplace;
+        }
         LoadingText.Text = result.Message;
         LoadingText.Visibility = Visibility.Visible;
     }

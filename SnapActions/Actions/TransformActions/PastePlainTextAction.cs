@@ -9,7 +9,7 @@ public class PastePlainTextAction : IAction, IOperationAction
 {
     public string Id => "paste_plain";
     public string Name => "Paste Plain Text";
-    public string IconKey => "IconWhitespace";
+    public string IconKey => "IconPaste";
     public ActionCategory Category => ActionCategory.Transform;
 
     public bool CanExecute(string text, TextAnalysis analysis)

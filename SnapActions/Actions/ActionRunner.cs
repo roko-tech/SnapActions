@@ -46,13 +46,16 @@ internal static class ActionRunner
             if (paste || restoreAfterCopy)
             {
                 previous = ClipboardTransaction.SnapshotClipboard();
-                if (previous == null) return new(false, Message: "Clipboard formats couldn't be preserved safely");
+                if (previous == null) return new(false, Message: "Clipboard formats couldn't be preserved safely")
+                    { CanRetry = !paste && operation.IsCurrent };
                 if (!ClipboardTransaction.CanStartClipboardWrite(previous, ClipboardTransaction.ObserveClipboard())) return Cancelled();
                 written = await ClipboardTransaction.TrySetClipboardTextForOperationAsync(operation, previous, text, paste);
                 if (written == null) return new(false, Message: "Clipboard changed or couldn't be written — action cancelled");
             }
             else if (!ClipboardTransaction.TryCommitClipboardMutation(operation, () => TryCopy(text)))
-                return new(false, Message: "Couldn't write to the clipboard — try again");
+                return operation.IsCurrent
+                    ? new(false, Message: "Couldn't write to the clipboard — try again") { CanRetry = true }
+                    : Cancelled();
 
             if (paste)
             {
@@ -86,7 +89,8 @@ internal static class ActionRunner
             if (!inputAttempted && previous != null && written is { } accepted)
                 ClipboardTransaction.RestoreClipboardIfUnchanged(previous, accepted);
             Log.Warn($"Applying result failed ({ex.GetType().Name})");
-            return new(false, Message: inputAttempted ? "The paste could not be confirmed. Check the target before retrying." : "The result could not be copied. Try again.");
+            return new(false, Message: inputAttempted ? "The paste could not be confirmed. Check the target before retrying." : "The result could not be copied. Try again.")
+                { CanRetry = !paste && operation.IsCurrent };
         }
         finally { previous?.Dispose(); }
     }

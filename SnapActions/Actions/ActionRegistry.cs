@@ -27,7 +27,6 @@ public class ActionRegistry
             new IpLookupAction(),
             new DecodeBase64Action(),
             new DecodeJwtAction(),
-            new GenerateQrAction(),
             new GenerateUuidAction(),
             new ConvertTimezoneAction(),
             new UnitConvertAction(),
@@ -35,7 +34,6 @@ public class ActionRegistry
             new DictionaryAction(),
             new CurrencyConverterAction(),
             new CleanLinkAction(),
-            new InspectTextAction(),
 
             // Transform actions
             // DeleteTextAction and PastePlainTextAction live in TransformActions/ because their
@@ -198,6 +196,20 @@ public class ActionRegistry
         }
 
         return groups;
+    }
+
+    /// <summary>Pins keep their order across selections and category-menu preferences.
+    /// Inapplicable pins stay visible; the toolbar explains why they cannot run.</summary>
+    internal List<IAction> GetPinnedActions(string? appName = null)
+    {
+        var settings = Config.SettingsManager.Current;
+        var actions = Enum.GetValues<ActionCategory>().SelectMany(GetAllActionsForCategory).ToDictionary(a => a.Id);
+        var appHidden = settings.AppHiddenActions
+            .Where(p => p.Key.Equals(appName, StringComparison.OrdinalIgnoreCase))
+            .SelectMany(p => p.Value).ToHashSet(StringComparer.Ordinal);
+        return settings.PinnedActionIds.Distinct(StringComparer.Ordinal)
+            .Where(actions.ContainsKey).Select(id => actions[id])
+            .Where(a => !Config.ToolbarPreferences.IsHidden(settings, a) && !appHidden.Contains(a.Id)).ToList();
     }
 
     /// <summary>All fixed (non-search) actions as (id, name, category) — for the per-app profile

@@ -44,12 +44,19 @@ internal static class UiaSelectionProvider
                 busyHandoffMs: operation.Target.AutomationRuntimeId == null ? UiaBusyHandoffMs : 0);
             if (!await operation.CanInjectInputAsync()) return Result(null);
             operation = operation.WithTarget(BindProbeIdentity(operation.Target, probe));
-            if (probe.Outcome == SelectionProbeOutcome.HasText) return Result(probe.Text);
+            if (probe.Outcome == SelectionProbeOutcome.HasText)
+            {
+                operation = operation.WithInputValidation(probe.ValidateInput);
+                return Result(probe.Text);
+            }
             if (probe.Outcome is SelectionProbeOutcome.SuppressItemElement or SelectionProbeOutcome.UntrustedText)
                 return Result(null);
-            var text = await RunBoundedUiaAsync(
+            var fallback = await RunBoundedUiaAsync(
                 () => CopyViaUIA(operation.Target.ProcessId, operation.Target.AutomationRuntimeId), null);
-            return Result(await operation.CanInjectInputAsync() ? text : null);
+            if (fallback is { } selected)
+                operation = operation.WithTarget(BindProbeIdentity(operation.Target, selected))
+                    .WithInputValidation(selected.ValidateInput);
+            return Result(await operation.CanInjectInputAsync() ? fallback?.Text : null);
         }
         catch (Exception ex)
         {
@@ -57,6 +64,42 @@ internal static class UiaSelectionProvider
             return Result(null);
         }
         finally { CaptureLock.Release(); }
+    }
+
+    internal static async Task<SelectionOperation> BindInputSelectionAsync(SelectionOperation operation)
+    {
+        if (!await operation.CanInjectInputAsync()) return operation.WithInputValidation(null);
+        var probe = await RunBoundedUiaAsync(
+            () => CopyViaUIA(operation.Target.ProcessId, operation.Target.AutomationRuntimeId, allowEmpty: true), null);
+        return probe is { } selected
+            ? operation.WithTarget(BindProbeIdentity(operation.Target, selected)).WithInputValidation(selected.ValidateInput)
+            : operation.WithInputValidation(null);
+    }
+
+    private static Func<bool>? CreateInputValidation(TextPattern pattern, TextPatternRange[] ranges, string expectedText)
+    {
+        try
+        {
+            if (ranges.Length is 0 or > 256 || expectedText.Length > BrowserMessage.MaximumTextLength) return null;
+            var captured = ranges.Select(range => range.Clone()).ToArray();
+            var text = captured.Select(range => range.GetText(BrowserMessage.MaximumTextLength + 1)).ToArray();
+            // Geometry may rescue Chromium display text even when UIA reports an adjacent range.
+            // Such a capture remains useful for Copy but cannot authorize an edit of that range.
+            if (CombineSelectionRanges(text) != expectedText) return null;
+            return () =>
+            {
+                if (!ForegroundApp.IsEditableFieldFocused()) return false;
+                var current = pattern.GetSelection();
+                if (current.Length != captured.Length) return false;
+                for (int i = 0; i < captured.Length; i++)
+                    if (captured[i].CompareEndpoints(TextPatternRangeEndpoint.Start, current[i], TextPatternRangeEndpoint.Start) != 0
+                        || captured[i].CompareEndpoints(TextPatternRangeEndpoint.End, current[i], TextPatternRangeEndpoint.End) != 0
+                        || current[i].GetText(BrowserMessage.MaximumTextLength + 1) != text[i])
+                        return false;
+                return true;
+            };
+        }
+        catch { return null; }
     }
 
     private static readonly HashSet<string> UiaSkipApps = new(StringComparer.OrdinalIgnoreCase)
@@ -113,7 +156,8 @@ internal static class UiaSelectionProvider
         SelectionProbeOutcome Outcome,
         string? Text,
         string? Reason,
-        string? AutomationRuntimeId = null);
+        string? AutomationRuntimeId = null,
+        Func<bool>? ValidateInput = null);
 
     internal static SelectionProbe ClassifyUiaSelection(
         string text,
@@ -238,7 +282,7 @@ internal static class UiaSelectionProvider
                                     ? TryReadChromiumSelectionFromGesture(
                                         tp, element, gesture, combined.Length)
                                     : null;
-                                return ClassifyUiaSelection(
+                                var selected = ClassifyUiaSelection(
                                     combined,
                                     fromCursorPoint: false,
                                     preferExactCopy: preferExactCopy,
@@ -246,6 +290,8 @@ internal static class UiaSelectionProvider
                                     gestureText: gestureText,
                                     requireGestureText: requireGestureText,
                                     acceptGestureLengthMismatch: gesture.IsDrag);
+                                return selected with { ValidateInput = selected.Outcome == SelectionProbeOutcome.HasText
+                                    ? CreateInputValidation(tp, ranges, selected.Text!) : null };
                             }
                         }
                         // TextPattern at this level returned no selection text. Keep walking up
@@ -277,7 +323,7 @@ internal static class UiaSelectionProvider
                 cursorX, cursorY, expectedProcessId, gesture, acceptCursorPointText);
             if (atPoint is { } pointSelection)
             {
-                return ClassifyUiaSelection(
+                var selected = ClassifyUiaSelection(
                     pointSelection.Text,
                     fromCursorPoint: true,
                     acceptCursorPointText: acceptCursorPointText,
@@ -285,6 +331,8 @@ internal static class UiaSelectionProvider
                     gestureText: pointSelection.GestureText,
                     requireGestureText: pointSelection.RequireGestureText,
                     acceptGestureLengthMismatch: gesture.IsDrag);
+                return selected with { ValidateInput = selected.Outcome == SelectionProbeOutcome.HasText
+                    ? pointSelection.ValidateInput : null };
             }
 
             // Layer C: check the originally-focused element for non-text item patterns —
@@ -311,8 +359,7 @@ internal static class UiaSelectionProvider
         }
         catch (Exception ex)
         {
-            // Total UIA failure — be permissive (fall through to clipboard pipeline) so we
-            // don't silently break selections in apps where UIA misbehaves.
+            // A provider failure may try the remaining read-only UIA path, never a copy command.
             return new SelectionProbe(SelectionProbeOutcome.Unknown, null, $"UIA exception: {ex.GetType().Name}");
         }
     }
@@ -357,6 +404,7 @@ internal static class UiaSelectionProvider
             var range = textPattern.RangeFromPoint(
                 new Point(gesture.EndX, gesture.EndY));
             range.ExpandToEnclosingUnit(TextUnit.Word);
+            if (!IsRangeWithinDocument(range, textPattern.DocumentRange)) return null;
 
             var text = range.GetText(BrowserMessage.MaximumTextLength + 1);
             if (text.Length > selectedLength)
@@ -376,6 +424,10 @@ internal static class UiaSelectionProvider
 
     private const int ChromiumGeometryLineLimit = 512;
 
+    private static bool IsRangeWithinDocument(TextPatternRange range, TextPatternRange document) =>
+        range.CompareEndpoints(TextPatternRangeEndpoint.Start, document, TextPatternRangeEndpoint.Start) >= 0
+        && range.CompareEndpoints(TextPatternRangeEndpoint.End, document, TextPatternRangeEndpoint.End) <= 0;
+
     private static string? TryReadChromiumDragFromGeometry(
         TextPattern textPattern,
         AutomationElement element,
@@ -387,6 +439,12 @@ internal static class UiaSelectionProvider
         var focusLine = textPattern.RangeFromPoint(
             new Point(gesture.EndX, gesture.EndY));
         focusLine.ExpandToEnclosingUnit(TextUnit.Line);
+
+        // Chromium can return unrelated UI chrome from RangeFromPoint (observed in VS Code).
+        // Matching coordinates and line identity cannot make an out-of-document range valid.
+        var document = textPattern.DocumentRange;
+        if (!IsRangeWithinDocument(anchorLine, document) || !IsRangeWithinDocument(focusLine, document))
+            return null;
 
         // Cross-line selection needs caret ordering rather than a horizontal hit test. Chromium's
         // mixed-bidi caret affinity is exactly the value that proved unreliable, so fail closed.
@@ -468,7 +526,7 @@ internal static class UiaSelectionProvider
 
         // A single directional run keeps the same character order even if the provider moved the
         // run to the other side of an RTL line. Do not guess when both Arabic and Latin survived.
-        var visualSelection = selectedVisualText.ToString().Trim();
+        var visualSelection = selectedVisualText.ToString();
         return !string.IsNullOrWhiteSpace(visualSelection)
                && !ContainsArabicAndLatin(visualSelection)
             ? visualSelection
@@ -545,8 +603,8 @@ internal static class UiaSelectionProvider
                 }
                 if (!contiguous) continue;
 
-                var result = logicalLine[start..end].Trim();
-                if (result.Length > 0) results.Add(result);
+                var result = logicalLine[start..end];
+                if (!string.IsNullOrWhiteSpace(result)) results.Add(result);
             }
         }
 
@@ -591,7 +649,7 @@ internal static class UiaSelectionProvider
     /// there's no selection there (an Explorer file row, a desktop icon, a bare button). Runs on
     /// the same worker thread as <see cref="ProbeSelectionViaUIA"/>; must not throw.
     /// </summary>
-    private static (string Text, string? GestureText, bool RequireGestureText)? TryReadSelectionAtPoint(
+    private static (string Text, string? GestureText, bool RequireGestureText, Func<bool>? ValidateInput)? TryReadSelectionAtPoint(
         int x,
         int y,
         uint expectedProcessId,
@@ -622,7 +680,8 @@ internal static class UiaSelectionProvider
                                     ? TryReadChromiumSelectionFromGesture(
                                         (TextPattern)pat, element, gesture, combined.Length)
                                     : null;
-                                return (combined, gestureText, requireGestureText);
+                                return (combined, gestureText, requireGestureText,
+                                    CreateInputValidation((TextPattern)pat, ranges, gestureText ?? combined));
                             }
                         }
                     }
@@ -642,14 +701,8 @@ internal static class UiaSelectionProvider
     /// no TextPattern within the walk depth, no selection ranges, or any UIA failure. Runs on
     /// a worker thread because UIA calls can take hundreds of ms in apps where a11y is cold.
     /// </summary>
-    /// <remarks>
-    /// Why not the only capture mechanism: TextPattern coverage is uneven — Java Swing, some
-    /// Edge contexts, and certain custom Electron renderers either don't expose it or expose
-    /// a pattern that returns empty selections even when the user clearly has text selected.
-    /// Keeping Ctrl+Insert as a last-resort fallback covers those.
-    /// </remarks>
-    private static string? CopyViaUIA(
-        uint expectedProcessId, string? expectedRuntimeId)
+    private static SelectionProbe? CopyViaUIA(
+        uint expectedProcessId, string? expectedRuntimeId, bool allowEmpty = false)
     {
         try
         {
@@ -657,6 +710,7 @@ internal static class UiaSelectionProvider
             if (element == null) return null;
             if ((uint)element.Current.ProcessId != expectedProcessId) return null;
             if (!MatchesAutomationRuntimeId(element, expectedRuntimeId)) return null;
+            string? focusedRuntimeId = TryReadAutomationRuntimeId(element);
 
             var walker = TreeWalker.RawViewWalker;
             for (int depth = 0; element != null && depth < TextPatternParentWalkDepth; depth++)
@@ -673,7 +727,9 @@ internal static class UiaSelectionProvider
                             // discontiguous selections (rare — Ctrl-click in Excel-style
                             // grids) join with \n so the caller sees all of it.
                             var combined = CombineSelectionRanges(ranges.Select(r => r.GetText(BrowserMessage.MaximumTextLength + 1)));
-                            if (!string.IsNullOrEmpty(combined)) return combined;
+                            if (allowEmpty || !string.IsNullOrEmpty(combined))
+                                return new SelectionProbe(SelectionProbeOutcome.HasText, combined, null, focusedRuntimeId,
+                                    CreateInputValidation(tp, ranges, combined));
                         }
                     }
                 }

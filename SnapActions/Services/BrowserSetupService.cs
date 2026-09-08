@@ -58,7 +58,9 @@ internal static class BrowserSetupService
                 using var json = JsonDocument.Parse(File.ReadAllText(file));
                 if (json.RootElement.TryGetProperty("path", out var exe) && exe.GetString() is { } value)
                     return File.Exists(value)
-                        ? "Registered helper: " + value + (string.Equals(value, Environment.ProcessPath, StringComparison.OrdinalIgnoreCase) ? "" : "\nThis points to a different app location. Register again to use this copy.")
+                        ? (string.Equals(value, Environment.ProcessPath, StringComparison.OrdinalIgnoreCase)
+                            ? "Browser helper registered for this copy of SnapActions."
+                            : "The browser helper points to a different app location. Register this copy to use it.")
                         : "The registered app was moved or deleted. Register this copy again.";
             }
             return "Browser helper is not registered for " + browser + ".";

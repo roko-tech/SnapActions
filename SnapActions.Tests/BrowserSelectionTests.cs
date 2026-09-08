@@ -97,10 +97,13 @@ public class BrowserSelectionTests
     }
 
     [Theory]
-    [InlineData("{\"status\":\"inactive\",\"text\":\"stale\",\"identity\":\"old\"}")]
-    [InlineData("{\"status\":\"ok\",\"text\":\"stale\"}")]
-    [InlineData("{\"status\":\"ok\",\"text\":42,\"identity\":\"old\"}")]
-    [InlineData("{\"status\":42}")]
+    [InlineData("{\"version\":1,\"status\":\"inactive\",\"text\":\"stale\",\"identity\":\"old\"}")]
+    [InlineData("{\"version\":1,\"status\":\"ok\",\"text\":\"stale\"}")]
+    [InlineData("{\"version\":1,\"status\":\"ok\",\"text\":42,\"identity\":\"old\"}")]
+    [InlineData("{\"version\":1,\"status\":42,\"text\":\"stale\",\"identity\":\"old\"}")]
+    [InlineData("{\"version\":1,\"status\":\"ok\",\"text\":\"stale\",\"identity\":\"\"}")]
+    [InlineData("{\"status\":\"ok\",\"text\":\"stale\",\"identity\":\"old\"}")]
+    [InlineData("{\"version\":2,\"status\":\"ok\",\"text\":\"stale\",\"identity\":\"old\"}")]
     [InlineData("null")]
     public void BrowserSelection_RejectsInactiveOrMalformedReplies(string json)
     {

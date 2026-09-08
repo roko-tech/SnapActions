@@ -9,18 +9,21 @@ internal readonly struct SelectionOperation
     private readonly SelectionOperationSource? _source;
     private readonly long _generation;
     private readonly Func<Task<bool>>? _validateSelection;
+    private readonly Func<bool>? _validateInput;
 
     internal SelectionOperation(
         SelectionOperationSource source, long generation, ForegroundTarget target,
-        Func<Task<bool>>? validateSelection = null)
+        Func<Task<bool>>? validateSelection = null, Func<bool>? validateInput = null)
     {
         _source = source;
         _generation = generation;
         Target = target;
         _validateSelection = validateSelection;
+        _validateInput = validateInput;
     }
 
     internal ForegroundTarget Target { get; }
+    internal bool HasInputValidation => _validateInput != null;
 
     internal bool IsCurrent =>
         _source != null && _source.IsCurrent(_generation);
@@ -38,6 +41,19 @@ internal readonly struct SelectionOperation
         && (_validateSelection == null || await _validateSelection())
         && IsCurrent;
 
+    internal async Task<bool> CanMutateTargetAsync() =>
+        await CanInjectInputAsync()
+        && await ForegroundGuard.RunBoundedAutomationAsync(ValidateInput, false, 500)
+        && IsCurrent;
+
+    // Called on the bounded UIA worker, including immediately before clipboard/input commits.
+    // Missing range/capability evidence permits using the captured text, but never target edits.
+    internal bool ValidateInput()
+    {
+        try { return IsCurrent && _validateInput != null && _validateInput() && IsCurrent; }
+        catch { return false; }
+    }
+
     internal bool TryCommit(Func<bool> action) =>
         _source != null && _source.TryCommit(_generation, action);
 
@@ -50,10 +66,13 @@ internal readonly struct SelectionOperation
     internal SelectionOperation WithTarget(ForegroundTarget target) =>
         _source == null
             ? default
-            : new SelectionOperation(_source, _generation, target, _validateSelection);
+            : new SelectionOperation(_source, _generation, target, _validateSelection, _validateInput);
 
     internal SelectionOperation WithSelectionValidation(Func<Task<bool>> validateSelection) =>
-        _source == null ? default : new SelectionOperation(_source, _generation, Target, validateSelection);
+        _source == null ? default : new SelectionOperation(_source, _generation, Target, validateSelection, _validateInput);
+
+    internal SelectionOperation WithInputValidation(Func<bool>? validateInput) =>
+        _source == null ? default : new SelectionOperation(_source, _generation, Target, _validateSelection, validateInput);
 }
 
 internal sealed class SelectionOperationSource
@@ -98,4 +117,6 @@ internal sealed class OperationActionGate
 
     internal bool TryStart() =>
         Interlocked.CompareExchange(ref _started, 1, 0) == 0;
+
+    internal void AllowRetry() => Interlocked.CompareExchange(ref _started, 0, 1);
 }

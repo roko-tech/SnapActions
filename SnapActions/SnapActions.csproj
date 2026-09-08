@@ -11,7 +11,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>SnapActions</AssemblyName>
     <RootNamespace>SnapActions</RootNamespace>
-    <Version>2.4.0</Version>
+    <Version>2.4.2</Version>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
@@ -21,7 +21,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="QRCoder" Version="1.8.0" />
     <!-- Embed the icon so single-file publish can load it from the assembly -->
     <Resource Include="app.ico"/>
   </ItemGroup>

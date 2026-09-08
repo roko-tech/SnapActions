@@ -26,6 +26,8 @@ public partial class ToolbarWindow : Window
     private bool _isEditable;
     private bool _isPasteMode;
     private SelectionProviderKind _selectionProvider;
+    private string? _appName;
+    private Point _anchorPoint;
     private ToolbarOperationContext? _operationContext;
 
     private sealed class ToolbarOperationContext(SelectionOperation operation)
@@ -72,6 +74,8 @@ public partial class ToolbarWindow : Window
         InitializeComponent();
         _dismissTimer = new DispatcherTimer();
         _dismissTimer.Tick += OnDismissTimerTick;
+        InitializeCustomization();
+        Config.SettingsManager.Changed += OnSettingsChanged;
 
         SourceInitialized += (_, _) =>
         {
@@ -91,6 +95,7 @@ public partial class ToolbarWindow : Window
         Closed += (_, _) =>
         {
             KeyboardHook.EscPressed -= OnGlobalEsc;
+            Config.SettingsManager.Changed -= OnSettingsChanged;
             ClipboardTransaction.SetClipboardOwnerWindow(IntPtr.Zero);
         };
     }
@@ -125,6 +130,8 @@ public partial class ToolbarWindow : Window
             ? (rightToLeft.Value ? FlowDirection.RightToLeft : FlowDirection.LeftToRight)
             : GetPreviewFlowDirection(text);
         _analysis = analysis;
+        _appName = ForegroundApp.GetActiveProcessName();
+        _anchorPoint = new Point(x, y);
         _actionGroups = groups.Select(g => g with { Actions = g.Actions.Where(a => isEditable || a is not IOperationAction).ToList() })
             .Where(g => g.Actions.Count > 0).ToList();
         _isEditable = isEditable;
@@ -133,11 +140,12 @@ public partial class ToolbarWindow : Window
 
         CopyButton.Visibility = Visibility.Visible;
         PasteButton.Visibility = Visibility.Collapsed;
+        CustomizeButton.Visibility = Visibility.Visible;
         BuildToolbarButtons();
         UpdateTypeBadge();
         var bounds = ScreenHelper.GetScreenBounds(new Point(x, y));
         var dpi = ScreenHelper.GetDpiForPoint(new Point(x, y));
-        MainBorder.MaxWidth = Math.Min(600, Math.Max(240, bounds.Width / Math.Max(1, dpi.X) - 16));
+        MainBorder.MaxWidth = Math.Max(240, bounds.Width / Math.Max(1, dpi.X) - 16);
         RebuildInlineActions();
         PositionAndShow(x, y);
     }
@@ -150,10 +158,12 @@ public partial class ToolbarWindow : Window
         _analysis = TextAnalysis.PlainText;
         _actionGroups = [];
         _isPasteMode = true;
+        _isEditable = true;
         _editMode = false;
 
         CopyButton.Visibility = Visibility.Collapsed;
         PasteButton.Visibility = Visibility.Visible;
+        CustomizeButton.Visibility = Visibility.Collapsed;
 
         // Hide all category buttons - transforms are accessed via Paste hover
         ContextActionsPanel.Children.Clear();
@@ -262,6 +272,7 @@ public partial class ToolbarWindow : Window
     private void StartDismissTimer()
     {
         _dismissTimer.Stop();
+        if (_draggingAction != null || _activeActionMenu != null) return;
         int timeout = Config.SettingsManager.Current.ToolbarDismissTimeout;
         if (timeout > 0) { _dismissTimer.Interval = TimeSpan.FromMilliseconds(timeout); _dismissTimer.Start(); }
     }

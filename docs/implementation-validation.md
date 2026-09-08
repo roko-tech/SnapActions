@@ -1,5 +1,7 @@
 # Improvement pass — implementation and validation
 
+For subsequent toolbar customization and local installation checks, see [v2.4.1 update notes](releases/v2.4.1.md). The combined toolbar, preview, setup and stabilization changes are recorded in [v2.4.2 release notes](releases/v2.4.2.md). The [September 7 stabilization validation](stabilization-validation-2026-09-07.md) records native range/editability repairs, resource limits, Copy retry and physical desktop checks. The later [compatibility pass](compatibility-validation-2026-09-07.md) adds production FetchText and settings-failure coverage, live Notepad/VS Code evidence, and an out-of-document Chromium range repair. The [September 8 report](release-validation-2026-09-08.md) adds live Brave selection/reconnection and the VS Code read-only follow-up. The record below describes v2.4.0.
+
 This records the five-stage implementation and pre-release validation for [v2.4.0](releases/v2.4.0.md). OCR and AI rewriting are deferred at the user's request. Existing browser-companion and RTL work was retained and extended. Live testing temporarily switched the executable and native-host manifest, then restored the original setup. The version bump and release preparation followed that validation; the live-test report below preserves its historical build identity.
 
 ## Implemented scope

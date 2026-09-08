@@ -3,9 +3,6 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using SnapActions.Actions;
-using ContextMenu = System.Windows.Controls.ContextMenu;
-using MenuItem = System.Windows.Controls.MenuItem;
-using Separator = System.Windows.Controls.Separator;
 
 namespace SnapActions.UI;
 
@@ -15,16 +12,13 @@ namespace SnapActions.UI;
 // not what makes the toolbar conceptually distinct.
 public partial class ToolbarWindow
 {
-    private const string PinnedDragFormat = "SnapActions.PinnedActionId";
-
     internal void RebuildInlineActions()
     {
         ContextActionsPanel.Children.Clear();
         PinnedActionsPanel.Children.Clear();
         ContextSeparator.Visibility = PinnedSeparator.Visibility = MoreButton.Visibility = Visibility.Collapsed;
         var all = _actionGroups.SelectMany(g => g.Actions).ToList();
-        var pinned = Config.SettingsManager.Current.PinnedActionIds
-            .Select(id => all.FirstOrDefault(a => a.Id == id)).Where(a => a != null).Cast<IAction>().DistinctBy(a => a.Id).ToList();
+        var pinned = Registry?.GetPinnedActions(_appName) ?? [];
         var pinnedIds = pinned.Select(a => a.Id).ToHashSet();
         var context = all.Where(a => a.Category == ActionCategory.Context && !pinnedIds.Contains(a.Id)).ToList();
         var overflow = new List<IAction>();
@@ -80,6 +74,8 @@ public partial class ToolbarWindow
         SubMenuPanel.Children.Clear();
         ResetPreview();
         SubMenuTitle.Text = "More actions";
+        SubMenuHeader.Visibility = Visibility.Visible;
+        CustomizationHint.Visibility = Visibility.Visible;
         GearButton.Visibility = Visibility.Collapsed; // no edit mode for the ad-hoc overflow list
         foreach (var a in actions)
             SubMenuPanel.Children.Add(CreateSubMenuButton(a, false));
@@ -105,11 +101,13 @@ public partial class ToolbarWindow
         // InlineButton_* so the popup opens in preview-only mode if it isn't already open.
         btn.MouseEnter += InlineButton_MouseEnter;
         btn.MouseLeave += InlineButton_MouseLeave;
+        ConfigureActionButton(btn, action);
         return btn;
     }
 
     private Button CreatePinnedButton(IAction action)
     {
+        if (action.Id == "paste_plain") return CreateActionButton(action);
         var geo = TryFindResource(action.IconKey) as Geometry;
         var btn = new Button
         {
@@ -117,7 +115,6 @@ public partial class ToolbarWindow
             ToolTip = action.Name + "  (drag to reorder)",
             Tag = action,
             Width = double.NaN, MaxWidth = 160, Padding = new Thickness(6, 4, 6, 4),
-            AllowDrop = true,
         };
         var sp = new StackPanel { Orientation = Orientation.Horizontal };
         if (geo != null)
@@ -136,77 +133,7 @@ public partial class ToolbarWindow
         btn.MouseEnter += InlineButton_MouseEnter;
         btn.MouseLeave += InlineButton_MouseLeave;
 
-        // Drag-to-reorder. We track the press point so a small click doesn't initiate drag.
-        Point pressPoint = default;
-        bool pressed = false;
-        btn.PreviewMouseLeftButtonDown += (_, args) =>
-        {
-            pressPoint = args.GetPosition(btn);
-            pressed = true;
-        };
-        btn.PreviewMouseMove += (_, args) =>
-        {
-            if (!pressed || args.LeftButton != System.Windows.Input.MouseButtonState.Pressed) return;
-            var pt = args.GetPosition(btn);
-            if (Math.Abs(pt.X - pressPoint.X) < SystemParameters.MinimumHorizontalDragDistance &&
-                Math.Abs(pt.Y - pressPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
-                return;
-            pressed = false;
-            // Suppress the dismiss timer while dragging — popping the toolbar mid-drag is jarring.
-            _dismissTimer.Stop();
-            DragDrop.DoDragDrop(btn, new DataObject(PinnedDragFormat, action.Id), DragDropEffects.Move);
-            // Restart dismiss timer once drag completes (DoDragDrop is synchronous).
-            StartDismissTimer();
-        };
-        btn.PreviewMouseLeftButtonUp += (_, _) => pressed = false;
-
-        btn.DragOver += (_, args) =>
-        {
-            args.Effects = args.Data.GetDataPresent(PinnedDragFormat)
-                ? DragDropEffects.Move
-                : DragDropEffects.None;
-            args.Handled = true;
-        };
-        btn.Drop += (_, args) =>
-        {
-            args.Handled = true;
-            if (!args.Data.GetDataPresent(PinnedDragFormat)) return;
-            var draggedId = args.Data.GetData(PinnedDragFormat) as string;
-            if (string.IsNullOrEmpty(draggedId) || draggedId == action.Id) return;
-
-            var pinned = Config.SettingsManager.Current.PinnedActionIds;
-            int from = pinned.IndexOf(draggedId);
-            int to = pinned.IndexOf(action.Id);
-            if (from < 0 || to < 0) return;
-            pinned.RemoveAt(from);
-            // Adjust target index if removal shifted positions.
-            if (from < to) to--;
-            pinned.Insert(to, draggedId);
-            Config.SettingsManager.Save();
-            RebuildInlineActions();
-        };
-
-        // Right-click context menu remains for reorder by 1 + unpin (keyboardless users).
-        var menu = new ContextMenu();
-        var moveLeft = new MenuItem { Header = "Move Left", Tag = action };
-        moveLeft.Click += (s, _) => MovePinned(((MenuItem)s!).Tag as IAction, -1);
-        var moveRight = new MenuItem { Header = "Move Right", Tag = action };
-        moveRight.Click += (s, _) => MovePinned(((MenuItem)s!).Tag as IAction, 1);
-        var unpin = new MenuItem { Header = "Unpin", Tag = action };
-        unpin.Click += (s, _) =>
-        {
-            if (((MenuItem)s!).Tag is IAction a)
-            {
-                Config.SettingsManager.Current.PinnedActionIds.Remove(a.Id);
-                Config.SettingsManager.Save();
-                RebuildInlineActions();
-            }
-        };
-        menu.Items.Add(moveLeft);
-        menu.Items.Add(moveRight);
-        menu.Items.Add(new Separator());
-        menu.Items.Add(unpin);
-        btn.ContextMenu = menu;
+        ConfigureActionButton(btn, action);
 
         return btn;
     }
@@ -220,7 +147,6 @@ public partial class ToolbarWindow
         if (idx < 0 || newIdx < 0 || newIdx >= pinned.Count) return;
         (pinned[idx], pinned[newIdx]) = (pinned[newIdx], pinned[idx]);
         Config.SettingsManager.Save();
-        RebuildInlineActions();
     }
 
     private Button CreateSubMenuButton(IAction action, bool isEditMode)
@@ -228,18 +154,7 @@ public partial class ToolbarWindow
         var pinned = Config.SettingsManager.Current.PinnedActionIds;
         bool isPinned = pinned.Contains(action.Id);
 
-        // Search engines use SearchEngine.Enabled, other actions use DisabledActionIds
-        bool isOff;
-        if (action.Category == ActionCategory.Search)
-        {
-            var engineId = action.Id.Replace("search_", "");
-            var engine = Config.SettingsManager.Current.SearchEngines.FirstOrDefault(e => e.Id == engineId);
-            isOff = engine != null && !engine.Enabled;
-        }
-        else
-        {
-            isOff = Config.SettingsManager.Current.DisabledActionIds.Contains(action.Id);
-        }
+        bool isOff = Config.ToolbarPreferences.IsHidden(Config.SettingsManager.Current, action);
 
         var btn = new Button
         {
@@ -317,10 +232,10 @@ public partial class ToolbarWindow
         if (isEditMode)
         {
             btn.Click += ToggleActionButton_Click;
-            btn.MouseRightButtonUp += PinActionButton_Click;
-            btn.ToolTip = "Click: show/hide  |  Right-click: pin  |  Arrows: reorder";
+            btn.ToolTip = "Drag to pin  |  Click to show/hide  |  Right-click for options";
         }
         else { btn.Click += ActionButton_Click; btn.MouseEnter += SubMenuButton_MouseEnter; btn.MouseLeave += SubMenuButton_MouseLeave; }
+        ConfigureActionButton(btn, action, isEditMode);
         return btn;
     }
 }

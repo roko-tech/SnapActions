@@ -1,4 +1,3 @@
-using System.Text.Json;
 using SnapActions.Config;
 using SnapActions.Detection;
 using SnapActions.Helpers;
@@ -40,28 +39,4 @@ public class UserRecipeAction(UserAction def) : IAction
         return new ActionResult(true);
     }
 
-    /// <summary>
-    /// Returns the raw body (truncated) when <paramref name="jsonField"/> is empty, otherwise walks
-    /// the dotted path into the JSON response. Pure — separated from the HTTP call so it's testable.
-    /// </summary>
-    internal static string ExtractField(string body, string jsonField)
-    {
-        if (string.IsNullOrWhiteSpace(jsonField))
-            return body.Length > 4000 ? body[..4000] : body;
-
-        try
-        {
-            using var doc = JsonDocument.Parse(body);
-            var el = doc.RootElement;
-            foreach (var part in jsonField.Split('.', StringSplitOptions.RemoveEmptyEntries))
-            {
-                if (el.ValueKind == JsonValueKind.Object && el.TryGetProperty(part, out var next))
-                    el = next;
-                else
-                    return "(field not found)";
-            }
-            return el.ValueKind == JsonValueKind.String ? (el.GetString() ?? "") : el.ToString();
-        }
-        catch { return "(invalid JSON response)"; }
-    }
 }

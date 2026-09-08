@@ -4,7 +4,9 @@ A free, open-source smart text-selection toolbar for Windows. Select text anywhe
 
 ![.NET 10](https://img.shields.io/badge/.NET-10.0-purple) ![WPF](https://img.shields.io/badge/WPF-Windows-blue) ![License](https://img.shields.io/badge/License-MIT-green) ![build](https://img.shields.io/github/actions/workflow/status/roko-tech/SnapActions/build.yml?branch=master)
 
-Version **2.4.0** adds a keyboard palette, explicit Copy/Replace destinations, local QR codes, link cleaning, text recipes, searchable Settings, and browser setup/health. See the [release notes](docs/releases/v2.4.0.md) for upgrade instructions and validation coverage.
+Version **2.4.2** adds drag-to-pin toolbar customization, restores hover previews after reopening menus, and gives Paste a compact clipboard icon. It also guards native edits against changed selections, bounds XML formatting, permits retry after a known Copy failure, and rejects invalid Electron selection geometry. QR Code and Inspect Text have been removed. See the [release notes](docs/releases/v2.4.2.md).
+
+The [release validation](docs/release-validation-2026-09-08.md) records live Brave selection, exact mixed-language Copy, stale-selection rejection, read-only fields and reconnect after restart, alongside the earlier Notepad and VS Code checks and their limits.
 
 ## Install
 
@@ -12,14 +14,14 @@ Version **2.4.0** adds a keyboard palette, explicit Copy/Replace destinations, l
 
 Requires Windows 10 version 19041 or higher. Run the exe; a tray icon appears. That's it.
 
-For the optional Brave/Chrome/Edge companion, follow [browser setup](browser-extension/README.md). When upgrading an existing companion installation, update its files and reload the extension; v2.4.0 requires protocol version 1. Register the helper again in Settings → Browser if the executable's location changed. Existing settings are retained.
+For the optional Brave/Chrome/Edge companion, follow [browser setup](browser-extension/README.md). Settings → Browser → **Open extension folder** locates the bundled companion beside your executable. When upgrading an existing companion installation, update its files and reload the extension; v2.4.0 requires protocol version 1. Register the helper again in Settings → Browser if the executable's location changed. Existing settings are retained.
 
 ## Use
 
 Select text anywhere — drag-select, double-click a word, triple-click a line. A floating toolbar appears above the cursor with actions tailored to what you picked.
 
 ```
-Select  https://example.com           →  Open, QR code, search
+Select  https://example.com           →  Open, clean tracking links, search
 Select  2+3*4                         →  Calculate (= 14)
 Select  5 ft                          →  Convert (1.524 m | 60 in | 1.667 yd | …)
 Select  #89B4FA                       →  Preview color (with swatch), cycle to rgb/hsl
@@ -30,19 +32,21 @@ Select  a sentence                    →  Translate, Dictionary, Search
 
 **Hover any toolbar button to see the result before clicking.** Color hovers show a live swatch alongside the text.
 
-Transforms now open a result preview with **Copy result** and, for a verified editable target, **Replace selection**. They also work on read-only selections. The source excerpt stays beside the result; replacement revalidates the original target before input. To bring up a paste menu without an existing selection, **long-press** the left mouse button (500 ms by default) inside any text input — or switch the trigger to double-click (on an empty editable field), or off, in Settings.
+Transforms now open a result preview with **Copy result** and, for a verified editable target, **Replace selection**. They also work on read-only selections. The source excerpt stays beside the result; replacement revalidates the original target before input. Native Delete, Paste and Replace require writable capability plus the same captured selection endpoints and text. When a provider cannot supply that evidence, captured text remains available for Copy. To bring up a paste menu without an existing selection, **long-press** the left mouse button (500 ms by default) inside any text input — or switch the trigger to double-click (on an empty editable field), or off, in Settings.
+
+A busy clipboard leaves **Copy result** available for a safe retry. A cancelled or uncertain replacement requires a fresh selection. If every matching action is hidden, the toolbar still offers Copy and the customization menu.
 
 Automatic highlight capture is clipboard-free: leave **Show toolbar automatically when I select text** on. The optional [browser companion](browser-extension/README.md) reads the browser's actual selected text, including mixed Arabic/English and selections spanning multiple lines. Other apps use UI Automation. Neither automatic path runs a copy command or touches the clipboard. For unsupported surfaces, turn on **Show toolbar when I press Ctrl+C** and copy explicitly to summon the toolbar there.
 
 Press **Ctrl+Shift+Space** for the searchable action palette. Use Up/Down to choose, Enter to run, and Esc to close. Pure actions preview their result before Copy or Replace. If no selection is readable, enter text in the palette. An unavailable shortcut is reported in Settings → Browser → Capture health.
 
-Mixed Arabic/English hover previews use the browser selection's text direction when available, with the selected phrase displayed separately from the English search label. This affects display only; copied text stays unchanged.
+Mixed Arabic/English hover previews use the browser selection's text direction when available, with the selected phrase displayed separately from the English search label. Long previews trim within the popup. Leaving a toolbar action closes its hover-only popup; an open action menu stays available. This affects display only; copied text stays unchanged.
 
 ## What it detects
 
 | Type | Example | Actions |
 |---|---|---|
-| URL | `https://example.com`, `ftp://files.example.com` | Open, QR code |
+| URL | `https://example.com`, `ftp://files.example.com` | Open, clean tracking links |
 | Email | `user@example.com` | Send via mailto |
 | File path | `C:\folder\file.txt`, `\\server\share\file` | Open file, reveal in Explorer |
 | JSON | `{"key":"val"}`, `[1, 2, 3]` | Format, minify |
@@ -56,6 +60,8 @@ Mixed Arabic/English hover previews use the browser selection's text direction w
 | Currency | `$33`, `100 SAR`, `€1,500.50`, `€1.500,50` | Convert (handles American & European number formats) |
 | JWT | `eyJhbGciOiJI...`, including `alg=none` unsigned tokens | Decode header / payload / signature |
 | Unit | `5 ft`, `100 km/h`, `5 fl oz`, `20°C`, `2 cups` | Convert to all common units |
+
+XML formatting rejects DTD declarations and limits input to 32,768 characters and formatted output to 65,536 characters, including indentation.
 
 Detection runs entirely in-process — no network calls, classification under 1 ms on typical selections.
 
@@ -86,13 +92,14 @@ URL · Base64 · HTML · Hex · ROT13 · MD5 / SHA-1 / SHA-256 / SHA-512 (under 
 
 ## Customize
 
-- **Pin** an action to the main toolbar: click the `…` overflow or any submenu, click the gear icon to enter edit mode, right-click an action.
-- **Hide** an action: edit mode, left-click to toggle visibility.
-- **Reorder** pinned actions: drag them on the toolbar, or right-click → Move Left/Right.
+- **Pin** an action: drag it from any menu onto the toolbar. A blue insertion line shows where it will land. You can also right-click → Pin to toolbar.
+- **Hide or unpin**: right-click any action, including items in `…`. Use the toolbar gear to see all actions and restore hidden ones; hiding keeps their saved pin order.
+- **Reorder** pins: drag to the left or right half of another pin, or right-click → Move left/right. Dragging works even when a pin is disabled for the current selection.
+- **Paste** uses a compact clipboard icon on the toolbar; its tooltip and accessible name still identify Paste Plain Text.
 - **Reorder** search engines: edit mode in the Search submenu, use ▲ ▼ arrows.
 - **Custom actions**: Settings → Custom — build your own from a URL template (`{0}` = the selection) that either opens in the browser or fetches and shows the result (optionally a single JSON field). Scope it to any detected type or all selections.
 - **Per-app profiles**: Settings → Apps — hide specific actions when a chosen app is in the foreground.
-- **Settings**: double-click the tray icon. Changes auto-save with visible success or failure status.
+- **Settings**: double-click the tray icon. Changes auto-save and refresh the current toolbar in browsers and other apps. Pinned actions stay first and do not count toward the suggested-action limit. The toolbar uses the available monitor width; actions that cannot fit remain in `…`. Pinned Paste/Delete remain visible but disabled on read-only text, with an explanatory tooltip.
 
 | Setting | Options | Default |
 |---|---|---|
@@ -105,7 +112,7 @@ URL · Base64 · HTML · Hex · ROT13 · MD5 / SHA-1 / SHA-256 / SHA-512 (under 
 | Auto-dismiss after | 3 / 5 / 8 / 15 / 30 s, Never | 8 s |
 | Prefer Replace in the keyboard palette (editable selections) | On / Off | On |
 | Restore previous clipboard after copy action | On / Off | Off |
-| Max inline context actions | 1 / 2 / 3 / 4 / 6 / 8 (rest fall into `…` overflow) | 4 |
+| Suggested actions on toolbar | 1 / 2 / 3 / 4 / 6 / 8 (rest fall into `…` overflow) | 4 |
 | Search language filter | Supported search languages or no filter | No filter |
 | Translation languages | Explicit source and target, 23 choices | Choose source; target English |
 | Dictionary language | English | English |
@@ -124,7 +131,6 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 - **Detection is local.** All detectors run in-process. No network calls for detection.
 - **Inline cloud popups (opt-in).** Translate, Dictionary, and Currency Converter send the selected text to MyMemory, dictionaryapi.dev, and open.er-api.com over HTTPS — the SnapActions process makes the request and shows the result inline. These run only after you allow online lookups; you're asked the first time, and any custom "fetch" action you add is gated the same way.
 - **Browser-handoff actions.** IP Lookup (ipinfo.io) opens a URL containing your selection in your default browser; SnapActions itself never makes the request. Web search engines work the same way.
-- **QR codes are local.** QRCoder generates the image on the device, with Copy image and Save PNG. QR generation sends no text to an external service.
 - **Everything else stays local.** Format/minify, transform, encode/decode, hash, color/unit/timezone/JWT/Base64 — none of these touch the network.
 - **Password managers excluded by default.** No toolbar appears when the foreground process is a known password manager. Add your own via Settings → Excluded apps.
 - **Risky-extension prompt.** Opening files with code-bearing extensions (`.exe`, `.bat`, `.ps1`, `.iso`, `.docm`, `.lnk`, …) requires explicit confirmation. Without this, a malicious selection like `C:\Users\you\Downloads\invoice.exe` could be one click away from running.
@@ -139,18 +145,17 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 
 Without the companion, mouse drag, double-click, and triple-click selection use `TextPattern.GetSelection` through the accessibility tree. SnapActions walks up to 6 parents of the focused element and also checks the element under the cursor. For Chromium, same-line drags reconstruct characters from their on-screen geometry and map visual bidi runs back to logical text order; double-click reconstructs the clicked word and requires the same UTF-16 length as the provider selection. This workaround has limits around mixed-direction content. Neither automatic path sends `WM_COPY`, injects `Ctrl+Insert`, or reads, clears, or writes the clipboard.
 
-UI Automation coverage is not universal. Java Swing, some browser/Electron contexts, and custom text renderers may expose no selected text, so the automatic toolbar cannot appear there without a copy operation. A Chromium gesture also fails closed when its geometry cannot be mapped safely (including cross-line bidi drags), or when a double-click word cannot confirm the provider-reported selection length, rather than showing possibly adjacent text. Enable **Show toolbar when I press Ctrl+C** for those cases: your physical copy supplies the exact text, and SnapActions only validates and reads the resulting clipboard value.
+UI Automation coverage is not universal. Java Swing, some browser/Electron contexts, and custom text renderers may expose no selected text, so the automatic toolbar cannot appear there without a copy operation. A Chromium gesture fails closed when its geometry cannot be mapped safely (including cross-line bidi drags), when its range extends outside the provider's document, or when a double-click word cannot confirm the provider-reported selection length. Enable **Show toolbar when I press Ctrl+C** for those cases: your physical copy supplies the exact text, and SnapActions validates and reads the resulting clipboard value.
 
 **Clipboard behavior is explicit.** Automatic highlighting never touches it. A physical Ctrl+C changes it because you requested a copy. Result previews close after a successful explicit copy; **Restore previous clipboard after copy action** can put the prior contents back after about 3 seconds.
 
-**Editable-field detection.** Replacement and paste-mode use a multi-layer check:
-- **Win32 caret presence** — covers Notepad and other native text controls
-- **UI Automation `ControlType.Edit`** — covers `<input>` / `<textarea>` in browsers
-- **`ControlType.Group + TextPattern`** — covers ProseMirror, CodeMirror, and similar rich-text editors in Electron apps (Claude Desktop, Slack, VS Code)
+**Editable-field detection.** Native Delete, Paste and Replace require an enabled control with affirmative writable evidence from UI Automation, plus the captured selection's exact text and endpoints at execution. Missing evidence keeps captured-text actions available but disables edits. Browser capture additionally checks the companion's editable flag and revalidates the captured document and selection. A caret or control type alone cannot authorize an edit.
+
+Provider accuracy remains a limit: in the tested VS Code 1.113.0 screen-reader mode, a session-read-only editor reported writable text patterns. SnapActions offered Delete, which VS Code rejected without changing the document. With the default accessibility setting, the tested editor did not expose usable selection ranges; explicit Ctrl+C supplied text while editing pins stayed disabled. The [VS Code follow-up](docs/release-validation-2026-09-08.md#vs-code-read-only-follow-up) explains why this remains a known limitation.
 
 **Per-monitor DPI throughout.** Toolbar positioning, hit-testing, and the sub-menu popup each look up the DPI of the monitor they're rendering on, including when the popup spills onto a different-DPI monitor than the toolbar.
 
-**Foreground-shift-safe synthetic input.** Every path that injects input back into the user's app — transforms in editable fields, long-press paste-mode, Paste Plain Text, Delete — carries the original event-time foreground and focused HWND, process/thread, and available UIA identity and aborts if focus has moved by injection time. An Alt-Tab before or after the button click can't redirect a paste (or a destructive Delete keystroke) into the wrong app.
+**Guarded synthetic input.** Every path that injects input back into the user's app — transforms in editable fields, long-press paste-mode, Paste Plain Text, Delete — carries the original target's foreground and focused HWND, process/thread, and available UIA identity. It rechecks that identity and the captured selection before committing input. These checks reject observed target changes; Windows does not provide an atomic transaction covering another application's selection and subsequent keyboard input.
 
 **When the toolbar appears (and when it doesn't).** Mouse-up after a drag, double/triple-click, or long-press *can* trigger the toolbar — but several gates have to agree before it shows. In order:
 
@@ -183,15 +188,13 @@ For isolated manual testing, set `SNAPACTIONS_DATA_DIR` to an **absolute path** 
 
 ## Tests & CI
 
-The xUnit suite covers detection, transforms, native target/clipboard ownership, partial input, selection generations, UIA single-flight gates, lookup failures and caching, settings migrations, local QR decoding, link cleaning, and recipe execution. Retired WM_COPY/Ctrl+Insert capture-planner tests were removed with the inactive planner; explicit paste/delete safety tests remain.
+The xUnit suite covers detection, transforms, native target/clipboard ownership, partial input, selection generations, UIA single-flight gates, lookup failures and caching, settings migrations, toolbar pinning/reordering/visibility, link cleaning, and recipe execution. Fetch action tests exercise the production service's JSON parsing, UTF-8 byte limits, cancellation and interrupted responses. Compiled WPF checks include settings write/replace failures, visible errors, retained saved preferences and retry/reload recovery. Retired WM_COPY/Ctrl+Insert capture-planner tests were removed with the inactive planner; explicit paste/delete safety tests remain.
 
 The browser suite checks exact text, input/password restrictions, frames, navigation epochs, document-specific revalidation and protocol compatibility. CI runs the complete [package gate](tools/package.py), including the published executable's real UTF-8 native-host relay, desktop-disconnect recovery, and compiled WPF layout/state checks. See [the workflow](.github/workflows/build.yml), [CI runs](https://github.com/roko-tech/SnapActions/actions/workflows/build.yml), and [validation notes](docs/implementation-validation.md). Automated checks and compiled renders do not certify every live interaction; the remaining gaps are listed in the release notes.
 
 ## Local tools and customization
 
-- **QR Code:** any nonblank selection up to 2,000 UTF-8 bytes, rendered offline with image copy/export.
 - **Clean tracking link:** previews removal of known tracking parameters while preserving remaining query bytes, duplicates and fragments. It does not remove generic parameters such as `ref` or `token`.
-- **Inspect text:** grapheme/code-point/byte counts and named whitespace/bidi controls. Counts cover the whole selection; the code-point list shows the first 256.
 - **Saved text recipes:** Settings → Custom → Create text recipe. Add/reorder up to 12 existing pure text operations and preview sample text. Save once, then use it from Transform or the palette. Intermediates never touch the clipboard; oversized output or a failed step cancels the result.
 - **App presets:** Settings → Apps → Configure app profiles. Reading, Writing and Development presets add hidden actions to the selected app, preserving existing choices. The editor includes built-in, search, custom and recipe actions.
 - **Settings:** resizable sections with search, dark/light/system appearance, advanced timing controls and visible autosave status/failures. A failed save keeps the window open for retry.
@@ -219,4 +222,4 @@ Settings → Browser shows connection/capture health and a rolling 256-sample ti
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Release ZIPs also include the [license notices](licenses/README.md) for QRCoder and the bundled .NET runtime.
+MIT — see [LICENSE](LICENSE). Release ZIPs also include the [license notices](licenses/README.md) for the bundled .NET runtime.

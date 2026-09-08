@@ -154,14 +154,15 @@ public class SelectionTracker
                 SnapActions.Helpers.NativeMethods.GetCursorPos(out var pt);
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 
-                bool isEditable = await ForegroundGuard.RunBoundedAutomationAsync(
-                    ForegroundApp.IsEditableFieldFocused,
-                    onBusyOrTimeout: false,
-                    timeoutMs: UiAutomationTimeoutMs);
+                // Explicit copy remains usable on unsupported surfaces, but editing requires
+                // a provider range whose exact text agrees with the user's clipboard copy.
+                var selected = await _coordinator.CaptureAsync(operation,
+                    new UiaSelectionProvider.SelectionGesture(false, 0, pt.X, pt.Y, pt.X, pt.Y), pt.X, pt.Y);
+                bool isEditable = selected?.Text == text && selected.CanReplace;
+                if (selected?.Text == text) operation = selected.Operation;
                 if (!await operation.CanInjectInputAsync()) return;
                 var analysis = _classifier.Classify(text);
                 var groups = _actionRegistry.GetActions(text, analysis, ForegroundApp.GetActiveProcessName());
-                if (groups.Count == 0) return;
 
                 _toolbar ??= new ToolbarWindow();
                 _toolbar.Registry = _actionRegistry;
@@ -369,7 +370,8 @@ public class SelectionTracker
                             onBusyOrTimeout: false,
                             timeoutMs: UiAutomationTimeoutMs))
                     {
-                        if (!await operation.CanInjectInputAsync()) return;
+                        operation = await UiaSelectionProvider.BindInputSelectionAsync(operation);
+                        if (!await operation.CanMutateTargetAsync()) return;
                         _toolbar ??= new ToolbarWindow();
                         _toolbar.Registry = _actionRegistry;
                         _toolbar.ShowPasteMode(cursorPos.X, cursorPos.Y, operation);
@@ -385,7 +387,6 @@ public class SelectionTracker
                 long matchingStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 var groups = _actionRegistry.GetActions(text, analysis, ForegroundApp.GetActiveProcessName());
                 CaptureDiagnostics.Record("Action matching", matchingStarted);
-                if (groups.Count == 0) return;
 
                 _toolbar ??= new ToolbarWindow();
                 _toolbar.Registry = _actionRegistry;
@@ -460,7 +461,8 @@ public class SelectionTracker
                     SnapActions.Helpers.Log.Info($"Suppressed long-press: hold position ({cursorPos.X},{cursorPos.Y}) isn't a text element");
                     return;
                 }
-                if (!await operation.CanInjectInputAsync()) return;
+                operation = await UiaSelectionProvider.BindInputSelectionAsync(operation);
+                if (!await operation.CanMutateTargetAsync()) return;
 
                 if (_toolbar?.IsVisible == true) _toolbar.HideToolbar();
 

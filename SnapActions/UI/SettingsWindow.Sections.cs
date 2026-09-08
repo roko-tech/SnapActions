@@ -26,7 +26,6 @@ public partial class SettingsWindow
             DictionaryCombo.SelectedIndex = DictionaryCombo.Items.Count - 1;
         }
         AutoStartCheck.IsEnabled = !RuntimePaths.IsIsolated;
-        ExtensionPathBox.Text = BrowserSetupService.ExtensionDirectory;
         BuildRecipesList();
         RefreshBrowserHealth();
     }
@@ -109,7 +108,7 @@ public partial class SettingsWindow
     {
         if (!System.IO.File.Exists(path) && !System.IO.Directory.Exists(path))
         { BrowserStatusText.Text = "The companion files are missing. Extract the complete release package."; return; }
-        var result = ProcessHelper.TryShellOpen(path, "Opened");
+        var result = ProcessHelper.TryOpenLocalPath(path, "Opened");
         if (!result.Success) BrowserStatusText.Text = result.Message;
     }
 

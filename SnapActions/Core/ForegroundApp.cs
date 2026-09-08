@@ -60,24 +60,35 @@ public static class ForegroundApp
     }
 
     /// <summary>
-    /// Permissive check for selection toolbar (show transform buttons).
-    /// Allows false positives - transforms just copy to clipboard harmlessly.
+    /// Requires affirmative editable capability. A caret, Edit control type, or TextPattern
+    /// alone proves neither that selected text is writable nor that replacement is safe.
     /// </summary>
     public static bool IsEditableFieldFocused()
     {
-        if (HasWin32Caret()) return true;
         try
         {
             var focused = AutomationElement.FocusedElement;
-            if (focused == null) return false;
-
-            if (focused.Current.ControlType == ControlType.Edit) return true;
-            if (focused.TryGetCurrentPattern(ValuePattern.Pattern, out var vp))
-                if (!((ValuePattern)vp).Current.IsReadOnly) return true;
-            if (focused.TryGetCurrentPattern(TextPattern.Pattern, out _)) return true;
+            return focused != null && ReadEditability(focused) == true;
         }
         catch { }
         return false;
+    }
+
+    internal static bool IsEditableEvidence(bool enabled, bool? valueReadOnly, bool? textReadOnly) =>
+        enabled && !(valueReadOnly ?? textReadOnly ?? true);
+
+    private static bool? ReadEditability(AutomationElement element)
+    {
+        if (!element.Current.IsEnabled || Array.IndexOf(NonTextFocusableTypes, element.Current.ControlType) >= 0)
+            return false;
+        if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var value))
+            return IsEditableEvidence(true, ((ValuePattern)value).Current.IsReadOnly, null);
+        if (element.TryGetCurrentPattern(TextPattern.Pattern, out var text))
+        {
+            var readOnly = ((TextPattern)text).DocumentRange.GetAttributeValue(TextPattern.IsReadOnlyAttribute);
+            return IsEditableEvidence(true, null, readOnly is bool flag ? flag : null);
+        }
+        return null; // A leaf without text patterns may belong to an editable ancestor.
     }
 
     /// <summary>
@@ -120,27 +131,9 @@ public static class ForegroundApp
     ];
 
     /// <summary>
-    /// Strict editable-focus check: ControlType.Edit or non-read-only ValuePattern, gated by an
-    /// item-type early-reject AND a file-manager process-name early-reject. Deliberately omits
-    /// the bare TextPattern branch that <see cref="IsEditableFieldFocused"/> allows (TextPattern
-    /// is present on read-only documents like Twitter articles) AND the Win32 caret branch (a
-    /// registered-but-invisible caret on Explorer's address bar would falsely trigger).
+    /// Uses the shared read-only capability check and excludes file-manager double-clicks,
+    /// which can move focus to an address bar as a side effect of opening an item.
     /// </summary>
-    /// <remarks>
-    /// Used by the double-click paste-mode trigger where false positives matter much more than
-    /// for the selection-toolbar's transform-button visibility. Layered against three known
-    /// failure modes:
-    ///   1. Cursor-at-point check (<see cref="IsTextInputAtPoint"/>) is unreliable for clicks
-    ///      because the UI under the cursor shifts during the click action (Explorer folder
-    ///      opens, content view re-renders). Focused-element check is stable.
-    ///   2. Post-navigation focus in browsers / Outlook / Explorer can transiently land on an
-    ///      Edit element even though the click meant "open this". The process-name reject and
-    ///      item-type reject collectively rule out the common cases.
-    ///   3. The Win32 caret signal includes "caret is registered" (not just "currently
-    ///      blinking"), which Explorer leaves set for the address bar. Dropping it here means
-    ///      paste mode in Notepad-like apps relies on UIA exposing the text area as Edit — which
-    ///      every real Win32 edit does.
-    /// </remarks>
     public static bool IsStrictlyEditableFocused()
     {
         // File-manager process reject — even if Explorer happens to focus its address bar after
@@ -148,23 +141,7 @@ public static class ForegroundApp
         var process = GetActiveProcessName();
         if (process != null && NoDoubleClickPasteModeProcesses.Contains(process)) return false;
 
-        try
-        {
-            var focused = AutomationElement.FocusedElement;
-            if (focused == null) return false;
-
-            var ct = focused.Current.ControlType;
-            // Explicit non-text items take priority over any pattern check. A focused ListItem
-            // / Button / Image is the user's interaction target; never paste mode.
-            if (System.Array.IndexOf(NonTextFocusableTypes, ct) >= 0) return false;
-
-            if (ct == ControlType.Edit) return true;
-            if (focused.TryGetCurrentPattern(ValuePattern.Pattern, out var vp)
-                && !((ValuePattern)vp).Current.IsReadOnly)
-                return true;
-        }
-        catch { }
-        return false;
+        return IsEditableFieldFocused();
     }
 
     // Maximum UIA parent levels to walk when probing for text capability. Leaf nodes in a
@@ -184,17 +161,8 @@ public static class ForegroundApp
     /// `&lt;span&gt;` inside a contenteditable, etc.) and we need to climb up to the actual editor.
     /// Slow (50–500 ms on Electron with a11y not loaded); call from a worker thread, never the
     /// hook thread or the dispatcher synchronously.
-    /// What counts as "editable":
-    ///   • ControlType.Edit — standard &lt;input&gt;/&lt;textarea&gt;/&lt;div role="textbox"&gt;, native
-    ///     Win32 edits, and most contenteditable elements that Chrome maps to Edit.
-    ///   • ControlType.Group with TextPattern AND IsKeyboardFocusable — covers ProseMirror /
-    ///     CodeMirror / contenteditable rich-text editors in Electron apps (Claude Desktop,
-    ///     Slack, VS Code) without also matching read-only Group+TextPattern content like
-    ///     Twitter &lt;article&gt; feeds (focusable=false because the article itself isn't
-    ///     keyboard-navigable; only its interactive descendants are).
-    /// Pre-v1.6.17 also matched ControlType.Document and bare TextPattern on any control type.
-    /// Both were too loose: Twitter feed articles are Document/Group with TextPattern, so a
-    /// long-press in feed padding walked up to the article and summoned paste mode falsely.
+    /// An explicit read-only/disabled verdict stops the walk. Only leaves without capability
+    /// evidence may defer to an ancestor; control type and focusability never override read-only.
     /// </remarks>
     public static bool IsTextInputAtPoint(int x, int y)
     {
@@ -208,17 +176,9 @@ public static class ForegroundApp
             {
                 try
                 {
-                    var ct = element.Current.ControlType;
-                    if (ct == ControlType.Edit) return true;
-                    // Group+TextPattern matches both rich-text editors (focusable) and read-only
-                    // article-like containers (not focusable). The IsKeyboardFocusable check
-                    // separates them — editors accept focus, feed articles don't.
-                    if (ct == ControlType.Group
-                        && element.Current.IsKeyboardFocusable
-                        && element.TryGetCurrentPattern(TextPattern.Pattern, out _))
-                        return true;
+                    if (ReadEditability(element) is { } editable) return editable;
                 }
-                catch { /* per-level UIA failure — try the parent */ }
+                catch { return false; }
 
                 try { element = walker.GetParent(element); }
                 catch { break; }
@@ -235,45 +195,10 @@ public static class ForegroundApp
         }
     }
 
-    private static bool HasWin32Caret()
-    {
-        IntPtr hwnd = GetForegroundWindow();
-        if (hwnd == IntPtr.Zero) return false;
-        uint threadId = GetWindowThreadProcessId(hwnd, out _);
-        var info = new GUITHREADINFO { cbSize = (uint)Marshal.SizeOf<GUITHREADINFO>() };
-        if (!GetGUIThreadInfo(threadId, ref info)) return false;
-
-        // Caret is blinking (standard Win32 text controls)
-        if ((info.flags & 0x01) != 0) return true;
-
-        // Caret window exists (some apps set this without the blinking flag)
-        if (info.hwndCaret != IntPtr.Zero) return true;
-
-        // Caret rect has dimensions (another signal of an active text cursor)
-        if (info.rcCaret.right > info.rcCaret.left && info.rcCaret.bottom > info.rcCaret.top)
-            return true;
-
-        return false;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct GUITHREADINFO
-    {
-        public uint cbSize, flags;
-        public IntPtr hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret;
-        public RECT rcCaret;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RECT { public int left, top, right, bottom; }
-
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO lpgui);
 }

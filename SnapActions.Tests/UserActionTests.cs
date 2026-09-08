@@ -28,15 +28,6 @@ public class UserActionTests
         Assert.True(urlOnly.CanExecute("http://e.com", new TextAnalysis(TextType.Url, 0.95)));
     }
 
-    [Theory]
-    [InlineData("{\"name\":\"octocat\"}", "name", "octocat")]
-    [InlineData("{\"data\":{\"title\":\"hi\"}}", "data.title", "hi")]
-    [InlineData("{\"name\":\"x\"}", "missing", "(field not found)")]
-    [InlineData("not json", "name", "(invalid JSON response)")]
-    [InlineData("{\"n\":\"keep\"}", "", "{\"n\":\"keep\"}")] // empty field returns raw body
-    public void UserRecipeAction_ExtractField(string body, string field, string expected) =>
-        Assert.Equal(expected, UserRecipeAction.ExtractField(body, field));
-
     [Fact]
     public void GetActions_IncludesEnabledUserActions_AndSkipsDisabled()
     {

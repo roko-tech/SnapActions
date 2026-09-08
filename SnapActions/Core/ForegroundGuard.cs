@@ -221,7 +221,7 @@ internal static class ForegroundGuard
     /// exceeds the bound, a gate prevents the abandoned worker from committing input later.
     /// </summary>
     internal static async Task<bool> TryRunWithExactInputTargetAsync(
-        ForegroundTarget expected, Func<ForegroundTarget, bool> commit)
+        ForegroundTarget expected, Func<ForegroundTarget, bool> commit, Func<bool>? validateInput = null)
     {
         if (!HasSufficientInputIdentity(expected)) return false;
 
@@ -229,6 +229,10 @@ internal static class ForegroundGuard
         if (!AutomationWorkers.TryStart(
                 () =>
                 {
+                    // Keep provider work before claiming the timeout gate: an abandoned range
+                    // or editability query must never resume and commit input later. Capture the
+                    // final target afterward so focus changes during provider work are rejected.
+                    if (validateInput != null && !validateInput()) return false;
                     var current = Enrich(Capture());
                     if (!Matches(expected, current)) return false;
                     if (Interlocked.CompareExchange(ref gate, 1, 0) != 0)

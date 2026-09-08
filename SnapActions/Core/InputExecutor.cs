@@ -84,16 +84,16 @@ internal static class InputExecutor
     }
     internal static async Task<bool> PreparePasteAsync(SelectionOperation operation)
     {
-        if (!await operation.CanInjectInputAsync()) return false;
+        if (!await operation.CanMutateTargetAsync()) return false;
         return await WaitForModifierKeysReleasedAsync(VK_SHIFT, VK_CONTROL, VK_MENU)
-               && await operation.CanInjectInputAsync();
+               && await operation.CanMutateTargetAsync();
     }
 
     internal static async Task<bool> PrepareDeleteAsync(SelectionOperation operation)
     {
-        if (!await operation.CanInjectInputAsync()) return false;
+        if (!await operation.CanMutateTargetAsync()) return false;
         return await WaitForModifierKeysReleasedAsync(VK_SHIFT, VK_CONTROL, VK_MENU)
-               && await operation.CanInjectInputAsync();
+               && await operation.CanMutateTargetAsync();
     }
 
     /// <summary>
@@ -170,7 +170,7 @@ internal static class InputExecutor
                         out outcome))
                     return false;
                 return true;
-            });
+            }, operation.ValidateInput);
         return reachedInputBoundary
             ? outcome
             : new InputInjectionOutcome(InputInjectionStatus.Rejected);

@@ -348,7 +348,7 @@ internal static class ClipboardTransaction
 
             bool committed = requireExactTarget
                 ? await ForegroundGuard.TryRunWithExactInputTargetAsync(
-                    operation.Target, current => Commit(current))
+                    operation.Target, current => Commit(current), operation.ValidateInput)
                 : Commit(currentTarget: null);
 
             if (!committed

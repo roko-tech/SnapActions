@@ -59,30 +59,9 @@ public partial class ToolbarWindow
     {
         if (sender is not Button { Tag: IAction action }) return;
 
-        if (action.Category == ActionCategory.Search)
-        {
-            // Toggle SearchEngine.Enabled
-            var engineId = action.Id.Replace("search_", "");
-            var engine = Config.SettingsManager.Current.SearchEngines.FirstOrDefault(en => en.Id == engineId);
-            if (engine != null) engine.Enabled = !engine.Enabled;
-        }
-        else
-        {
-            // Toggle DisabledActionIds
-            var disabled = Config.SettingsManager.Current.DisabledActionIds;
-            if (disabled.Contains(action.Id)) disabled.Remove(action.Id); else disabled.Add(action.Id);
-        }
+        var settings = Config.SettingsManager.Current;
+        Config.ToolbarPreferences.SetHidden(settings, action, !Config.ToolbarPreferences.IsHidden(settings, action));
         Config.SettingsManager.Save();
-        RebuildCurrentSubMenu();
-    }
-
-    private void PinActionButton_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
-    {
-        if (sender is not Button { Tag: IAction action }) return;
-        var pinned = Config.SettingsManager.Current.PinnedActionIds;
-        if (pinned.Contains(action.Id)) pinned.Remove(action.Id); else pinned.Add(action.Id);
-        Config.SettingsManager.Save();
-        RebuildCurrentSubMenu();
     }
 
     // ── Reorder (search engines / pinned actions) ────────────────
@@ -122,7 +101,6 @@ public partial class ToolbarWindow
             (pinned[idx], pinned[newIdx]) = (pinned[newIdx], pinned[idx]);
         }
         Config.SettingsManager.Save();
-        RebuildCurrentSubMenu();
     }
 
     // ── Sub-menu show/toggle ─────────────────────────────────────
@@ -130,7 +108,7 @@ public partial class ToolbarWindow
     private void ShowSubMenu(string groupName, ActionCategory category)
     {
         if (SubMenuPopup.IsOpen && _currentSubMenuGroup == groupName && !_hoverPreviewMode)
-        { SubMenuPopup.IsOpen = false; _editMode = false; PreviewBorder.Visibility = Visibility.Collapsed; return; }
+        { SubMenuPopup.IsOpen = false; _editMode = false; ResetPreview(); return; }
 
         _currentSubMenuGroup = groupName;
         _currentSubMenuCategory = category;
@@ -143,10 +121,30 @@ public partial class ToolbarWindow
     {
         SubMenuPanel.Children.Clear();
         ResetPreview();
-        // Only real category submenus support edit mode; overflow / hover-preview popups hide the gear.
+        SubMenuHeader.Visibility = Visibility.Visible;
+        CustomizationHint.Visibility = Visibility.Visible;
         GearButton.Visibility = _currentSubMenuCategory != null ? Visibility.Visible : Visibility.Collapsed;
 
-        if (_editMode && Registry != null && _currentSubMenuCategory != null)
+        if (_currentSubMenuGroup == "All actions" && Registry != null)
+        {
+            SubMenuTitle.Text = "All actions — drag to pin, click to show/hide";
+            foreach (var category in Enum.GetValues<ActionCategory>())
+            {
+                SubMenuPanel.Children.Add(new TextBlock
+                {
+                    Text = category.ToString(), FontSize = 10, FontWeight = FontWeights.SemiBold,
+                    Foreground = (Brush)FindResource("AccentBrush"), Width = 370, Margin = new Thickness(8, 6, 8, 2)
+                });
+                foreach (var action in Registry.GetAllActionsForCategory(category))
+                    SubMenuPanel.Children.Add(CreateSubMenuButton(action, true));
+            }
+        }
+        else if (_currentSubMenuGroup == "More actions" && MoreButton.Tag is List<IAction> overflow)
+        {
+            SubMenuTitle.Text = "More actions";
+            foreach (var action in overflow) SubMenuPanel.Children.Add(CreateSubMenuButton(action, false));
+        }
+        else if (_editMode && Registry != null && _currentSubMenuCategory != null)
         {
             SubMenuTitle.Text = $"{_currentSubMenuGroup} (editing)";
             foreach (var a in Registry.GetAllActionsForCategory(_currentSubMenuCategory.Value))
@@ -156,7 +154,7 @@ public partial class ToolbarWindow
         {
             SubMenuTitle.Text = _currentSubMenuGroup ?? "";
             var g = _actionGroups.FirstOrDefault(g => g.Name == _currentSubMenuGroup);
-            if (g == null) return;
+            if (g == null) { SubMenuPopup.IsOpen = false; return; }
             foreach (var a in g.Actions)
                 SubMenuPanel.Children.Add(CreateSubMenuButton(a, false));
         }
@@ -185,11 +183,14 @@ public partial class ToolbarWindow
         // Build a submenu with: Plain paste + all transform actions on clipboard text
         _currentSubMenuGroup = "Paste As";
         _currentSubMenuCategory = null;
+        _editMode = false;
         _hoverPreviewMode = false;
 
         SubMenuPanel.Children.Clear();
         ResetPreview();
         SubMenuTitle.Text = "Paste As";
+        SubMenuHeader.Visibility = Visibility.Visible;
+        CustomizationHint.Visibility = Visibility.Collapsed;
         GearButton.Visibility = Visibility.Collapsed;
 
         if (Registry != null)

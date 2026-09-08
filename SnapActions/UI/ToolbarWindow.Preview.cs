@@ -21,6 +21,7 @@ public partial class ToolbarWindow
 
     private void SubMenuButton_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
     {
+        if (_draggingAction != null) return;
         if (sender is not Button { Tag: IAction action }) return;
         UpdatePreviewBand(action);
     }
@@ -71,6 +72,7 @@ public partial class ToolbarWindow
 
         SetPreviewContent(PreviewText, preview, label,
             label != null || action.Category == ActionCategory.Transform ? _selectionFlowDirection : null);
+        PreviewBorder.Visibility = Visibility.Visible;
         PreviewText.Opacity = 1;
         SetSwatch(swatchHex);
     }
@@ -82,6 +84,7 @@ public partial class ToolbarWindow
     /// </summary>
     private void InlineButton_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
     {
+        if (_draggingAction != null) return;
         if (sender is not Button { Tag: IAction action }) return;
         // Standard tooltips already cover the action name for non-previewable actions; only
         // bother opening the popup when there's something interesting to show.
@@ -100,17 +103,28 @@ public partial class ToolbarWindow
         _hoverPreviewMode = true;
         SubMenuPanel.Children.Clear();
         SubMenuTitle.Text = "";
+        SubMenuHeader.Visibility = Visibility.Collapsed;
         GearButton.Visibility = Visibility.Collapsed;
+        CustomizationHint.Visibility = Visibility.Collapsed;
         UpdatePreviewBand(action);
         SubMenuPopup.IsOpen = true;
         StartDismissTimer();
     }
 
-    private void InlineButton_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e) =>
+    private void InlineButton_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
         ResetPreview();
+        if (_hoverPreviewMode)
+        {
+            SubMenuPopup.IsOpen = false;
+            _hoverPreviewMode = false;
+        }
+    }
 
     private void ResetPreview()
     {
+        // Reserve space while browsing a menu so hovering doesn't move its actions.
+        PreviewBorder.Visibility = _editMode ? Visibility.Collapsed : Visibility.Hidden;
         PreviewText.Opacity = 0;
         SetSwatch(null);
     }
@@ -142,17 +156,21 @@ public partial class ToolbarWindow
     /// </summary>
     private async Task ShowCopiedToast()
     {
+        _hoverPreviewMode = false;
         if (!SubMenuPopup.IsOpen)
         {
             // The user clicked an inline button (no submenu open). Open the submenu briefly so
             // the preview band — which lives inside it — is visible.
             SubMenuPanel.Children.Clear();
             SubMenuTitle.Text = "";
+            SubMenuHeader.Visibility = Visibility.Collapsed;
             GearButton.Visibility = Visibility.Collapsed;
+            CustomizationHint.Visibility = Visibility.Collapsed;
             SubMenuPopup.IsOpen = true;
         }
         SetSwatch(null);
         SetPreviewContent(PreviewText, "Copied to clipboard");
+        PreviewBorder.Visibility = Visibility.Visible;
         PreviewText.Opacity = 1;
         await Task.Delay(450);
     }
@@ -160,15 +178,20 @@ public partial class ToolbarWindow
     private async Task ShowFailureAndHide(string message)
     {
         int gen = _generation;
+        _hoverPreviewMode = false;
         // Make sure the popup is open so PreviewText is visible.
         if (!SubMenuPopup.IsOpen)
         {
             SubMenuPanel.Children.Clear();
             SubMenuTitle.Text = "Error";
+            SubMenuHeader.Visibility = Visibility.Visible;
             GearButton.Visibility = Visibility.Collapsed;
+            CustomizationHint.Visibility = Visibility.Collapsed;
             SubMenuPopup.IsOpen = true;
         }
+        SetSwatch(null);
         SetPreviewContent(PreviewText, message);
+        PreviewBorder.Visibility = Visibility.Visible;
         PreviewText.Opacity = 1;
         // Short visible window — long enough to read, short enough not to feel sticky.
         await Task.Delay(1500);

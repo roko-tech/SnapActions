@@ -118,7 +118,16 @@ public class CapturePolicyTests
             ],
             "earlier line\nمرحبا ChatGPT\nlater line");
 
-        Assert.Equal("ChatGPT", text);
+        Assert.Equal(" ChatGPT", text); // The fixture explicitly selects the preceding space too.
+    }
+
+    [Theory]
+    [InlineData("  Hello  ")]
+    [InlineData("\tمرحبا 👩‍💻\t")]
+    public void ChromiumDragGeometry_PreservesSelectedBoundaryWhitespace(string text)
+    {
+        Assert.Equal(text, UiaSelectionProvider.MapVisualSelectionToLogicalText(
+            text, [new UiaSelectionProvider.Utf16Span(0, text.Length)], text));
     }
 
     [Fact]

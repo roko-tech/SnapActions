@@ -176,6 +176,7 @@ public static class SettingsManager
     private static readonly object _saveLock = new();
 
     public static string? LastSaveError { get; private set; }
+    internal static event Action? Changed;
 
     public static bool Save()
     {
@@ -186,6 +187,7 @@ public static class SettingsManager
             System.Windows.Application.Current?.Dispatcher.CheckAccess() ?? true,
             "SettingsManager.Save must run on the UI dispatcher (Current is mutated there single-threaded).");
 
+        bool saved;
         lock (_saveLock)
         {
             try
@@ -197,15 +199,18 @@ public static class SettingsManager
                 File.WriteAllText(tmp, json);
                 File.Move(tmp, SettingsFile, overwrite: true);
                 LastSaveError = null;
-                return true;
+                saved = true;
             }
             catch (Exception ex)
             {
                 SnapActions.Helpers.Log.Error("Failed to save settings", ex);
                 LastSaveError = "Settings could not be saved. Check file access and try again.";
-                return false;
+                saved = false;
             }
         }
+        // Views use Current immediately, including when persistence needs a retry.
+        Changed?.Invoke();
+        return saved;
     }
 
     // Defense-in-depth. Today both call sites (SettingsWindow checkbox handler + tray menu)

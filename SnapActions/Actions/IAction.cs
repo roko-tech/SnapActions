@@ -2,7 +2,11 @@ using SnapActions.Detection;
 
 namespace SnapActions.Actions;
 
-public record ActionResult(bool Success, string? ResultText = null, string? Message = null);
+public record ActionResult(bool Success, string? ResultText = null, string? Message = null)
+{
+    // Only failures known not to have attempted target input may offer an in-place retry.
+    internal bool CanRetry { get; init; }
+}
 
 public interface IAction
 {

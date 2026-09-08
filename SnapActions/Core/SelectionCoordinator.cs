@@ -19,6 +19,7 @@ internal sealed class SelectionCoordinator(BrowserSelectionBridge browser)
             text = captured.Text;
             var target = operation.Target;
             operation = operation.WithSelectionValidation(() => browser.StillSelectedAsync(captured, target));
+            operation = operation.WithInputValidation(ForegroundApp.IsEditableFieldFocused);
         }
         else
         {
@@ -35,6 +36,7 @@ internal sealed class SelectionCoordinator(BrowserSelectionBridge browser)
         }
         bool editable = await ForegroundGuard.RunBoundedAutomationAsync(ForegroundApp.IsEditableFieldFocused, false, 500);
         if (captured.Handled) editable &= captured.Editable;
+        editable &= operation.HasInputValidation;
         if (!operation.CanInjectInput) { CaptureDiagnostics.SetStatus("Selection became stale"); return null; }
         CaptureDiagnostics.SetStatus($"{provider}: selection captured");
         started = Stopwatch.GetTimestamp();
