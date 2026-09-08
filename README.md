@@ -112,7 +112,7 @@ URL · Base64 · HTML · Hex · ROT13 · MD5 / SHA-1 / SHA-256 / SHA-512 (under 
 | Auto-dismiss after | 3 / 5 / 8 / 15 / 30 s, Never | 8 s |
 | Prefer Replace in the keyboard palette (editable selections) | On / Off | On |
 | Restore previous clipboard after copy action | On / Off | Off |
-| Suggested actions on toolbar | 1 / 2 / 3 / 4 / 6 / 8 (rest fall into `…` overflow) | 4 |
+| Suggested actions on toolbar | 1 / 2 / 3 / 4 / 6 / 8 (rest fall into `…` overflow) | 8 |
 | Search language filter | Supported search languages or no filter | No filter |
 | Translation languages | Explicit source and target, 23 choices | Choose source; target English |
 | Dictionary language | English | English |

@@ -256,7 +256,7 @@ public class AppSettings
     public List<string> PinnedActionIds { get; set; } = [];
 
     /// <summary>How many context-action buttons to show inline on the toolbar (the rest stay in the dropdown).</summary>
-    public int MaxInlineContextActions { get; set; } = 4;
+    public int MaxInlineContextActions { get; set; } = 8;
 
     public static List<SearchEngine> GetDefaultEngines() =>
     [
