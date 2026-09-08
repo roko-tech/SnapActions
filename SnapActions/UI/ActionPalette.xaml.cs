@@ -104,7 +104,7 @@ public partial class ActionPalette : Window
         Hide();
         try
         {
-            if (_selection != null && !GlobalHotkey.ReturnToTarget(selection.Operation.Target))
+            if (_selection != null && !await GlobalHotkey.ReturnToTargetAsync(selection.Operation))
             {
                 ResultPopup.ShowLocalResult("Action unavailable", "The original window could not be focused. Select the text again.");
                 Close(); return;

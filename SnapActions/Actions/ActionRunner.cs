@@ -14,7 +14,11 @@ internal static class ActionRunner
         var operation = selection.Operation;
         try
         {
-            if (!await operation.CanUseSelectionAsync()) return Cancelled();
+            if (!await operation.CanUseSelectionAsync())
+            {
+                Log.Info($"Action selection validation rejected (provider: {selection.Provider}, operation current: {operation.IsCurrent})");
+                return Cancelled();
+            }
             if (action is IOperationAction targeted)
             {
                 if (!selection.CanReplace || !operation.TryClaim()) return Cancelled();

@@ -54,9 +54,19 @@ Argos advertises MIT/CC0 licensing, while the tested MiniSBD dependency is **AGP
 
 Microsoft documents WebView2's [embedding and lifecycle APIs](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/overview-features-apis) and its separate [Runtime distribution requirement](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution).
 
+## Installed palette handoff race
+
+Installed verification reproduced a separate entry-path failure: select text in the browser, open the action palette with **Ctrl+Shift+Space**, then press Enter on Translate. The action canceled even though its selection operation was still current. Opening Translate from the normal selection toolbar produced the Arabic result, and Escape closed the popup.
+
+The palette hides itself and calls `GlobalHotkey.ReturnToTarget` before running the action. That helper requests foreground activation through `SetForegroundWindow`; returning successfully does not establish that the original focused child is already restored. At the failing validation point, diagnostics showed mismatches for the foreground window, focused child, process and thread, while `operation.IsCurrent` remained `true`. The action checked the browser selection during this focus transition and rejected it before translation started. This is distinct from the earlier MyMemory response delay.
+
+The repaired palette handoff polls native activation readiness every **25 ms**, for at most **one second**. It requires the original foreground window, focused child, process, thread and current selection generation, then performs the existing exact browser/range validation once. It does not retry a changed selection into validity or relax the existing guards. Six regression tests cover immediate and delayed activation, a different focused child, a newer selection, invalidation during the readiness check, and one-shot rejection of a changed provider selection.
+
+Live verification of the repaired candidate at the registered installed path repeated **Ctrl+Shift+Space → Enter Translate**. The inline Google popup showed the exact source, “The amber lantern is beside the window.”, and its correct Arabic translation while the browser companion was connected. This confirms the repaired entry path for that case. Native checks also verified Escape and outside-click dismissal. Final release source identity and installed-byte receipts remain separate from this interaction result.
+
 ## Local candidate validation
 
-The final local source/package checks passed **545 .NET tests, 12 browser-companion tests, 11 compiled WPF checks and 3 native-host protocol checks**, including the popup rendering repair. Source identity, hosted CI, package hashes and installed-version verification are recorded separately in the release's `release-validation.json`; these local checks do not certify those later steps in advance.
+The repaired candidate passed **551 .NET tests, 12 browser-companion tests, 11 compiled WPF checks and 3 native-host protocol checks**, including the six palette-readiness regressions and popup rendering repair. Source identity, hosted CI, package hashes and installed-byte verification are recorded separately in the release's `release-validation.json`; these local checks do not certify those later steps in advance.
 
 Live testing exposed a separate rendering problem at **250% display scaling**: the WebView child window had the correct bounds, but the WPF header and margins were blank. Software rendering restored them. The repair obtains the popup's native handle during `SourceInitialized` and sets its `HwndTarget.RenderMode` to `SoftwareOnly`; it leaves the rest of the application and the embedded browser's rendering settings unchanged. The compiled WPF check also verifies that setting when creating a hidden window handle. Subsequent live captures from the actual popup showed its native title, Close button, dark margins and resize grip in every case below.
 
@@ -77,7 +87,7 @@ Additional live checks exercised the actual popup's recovery behavior with test-
 
 Native mouse and keyboard checks also verified Google's Swap control updating the saved language pair, direct Arabic text editing, and Copy returning the exact visible Arabic result. A private clipboard guard restored and verified all seven original clipboard formats after the Copy check. Scrolling the long selection exposed all twelve translated sentences and the page's copy controls.
 
-These results exercise the production popup through an isolated harness. They do not establish installed global hotkeys, click-outside behavior or every language pair. A public-safe `live-validation.json` summarizes the reviewed observations without local user paths or settings; installed interaction and release-identity results are recorded separately.
+These harness results exercise the production popup; the installed palette and dismissal checks are recorded above. Neither set establishes every language pair. A public-safe `live-validation.json` summarizes the reviewed observations without local user paths or settings; release identity and installed-byte results are recorded separately.
 
 ## Local receipts
 
@@ -88,3 +98,4 @@ The following relative links refer to **ignored local investigation files**, not
 - [Visible WebView2 event log](../artifacts/translation-fix-20260908/webview-probe/events.jsonl) and [native API availability log](../artifacts/translation-fix-20260908/webview-probe/native-events.jsonl).
 - [Offline feasibility report](../artifacts/translation-fix-20260908/offline-probe/feasibility.md), [model metadata/hashes](../artifacts/translation-fix-20260908/offline-probe/model-results.json) and [successful offline inference](../artifacts/translation-fix-20260908/offline-probe/inference-MINISBD.json).
 - [Reviewed live-case summary](../artifacts/translation-fix-20260908/live-validation.json) and [isolated four-case capture receipt](../artifacts/translation-fix-20260908/live-cases-final/runner-receipt.json).
+- [Installed palette-to-Translate capture](../artifacts/translation-fix-20260908/desktop-final/071-Screenshot-1.png), showing the repaired hotkey/Enter entry path with synthetic text.

@@ -34,6 +34,31 @@ internal sealed class GlobalHotkey : IDisposable
         return pid == target.ProcessId && SetForegroundWindow(target.ForegroundWindow);
     }
 
+    internal static async Task<bool> ReturnToTargetAsync(SelectionOperation operation)
+    {
+        if (!operation.IsCurrent || !ReturnToTarget(operation.Target)) return false;
+        return await WaitForActivationAsync(operation, ForegroundGuard.StillValid);
+    }
+
+    // Cross-process SetForegroundWindow success can precede activation. Wait only for the
+    // original native focus identity; the action runner still validates its selection once.
+    internal static async Task<bool> WaitForActivationAsync(SelectionOperation operation,
+        Func<ForegroundTarget, bool> isTargetActive)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        try
+        {
+            while (operation.IsCurrent && !deadline.IsCancellationRequested)
+            {
+                if (isTargetActive(operation.Target))
+                    return operation.IsCurrent && !deadline.IsCancellationRequested;
+                await Task.Delay(25, deadline.Token);
+            }
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+        return false;
+    }
+
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint key);
     [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hwnd, int id);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hwnd);

@@ -88,10 +88,31 @@ internal sealed class BrowserSelectionBridge : IDisposable
 
     internal async Task<bool> StillSelectedAsync(Selection selection, ForegroundTarget target)
     {
-        if (selection.Source == null || !ForegroundGuard.StillValid(target)) return false;
+        if (selection.Source == null) return false;
+        var before = ForegroundGuard.Capture();
+        if (!ForegroundGuard.MatchesWindow(target, before))
+        {
+            Log.Info($"Browser selection rejected before validation (foreground match: {target.ForegroundWindow == before.ForegroundWindow}, focused child match: {target.FocusedWindow == before.FocusedWindow}, process match: {target.ProcessId == before.ProcessId}, thread match: {target.ThreadId == before.ThreadId})");
+            return false;
+        }
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
-        var current = ParseSelection(await selection.Source.RequestAsync(_stop.Token, selection.Identity), selection.Source);
+        var reply = await selection.Source.RequestAsync(_stop.Token, selection.Identity);
+        var current = ParseSelection(reply, selection.Source);
         CaptureDiagnostics.Record("Browser validation", started);
+        if (current == null)
+        {
+            string status = reply is { ValueKind: JsonValueKind.Object } message
+                && message.TryGetProperty("status", out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString() ?? "missing" : "no reply";
+            status = status switch
+            {
+                "inactive" or "unavailable" or "empty" or "incompatible" or "no reply" => status,
+                _ => "invalid reply"
+            };
+            Log.Info($"Browser selection rejected by companion ({status})");
+        }
+        else if (current.Text != selection.Text || current.Identity != selection.Identity)
+            Log.Info($"Browser selection changed (text match: {current.Text == selection.Text}, range match: {current.Identity == selection.Identity})");
         return current != null && current.Text == selection.Text && current.Identity == selection.Identity
             && ForegroundGuard.StillValid(target);
     }
