@@ -98,11 +98,34 @@ internal static class PackageSelfTest
             var pending = new TaskCompletionSource<LookupResult>();
             SetField(popup, "_fetch", (Func<CancellationToken, Task<LookupResult>>)(_ => pending.Task));
             var oldRequest = popup.RunFetchAsync();
-            SetField(popup, "_cts", new CancellationTokenSource());
             SetField(popup, "_fetch", (Func<CancellationToken, Task<LookupResult>>)(_ => Task.FromResult(LookupResult.Success("fresh"))));
-            await popup.RunFetchAsync(); pending.SetResult(LookupResult.Success("stale")); await oldRequest;
+            ((Button)popup.FindName("RetryButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            pending.SetResult(LookupResult.Success("stale")); await oldRequest;
             Require(((TextBlock)popup.FindName("ResultText")).Text == "fresh", "A stale request overwrote retry");
-            popup.Close(); checks.Add("Rendered lookup timeout and stale retry suppression");
+            var closing = new TaskCompletionSource<LookupResult>();
+            CancellationToken closingToken = default;
+            SetField(popup, "_fetch", (Func<CancellationToken, Task<LookupResult>>)(ct => { closingToken = ct; return closing.Task; }));
+            var closingRequest = popup.RunFetchAsync();
+            popup.Close();
+            Require(closingToken.IsCancellationRequested, "Closing the popup did not cancel the lookup");
+            closing.SetResult(LookupResult.Success("after close")); await closingRequest;
+            Require(((TextBlock)popup.FindName("ResultText")).Text == "fresh", "A request rendered after its popup closed");
+            checks.Add("Rendered lookup timeout, actual Retry supersession, close cancellation and stale result suppression");
+
+            var translation = new TranslationPopup();
+            var translationHandle = new System.Windows.Interop.WindowInteropHelper(translation).EnsureHandle();
+            Require(System.Windows.Interop.HwndSource.FromHwnd(translationHandle).CompositionTarget.RenderMode == System.Windows.Interop.RenderMode.SoftwareOnly,
+                "Translation native frame did not use the compatible render mode");
+            typeof(TranslationPopup).GetMethod("ShowFailure", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(translation, ["Google Translate couldn't open. Check your connection and try again."]);
+            Require(((Button)translation.FindName("RetryButton")).Visibility == Visibility.Visible, "Translation failure has no retry");
+            Require(((StackPanel)translation.FindName("StatusPanel")).Visibility == Visibility.Visible, "Translation failure message is hidden");
+            Require(((Grid)translation.FindName("BrowserHost")).Visibility == Visibility.Collapsed, "Translation failure left browser visible");
+            Render(translation, "translation-unavailable", 520, 620);
+            translation.Close();
+            Require((bool)typeof(TranslationPopup).GetField("_closed", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .GetValue(translation)!, "Translation close did not dispose its lifetime");
+            checks.Add("Native translation failure and Retry render, close lifetime disposal without network or WebView2 initialization");
 
             var recipe = new TextRecipeEditor(new() { Name = "Clean", Steps = ["ws_trim", "case_upper"] });
             Render(recipe, "recipe-editor", 530, 600); recipe.Close();

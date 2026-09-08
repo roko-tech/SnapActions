@@ -15,7 +15,7 @@ public partial class SettingsWindow
     {
         var s = SettingsManager.Current;
         SelectComboByTag(ThemeCombo, s.Theme, 0);
-        TranslationSourceCombo.ItemsSource = new[] { new LanguageOption("", "Choose a source language") }.Concat(LanguageOptions.All);
+        TranslationSourceCombo.ItemsSource = new[] { new LanguageOption("", "Detect language") }.Concat(LanguageOptions.All);
         TranslationTargetCombo.ItemsSource = LanguageOptions.All;
         TranslationSourceCombo.SelectedValue = s.TranslationSourceLanguage;
         TranslationTargetCombo.SelectedValue = s.TranslationTargetLanguage;

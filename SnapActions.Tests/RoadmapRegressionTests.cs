@@ -47,19 +47,6 @@ public class RoadmapRegressionTests
         Assert.False(new TranslateAction().CanExecute(text, TextAnalysis.PlainText));
     }
 
-    [Theory]
-    [InlineData("Bonjour tout le monde", "ar")]
-    [InlineData("Українська мова", "en")]
-    [InlineData("سلام فارسی", "en")]
-    public async Task ScriptDoesNotEstablishSourceLanguage(string text, string target)
-    {
-        var handler = new StubHandler("{}");
-        using var http = new HttpClient(handler);
-        var result = await new LookupService(http).Translate(text, "", target);
-        Assert.Equal(LookupStatus.Error, result.Status);
-        Assert.Null(handler.LastUri);
-    }
-
     internal sealed class StubHandler(string body, HttpStatusCode status = HttpStatusCode.OK) : HttpMessageHandler
     {
         public Uri? LastUri { get; private set; }

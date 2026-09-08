@@ -1,5 +1,7 @@
 # Translation latency investigation — September 8, 2026
 
+This records the diagnosis of the MyMemory implementation before v2.4.3. The subsequent repair and broader provider checks are documented in [Translation fix](translation-fix-2026-09-08.md).
+
 The repeated popup timeout is explained by the current eight-second client limit and a much slower MyMemory API response. SnapActions uses MyMemory for inline translation. Google Translate's website uses a different service; its responsiveness does not establish the speed of MyMemory's API.
 
 ## Measurements on this PC

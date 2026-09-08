@@ -56,26 +56,6 @@ public class ResultPopupTests
     }
 
     [Fact]
-    public async Task ExplicitTranslationLanguagesAreSentAndSuccessIsCached()
-    {
-        var handler = new RoadmapRegressionTests.StubHandler("{\"responseStatus\":200,\"responseData\":{\"translatedText\":\"مرحبا\"}}");
-        using var http = new HttpClient(handler);
-        var service = new LookupService(http);
-        var result = await service.Translate("Bonjour", "fr", "ar");
-        Assert.Equal(LookupStatus.Success, result.Status);
-        Assert.Equal("مرحبا", result.Text);
-        Assert.Contains("langpair=fr%7Car", handler.LastUri!.OriginalString);
-        Assert.Equal(result, await service.Translate("Bonjour", "fr", "ar"));
-    }
-
-    [Fact]
-    public async Task ProviderBusinessErrorIsNotCopyable()
-    {
-        using var http = new HttpClient(new RoadmapRegressionTests.StubHandler("{\"responseStatus\":403,\"responseData\":{\"translatedText\":\"quota exceeded\"}}"));
-        Assert.Equal(LookupStatus.Error, (await new LookupService(http).Translate("Hello", "en", "ar")).Status);
-    }
-
-    [Fact]
     public async Task MissingDictionaryEntryIsEmpty()
     {
         using var http = new HttpClient(new RoadmapRegressionTests.StubHandler("{}", HttpStatusCode.NotFound));

@@ -14,12 +14,12 @@ public class TranslateAction : IAction
     // Translate for every short selection just crowded the toolbar for typed selections.
     // (Dictionary applies the same gate.)
     public bool CanExecute(string text, TextAnalysis analysis) =>
-        Services.LookupService.CanTranslate(text)
+        Services.TranslationPage.CanTranslate(text)
         && analysis.Type == TextType.PlainText;
 
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
-        ResultPopup.ShowTranslation(text.Trim());
+        TranslationPopup.ShowNearCursor(text.Trim());
         return new ActionResult(true);
     }
 }

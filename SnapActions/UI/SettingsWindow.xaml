@@ -31,7 +31,7 @@
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>
                 <CheckBox x:Name="OnlineLookupsCheck"
                           Content="Allow online lookups (Translate / Dictionary / Currency)"
-                          ToolTip="These actions send your selected text to a third-party online service (MyMemory, dictionaryapi.dev, open.er-api.com) over HTTPS. With this off, they ask before sending anything."
+                          ToolTip="Translate opens Google Translate inside the app. Dictionary and Currency use dictionaryapi.dev and open.er-api.com over HTTPS. With this off, they ask before sending your selection."
                           Foreground="{DynamicResource TextBrush}" Margin="0,4"
                           Checked="Setting_Changed" Unchecked="Setting_Changed"/>
                 <CheckBox x:Name="CaptureOnMouseSelectionCheck"
@@ -184,7 +184,7 @@
 <ComboBox x:Name="TranslationTargetCombo" Width="230" HorizontalAlignment="Left" AutomationProperties.Name="Translation target language" DisplayMemberPath="Name" SelectedValuePath="Code" SelectionChanged="LookupLanguage_Changed"/>
 <TextBlock Text="Dictionary language" Margin="0,8,0,4"/>
 <ComboBox x:Name="DictionaryCombo" Width="230" HorizontalAlignment="Left" AutomationProperties.Name="Dictionary language" SelectionChanged="LookupLanguage_Changed"><ComboBoxItem Content="English" Tag="en"/></ComboBox>
-<TextBlock FontSize="12" TextWrapping="Wrap" Margin="0,6,0,8" Text="The current dictionary provider supports English. Translation sends up to 500 UTF-8 bytes; choose the source language here or in the result window."/>
+<TextBlock FontSize="12" TextWrapping="Wrap" Margin="0,6,0,8" Text="The dictionary supports English. Translate opens Google Translate inside a popup for selections up to 500 UTF-8 bytes. Choose starting languages here, then use the page's language and copy controls."/>
                 <!-- Target Currency -->
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                     <TextBlock Text="Convert to:" Foreground="{DynamicResource TextBrush}"

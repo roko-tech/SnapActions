@@ -22,17 +22,6 @@
                         BorderThickness="0" Click="Close_Click" Cursor="Hand"/>
             </DockPanel>
 
-            <StackPanel x:Name="LanguagePanel" Visibility="Collapsed" Margin="0,0,0,8">
-                <ComboBox x:Name="SourceLanguage" DisplayMemberPath="Name" SelectedValuePath="Code"
-                          AutomationProperties.Name="Source language" Margin="0,0,0,4"/>
-                <ComboBox x:Name="TargetLanguage" DisplayMemberPath="Name" SelectedValuePath="Code"
-                          AutomationProperties.Name="Target language" Margin="0,0,0,4"/>
-                <StackPanel Orientation="Horizontal">
-                    <Button Content="Translate" Click="Translate_Click" Padding="10,4"/>
-                    <Button Content="Swap languages" Click="SwapLanguages_Click" Margin="6,0,0,0" Padding="10,4"/>
-                </StackPanel>
-            </StackPanel>
-
             <TextBlock x:Name="SourceText" Visibility="Collapsed" TextWrapping="Wrap" MaxHeight="60"
                        Foreground="{DynamicResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,8"/>
             <TextBlock x:Name="LoadingText" Text="Loading..." FontSize="12" TextWrapping="Wrap"

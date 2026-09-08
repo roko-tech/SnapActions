@@ -11,43 +11,9 @@ namespace SnapActions.Services;
 public sealed class LookupService(HttpClient http)
 {
     public static LookupService Shared { get; } = new(new HttpClient { Timeout = TimeSpan.FromSeconds(8) });
-    private readonly ConcurrentDictionary<string, (DateTime Time, string Text)> _translations = new();
     private readonly ConcurrentDictionary<string, (DateTime Time, Dictionary<string, decimal> Rates)> _rates = new();
     private static readonly HashSet<string> DictionaryLanguages = new(StringComparer.OrdinalIgnoreCase)
         { "en" }; // The provider's current documented endpoint is English only.
-
-    public static bool CanTranslate(string text) => !string.IsNullOrWhiteSpace(text) && Encoding.UTF8.GetByteCount(text) <= 500;
-
-    public async Task<LookupResult> Translate(string text, string source, string target, CancellationToken ct = default)
-    {
-        if (!CanTranslate(text)) return LookupResult.Error("Select text containing at most 500 UTF-8 bytes.");
-        if (!Config.LanguageOptions.IsSupported(source))
-            return LookupResult.Error("Choose the source language, then select Translate.");
-        if (!Config.LanguageOptions.IsSupported(target)) return LookupResult.Error("Choose the target language.");
-        if (source.Equals(target, StringComparison.OrdinalIgnoreCase))
-            return LookupResult.Error("Choose two different languages.");
-        var key = $"{source}|{target}|{text}";
-        foreach (var item in _translations)
-            if (DateTime.UtcNow - item.Value.Time >= TimeSpan.FromMinutes(30)) _translations.TryRemove(item.Key, out _);
-        if (_translations.TryGetValue(key, out var cached)) return LookupResult.Success(cached.Text);
-        var url = $"https://api.mymemory.translated.net/get?q={Uri.EscapeDataString(text)}&langpair={Uri.EscapeDataString(source + "|" + target)}";
-        var json = await BoundedHttp.GetStringAsync(http, url, ct);
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-        if (!root.TryGetProperty("responseStatus", out var status) || status.ToString() != "200")
-            return LookupResult.Error(status.ToString() == "429"
-                ? "Translation quota reached. Try again later." : "Translation was rejected. Check the languages and try again.");
-        var translated = WebUtility.HtmlDecode(root.GetProperty("responseData").GetProperty("translatedText").GetString());
-        if (string.IsNullOrWhiteSpace(translated)) return new(LookupStatus.Empty, "No translation found");
-        if (translated.Contains("SELECT TWO DISTINCT LANGUAGES", StringComparison.OrdinalIgnoreCase))
-            return LookupResult.Error("Choose two different languages.");
-        ct.ThrowIfCancellationRequested();
-        if (_translations.Count >= 500)
-            foreach (var item in _translations.OrderBy(p => p.Value.Time).Take(_translations.Count - 499))
-                _translations.TryRemove(item.Key, out _);
-        _translations[key] = (DateTime.UtcNow, translated);
-        return LookupResult.Success(translated);
-    }
 
     public async Task<LookupResult> Define(string word, string language, CancellationToken ct = default)
     {

@@ -11,7 +11,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>SnapActions</AssemblyName>
     <RootNamespace>SnapActions</RootNamespace>
-    <Version>2.4.2</Version>
+    <Version>2.4.3</Version>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
@@ -23,6 +23,10 @@
   <ItemGroup>
     <!-- Embed the icon so single-file publish can load it from the assembly -->
     <Resource Include="app.ico"/>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
   </ItemGroup>
 
   <ItemGroup>

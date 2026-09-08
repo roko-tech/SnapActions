@@ -108,16 +108,8 @@ public class RoadmapFeatureTests
     }
 
     [Fact]
-    public async Task ProviderErrorsAreNotCachedAndInvalidUtf8IsAnError()
+    public async Task InvalidUtf8IsAnError()
     {
-        int requests = 0;
-        using var http = new HttpClient(new Handler(() => ++requests == 1
-            ? "{\"responseStatus\":403}" : "{\"responseStatus\":200,\"responseData\":{\"translatedText\":\"Hello\"}}"));
-        var lookup = new LookupService(http);
-        Assert.Equal(LookupStatus.Error, (await lookup.Translate("Bonjour", "fr", "en")).Status);
-        Assert.Equal(LookupStatus.Success, (await lookup.Translate("Bonjour", "fr", "en")).Status);
-        Assert.Equal(LookupStatus.Success, (await lookup.Translate("Bonjour", "fr", "en")).Status);
-        Assert.Equal(2, requests);
         Assert.Equal(LookupStatus.Error, (await LookupExecution.RunAsync(_ => throw new System.Text.DecoderFallbackException(), default)).Status);
     }
 

@@ -1,5 +1,4 @@
 using SnapActions.Services;
-using SnapActions.Config;
 using System.Windows.Controls;
 using SnapActions.Actions;
 using SnapActions.Core;
@@ -97,6 +96,8 @@ public partial class ResultPopup : Window
         try { Close(); } catch { }
     }
 
+    internal static void CloseCurrent() => _current?.SafeClose();
+
     /// <summary>Static helper: creates popup, positions near cursor, fetches result.</summary>
     public static void ShowNearCursor(string title, Func<System.Threading.CancellationToken, Task<LookupResult>> fetchResult)
     {
@@ -112,50 +113,12 @@ public partial class ResultPopup : Window
         if (!EnsureOnlineLookupConsent()) return;
 
         // Replace any existing popup so two back-to-back lookups don't stack on screen.
+        TranslationPopup.CloseCurrent();
         _current?.SafeClose();
         var popup = new ResultPopup();
         _current = popup;
         NativeMethods.GetCursorPos(out var pt);
         popup.ShowAt(pt.X, pt.Y, title, fetchResult);
-    }
-
-    private string _translationText = "";
-
-    public static void ShowTranslation(string text)
-    {
-        if (!EnsureOnlineLookupConsent()) return;
-        _current?.SafeClose();
-        var popup = new ResultPopup();
-        _current = popup;
-        popup._translationText = text;
-        popup.LanguagePanel.Visibility = Visibility.Visible;
-        popup.SourceLanguage.ItemsSource = new[] { new LanguageOption("", "Choose source language") }.Concat(LanguageOptions.All);
-        popup.TargetLanguage.ItemsSource = LanguageOptions.All;
-        popup.SourceLanguage.SelectedValue = SettingsManager.Current.TranslationSourceLanguage;
-        popup.TargetLanguage.SelectedValue = SettingsManager.Current.TranslationTargetLanguage;
-        NativeMethods.GetCursorPos(out var pt);
-        popup.ShowAt(pt.X, pt.Y, "Translate", popup.FetchTranslation);
-    }
-
-    private Task<LookupResult> FetchTranslation(System.Threading.CancellationToken ct) =>
-        LookupService.Shared.Translate(_translationText, SourceLanguage.SelectedValue as string ?? "",
-            TargetLanguage.SelectedValue as string ?? "en", ct);
-
-    private async void Translate_Click(object sender, RoutedEventArgs e)
-    {
-        SettingsManager.Current.TranslationSourceLanguage = SourceLanguage.SelectedValue as string ?? "";
-        SettingsManager.Current.TranslationTargetLanguage = TargetLanguage.SelectedValue as string ?? "en";
-        SettingsManager.Save();
-        _cts.Cancel();
-        _cts.Dispose();
-        _cts = new();
-        await RunFetchAsync();
-    }
-
-    private void SwapLanguages_Click(object sender, RoutedEventArgs e)
-    {
-        if (SourceLanguage.SelectedValue is not string { Length: > 0 }) return;
-        (SourceLanguage.SelectedValue, TargetLanguage.SelectedValue) = (TargetLanguage.SelectedValue, SourceLanguage.SelectedValue);
     }
 
     public async void ShowAt(double screenX, double screenY, string title,
@@ -252,12 +215,12 @@ public partial class ResultPopup : Window
     /// the third-party lookup services. Returns false if the user declines, in which case the popup
     /// is not shown and nothing is sent.
     /// </summary>
-    private static bool EnsureOnlineLookupConsent()
+    internal static bool EnsureOnlineLookupConsent()
     {
         if (Config.SettingsManager.Current.AllowOnlineLookups) return true;
         var msg = "Some actions send your selected text to a third-party online service over HTTPS " +
-                  "to fetch a result: the built-in Translate, Dictionary, and Currency lookups " +
-                  "(MyMemory, dictionaryapi.dev, open.er-api.com), and any custom \"fetch\" actions " +
+                  "to fetch a result: Translate opens Google Translate inside the app; Dictionary and Currency use " +
+                  "dictionaryapi.dev and open.er-api.com. This also covers any custom \"fetch\" actions " +
                   "you add (which send to the host in their own URL).\n\nAllow these online lookups? " +
                   "You can turn this back off in Settings.";
         var answer = System.Windows.MessageBox.Show(msg, "Allow online lookups?",
@@ -271,6 +234,7 @@ public partial class ResultPopup : Window
 
     internal static void ShowActionResult(string title, string result, SelectionSnapshot selection)
     {
+        TranslationPopup.CloseCurrent();
         _current?.SafeClose();
         var popup = new ResultPopup { _selection = selection };
         _current = popup;
@@ -284,6 +248,7 @@ public partial class ResultPopup : Window
 
     internal static void ShowLocalResult(string title, string text)
     {
+        TranslationPopup.CloseCurrent();
         _current?.SafeClose();
         var popup = new ResultPopup();
         _current = popup;
