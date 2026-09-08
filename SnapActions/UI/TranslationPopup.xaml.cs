@@ -89,7 +89,7 @@ public partial class TranslationPopup : Window
         _attemptCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         var cancellation = _attemptCancellation.Token;
         DisposeBrowser();
-        var browser = new WebView2();
+        var browser = new WebView2 { ZoomFactor = 0.8 };
         _browser = browser;
         BrowserHost.Children.Add(browser);
         BrowserHost.Visibility = Visibility.Visible;

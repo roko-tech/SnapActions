@@ -4,7 +4,7 @@
         Title="Translate" WindowStyle="None" ResizeMode="CanResizeWithGrip"
         Background="{DynamicResource BackgroundBrush}"
         ShowInTaskbar="False" ShowActivated="False" Topmost="True"
-        Width="520" Height="620" MinWidth="360" MinHeight="320">
+        Width="440" Height="440" MinWidth="360" MinHeight="320">
     <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="10">
         <Grid>
             <Grid.RowDefinitions>

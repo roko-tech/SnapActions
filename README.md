@@ -42,7 +42,7 @@ Prefer the keyboard? Press **Ctrl+Shift+Space**, search for an action, and use *
 
 **Translate** opens Google Translate inside a SnapActions popup, with your selected text and saved language choices ready to use. Edit the text, change or swap languages, and copy the result using Google's controls. Translation stays in the popup without opening a browser tab.
 
-Use **Detect language** to choose the source automatically. Language choices supported by SnapActions are remembered for the next selection.
+Use **Detect language** to choose the source automatically. Language choices supported by SnapActions are remembered for the next selection. The compact popup can be resized from its lower-right corner; scroll inside it for longer text.
 
 <img src="docs/images/inline-translation.png" alt="English to Arabic translation inside the SnapActions popup" width="520">
 

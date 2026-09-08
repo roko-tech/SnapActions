@@ -65,7 +65,7 @@ Detection runs entirely in-process, without network calls.
 
 Translate, Dictionary and Currency Converter show results inside SnapActions. The first time you use an online action, SnapActions asks before sending data. You can change this through **Allow online lookups** in Settings.
 
-**Translate** displays Google's normal, visible Translate website inside a dedicated SnapActions popup using Microsoft Edge WebView2. The selected text and saved source/target languages initialize the page. Google's controls let you change languages, swap them, edit the text and copy the translation. Use the popup's **Close** control to dismiss it, or **Retry** if the page fails to load. Translate does not open an external browser tab.
+**Translate** displays Google's normal, visible Translate website inside a compact SnapActions popup using Microsoft Edge WebView2. The selected text and saved source/target languages initialize the page. Google's controls let you change languages, swap them, edit the text and copy the translation. Drag the resize grip for more room, or scroll inside the page for longer text. Use the popup's **Close** control to dismiss it, or **Retry** if the page fails to load. Translate does not open an external browser tab.
 
 The default source is **Detect language**, with English as the target. Changes to language choices supported by SnapActions are saved for the next selection. Google may offer additional languages that are usable on the current page without becoming saved SnapActions preferences.
 

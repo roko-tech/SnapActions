@@ -121,7 +121,7 @@ internal static class PackageSelfTest
             Require(((Button)translation.FindName("RetryButton")).Visibility == Visibility.Visible, "Translation failure has no retry");
             Require(((StackPanel)translation.FindName("StatusPanel")).Visibility == Visibility.Visible, "Translation failure message is hidden");
             Require(((Grid)translation.FindName("BrowserHost")).Visibility == Visibility.Collapsed, "Translation failure left browser visible");
-            Render(translation, "translation-unavailable", 520, 620);
+            Render(translation, "translation-unavailable", translation.Width, translation.Height);
             translation.Close();
             Require((bool)typeof(TranslationPopup).GetField("_closed", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                 .GetValue(translation)!, "Translation close did not dispose its lifetime");

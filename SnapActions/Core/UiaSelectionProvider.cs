@@ -280,7 +280,7 @@ internal static class UiaSelectionProvider
                                     && RequiresChromiumGestureText(element, gesture);
                                 var gestureText = requireGestureText
                                     ? TryReadChromiumSelectionFromGesture(
-                                        tp, element, gesture, combined.Length)
+                                        tp, element, gesture, combined, ranges)
                                     : null;
                                 var selected = ClassifyUiaSelection(
                                     combined,
@@ -393,12 +393,13 @@ internal static class UiaSelectionProvider
         TextPattern textPattern,
         AutomationElement element,
         SelectionGesture gesture,
-        int selectedLength)
+        string selectedText,
+        TextPatternRange[] selectedRanges)
     {
         try
         {
             if (gesture.IsDrag)
-                return TryReadChromiumDragFromGeometry(textPattern, element, gesture);
+                return TryReadChromiumDragFromGeometry(textPattern, element, gesture, selectedText, selectedRanges);
             if (gesture.ClickCount != 2) return null;
 
             var range = textPattern.RangeFromPoint(
@@ -407,10 +408,10 @@ internal static class UiaSelectionProvider
             if (!IsRangeWithinDocument(range, textPattern.DocumentRange)) return null;
 
             var text = range.GetText(BrowserMessage.MaximumTextLength + 1);
-            if (text.Length > selectedLength)
+            if (text.Length > selectedText.Length)
             {
                 var withoutTrailingWhitespace = text.TrimEnd();
-                if (withoutTrailingWhitespace.Length == selectedLength)
+                if (withoutTrailingWhitespace.Length == selectedText.Length)
                     return withoutTrailingWhitespace;
             }
 
@@ -431,7 +432,9 @@ internal static class UiaSelectionProvider
     private static string? TryReadChromiumDragFromGeometry(
         TextPattern textPattern,
         AutomationElement element,
-        SelectionGesture gesture)
+        SelectionGesture gesture,
+        string selectedText,
+        TextPatternRange[] selectedRanges)
     {
         var anchorLine = textPattern.RangeFromPoint(
             new Point(gesture.StartX, gesture.StartY));
@@ -446,9 +449,12 @@ internal static class UiaSelectionProvider
         if (!IsRangeWithinDocument(anchorLine, document) || !IsRangeWithinDocument(focusLine, document))
             return null;
 
-        // Cross-line selection needs caret ordering rather than a horizontal hit test. Chromium's
-        // mixed-bidi caret affinity is exactly the value that proved unreliable, so fail closed.
-        if (!anchorLine.Compare(focusLine)) return null;
+        // A cross-line drag is not a horizontal rectangle. Keep the native selection (including
+        // punctuation/newlines) only when its ranges agree with both visible gesture boundaries.
+        if (!anchorLine.Compare(focusLine)
+            || !HasSingleVisualLineGeometry(anchorLine.GetBoundingRectangles(), gesture))
+            return TryReadChromiumMultilineSelection(textPattern, document, anchorLine, focusLine,
+                gesture, selectedText, selectedRanges);
         if (anchorLine.GetText(ChromiumGeometryLineLimit + 1).Length
             > ChromiumGeometryLineLimit)
             return null;
@@ -531,6 +537,172 @@ internal static class UiaSelectionProvider
                && !ContainsArabicAndLatin(visualSelection)
             ? visualSelection
             : null;
+    }
+
+    private static string? TryReadChromiumMultilineSelection(TextPattern pattern, TextPatternRange document,
+        TextPatternRange anchorLine, TextPatternRange focusLine, SelectionGesture gesture,
+        string selectedText, TextPatternRange[] selectedRanges)
+    {
+        if (selectedRanges.Length != 1 || string.IsNullOrWhiteSpace(selectedText)
+            || selectedText.Length > BrowserMessage.MaximumTextLength) return null;
+        var selected = selectedRanges[0].Clone();
+        if (!IsRangeWithinDocument(selected, document)) return null;
+        int lineOrder = anchorLine.CompareEndpoints(TextPatternRangeEndpoint.Start,
+            focusLine, TextPatternRangeEndpoint.Start);
+        bool anchorFirst = gesture.StartY < gesture.EndY;
+        if (lineOrder != 0 && (lineOrder < 0) != anchorFirst) return null;
+        var firstLine = anchorFirst ? anchorLine : focusLine;
+        var lastLine = anchorFirst ? focusLine : anchorLine;
+        if (selected.CompareEndpoints(TextPatternRangeEndpoint.Start, firstLine, TextPatternRangeEndpoint.Start) < 0
+            || selected.CompareEndpoints(TextPatternRangeEndpoint.Start, firstLine, TextPatternRangeEndpoint.End) >= 0
+            || selected.CompareEndpoints(TextPatternRangeEndpoint.End, lastLine, TextPatternRangeEndpoint.Start) <= 0
+            || !MatchesMultilineSelectionGeometry(selected.GetBoundingRectangles(), anchorLine.GetBoundingRectangles(),
+                focusLine.GetBoundingRectangles(), gesture)) return null;
+        if (selected.CompareEndpoints(TextPatternRangeEndpoint.End, lastLine, TextPatternRangeEndpoint.End) > 0)
+        {
+            // Chromium can distinguish the end of a text node from the end of its visual line
+            // even when no text lies between them. Accept only that empty caret-only gap.
+            var gap = lastLine.Clone();
+            gap.MoveEndpointByRange(TextPatternRangeEndpoint.Start, lastLine, TextPatternRangeEndpoint.End);
+            gap.MoveEndpointByRange(TextPatternRangeEndpoint.End, selected, TextPatternRangeEndpoint.End);
+            if (gap.GetText(1).Length != 0 || gap.GetBoundingRectangles().Any(IsTextRect)) return null;
+        }
+
+        // UIA work may race an app render or a newer selection. Never accept geometry for stale text.
+        var current = pattern.GetSelection();
+        if (current.Length != 1 || !selected.Compare(current[0])
+            || current[0].GetText(BrowserMessage.MaximumTextLength + 1) != selectedText) return null;
+
+        var enclosing = selected.GetEnclosingElement();
+        if (enclosing.Current.ControlType != System.Windows.Automation.ControlType.Text)
+            return ContainsRtlScript(selectedText) ? null : selectedText;
+        string logicalName = enclosing.Current.Name;
+        if (logicalName.Length > BrowserMessage.MaximumTextLength) return null;
+        if (logicalName.Contains(selectedText, StringComparison.Ordinal)) return selectedText;
+
+        // Chromium can expose an RTL line break before its text, despite the Text element's
+        // logical Name placing it after the line. Prove each line's rotation before using Name.
+        string firstText = firstLine.GetText(ChromiumGeometryLineLimit + 1);
+        string lastText = lastLine.GetText(ChromiumGeometryLineLimit + 1);
+        var prefix = firstLine.Clone();
+        prefix.MoveEndpointByRange(TextPatternRangeEndpoint.End, selected, TextPatternRangeEndpoint.Start);
+        int firstOffset = prefix.GetText(ChromiumGeometryLineLimit + 1).Length;
+        var lastPart = lastLine.Clone();
+        if (selected.CompareEndpoints(TextPatternRangeEndpoint.End, lastLine, TextPatternRangeEndpoint.End) < 0)
+            lastPart.MoveEndpointByRange(TextPatternRangeEndpoint.End, selected, TextPatternRangeEndpoint.End);
+        int lastLength = lastPart.GetText(ChromiumGeometryLineLimit + 1).Length;
+        string? logicalText = MapMultilineSelectionToLogicalText(firstText, lastText,
+            new Utf16Span(firstOffset, firstText.Length - firstOffset), new Utf16Span(0, lastLength),
+            logicalName, selectedText);
+        if (logicalText == null || enclosing.Current.Name != logicalName) return null;
+        current = pattern.GetSelection();
+        return current.Length == 1 && selected.Compare(current[0])
+            && current[0].GetText(BrowserMessage.MaximumTextLength + 1) == selectedText ? logicalText : null;
+    }
+
+    private static bool ContainsRtlScript(string text) => text.Any(character =>
+        character is >= '\u0590' and <= '\u08ff' or >= '\ufb1d' and <= '\ufdff' or >= '\ufe70' and <= '\ufeff');
+
+    internal static string? MapMultilineSelectionToLogicalText(string firstVisualLine, string lastVisualLine,
+        Utf16Span firstSelection, Utf16Span lastSelection, string logicalName, string selectedText)
+    {
+        var firstMappings = FindLogicalLineSelections(firstVisualLine, firstSelection, logicalName);
+        var lastMappings = FindLogicalLineSelections(lastVisualLine, lastSelection, logicalName);
+        (int Start, int End)? match = null;
+        foreach (var first in firstMappings)
+        foreach (var last in lastMappings)
+        {
+            if (first.LineStart + first.LineLength > last.LineStart || first.End > last.Start) continue;
+            // Only the known line separators may fall between the selected endpoint fragments.
+            // Extra prose would require proving additional visual lines, not inferring it from Name.
+            if (!logicalName.AsSpan(first.End, last.Start - first.End).Trim().IsEmpty) continue;
+            var candidate = (first.Start, last.End);
+            if (match.HasValue && match.Value != candidate) return null;
+            match = candidate;
+        }
+        if (match is not { } accepted || accepted.End - accepted.Start != selectedText.Length) return null;
+        string result = logicalName[accepted.Start..accepted.End];
+        // Rotation may move a separator, but must never add, remove, or substitute selected characters.
+        char[] expected = selectedText.ToCharArray(), actual = result.ToCharArray();
+        Array.Sort(expected);
+        Array.Sort(actual);
+        return expected.AsSpan().SequenceEqual(actual) ? result : null;
+    }
+
+    private readonly record struct LogicalLineSelection(int LineStart, int LineLength, int Start, int End);
+
+    private static List<LogicalLineSelection> FindLogicalLineSelections(string visualLine, Utf16Span selected,
+        string logicalName)
+    {
+        var result = new List<LogicalLineSelection>();
+        if (visualLine.Length is 0 or > ChromiumGeometryLineLimit || selected.Start < 0 || selected.Length <= 0
+            || selected.End > visualLine.Length || logicalName.Length > BrowserMessage.MaximumTextLength) return result;
+        for (int rotation = 0; rotation < visualLine.Length; rotation++)
+        {
+            int selectedStart = selected.Length == visualLine.Length ? 0
+                : (selected.Start - rotation + visualLine.Length) % visualLine.Length;
+            if (selectedStart + selected.Length > visualLine.Length) continue;
+            string logicalLine = visualLine[rotation..] + visualLine[..rotation];
+            int offset = -1;
+            while ((offset = logicalName.IndexOf(logicalLine, offset + 1, StringComparison.Ordinal)) >= 0)
+            {
+                var mapped = new LogicalLineSelection(offset, visualLine.Length, offset + selectedStart,
+                    offset + selectedStart + selected.Length);
+                if (result.Contains(mapped)) continue;
+                if (result.Count == 64) return []; // Repeated text does not establish a unique source span.
+                result.Add(mapped);
+            }
+        }
+        return result;
+    }
+
+    private static bool IsTextRect(Rect rect) => !rect.IsEmpty && rect.Width > 1 && rect.Height > 0
+        && double.IsFinite(rect.Left) && double.IsFinite(rect.Top)
+        && double.IsFinite(rect.Right) && double.IsFinite(rect.Bottom);
+
+    internal static bool HasSingleVisualLineGeometry(IReadOnlyList<Rect> rectangles, SelectionGesture gesture)
+    {
+        var text = rectangles.Where(IsTextRect).ToArray();
+        if (text.Length == 0 || text.Max(rect => rect.Top) >= text.Min(rect => rect.Bottom)) return false;
+        double top = text.Min(rect => rect.Top), bottom = text.Max(rect => rect.Bottom);
+        return gesture.StartY >= top && gesture.StartY <= bottom
+            && gesture.EndY >= top && gesture.EndY <= bottom;
+    }
+
+    internal static bool MatchesMultilineSelectionGeometry(IReadOnlyList<Rect> selection,
+        IReadOnlyList<Rect> anchorLine, IReadOnlyList<Rect> focusLine, SelectionGesture gesture)
+    {
+        static bool TryLineBounds(IReadOnlyList<Rect> rectangles, int y, out Rect bounds)
+        {
+            bounds = Rect.Empty;
+            foreach (var rect in rectangles.Where(IsTextRect))
+            {
+                if (y < rect.Top || y > rect.Bottom) continue;
+                bounds.Union(rect);
+            }
+            return !bounds.IsEmpty;
+        }
+        if (!gesture.IsDrag || !TryLineBounds(anchorLine, gesture.StartY, out var anchor)
+            || !TryLineBounds(focusLine, gesture.EndY, out var focus)
+            || !(anchor.Bottom <= focus.Top || focus.Bottom <= anchor.Top)) return false;
+        var rectangles = selection.Where(IsTextRect).ToArray();
+        if (rectangles.Length < 2) return false;
+        double top = Math.Min(anchor.Top, focus.Top), bottom = Math.Max(anchor.Bottom, focus.Bottom);
+        if (rectangles.Any(rect => rect.Top < top - 2 || rect.Bottom > bottom + 2)) return false;
+
+        bool MatchesEndpoint(Rect line, int x, int y)
+        {
+            var row = rectangles.Where(rect => y >= rect.Top && y <= rect.Bottom).ToArray();
+            // A selected wrapping space can extend just beyond TextUnit.Line's visible text.
+            double tolerance = Math.Max(2, line.Height / 4);
+            if (row.Length == 0 || row.Any(rect => rect.Left < line.Left - tolerance || rect.Right > line.Right + tolerance))
+                return false;
+            double boundary = Math.Clamp(x, line.Left, line.Right);
+            return row.Any(rect => Math.Abs(rect.Left - boundary) <= tolerance
+                || Math.Abs(rect.Right - boundary) <= tolerance);
+        }
+        return MatchesEndpoint(anchor, gesture.StartX, gesture.StartY)
+            && MatchesEndpoint(focus, gesture.EndX, gesture.EndY);
     }
 
     internal static bool IsCharacterInsideDrag(
@@ -678,7 +850,7 @@ internal static class UiaSelectionProvider
                                     && RequiresChromiumGestureText(element, gesture);
                                 var gestureText = requireGestureText
                                     ? TryReadChromiumSelectionFromGesture(
-                                        (TextPattern)pat, element, gesture, combined.Length)
+                                        (TextPattern)pat, element, gesture, combined, ranges)
                                     : null;
                                 return (combined, gestureText, requireGestureText,
                                     CreateInputValidation((TextPattern)pat, ranges, gestureText ?? combined));
