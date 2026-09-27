@@ -3,7 +3,7 @@ using SnapActions.UI;
 
 namespace SnapActions.Actions.ContextActions;
 
-public class TranslateAction : IAction
+public class TranslateAction : IAction, ISelectionPresenter
 {
     public string Id => "translate";
     public string Name => "Translate";
@@ -19,7 +19,11 @@ public class TranslateAction : IAction
 
     public ActionResult Execute(string text, TextAnalysis analysis)
     {
-        TranslationPopup.ShowNearCursor(text.Trim());
+        TranslationPopup.ShowNearCursor(text);
         return new ActionResult(true);
     }
+
+    // The card keeps the selection so its Replace button can paste the translation over it.
+    bool ISelectionPresenter.Present(Core.SelectionSnapshot selection) =>
+        TranslationPopup.ShowNearCursor(selection.Text, selection);
 }

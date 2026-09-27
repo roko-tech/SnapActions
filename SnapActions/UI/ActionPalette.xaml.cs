@@ -15,7 +15,7 @@ public partial class ActionPalette : Window
     private readonly SelectionOperationSource _manualOperations = new();
     private readonly string? _appName;
     private List<IAction> _actions = [];
-    private bool _ready, _running;
+    private bool _ready, _running, _selectionTransferred;
 
     internal ActionPalette(SelectionSnapshot? selection, ActionRegistry registry)
     {
@@ -33,7 +33,12 @@ public partial class ActionPalette : Window
         RebuildActions();
         Loaded += (_, _) => { if (_selection == null) SourceBox.Focus(); else SearchBox.Focus(); };
         Deactivated += (_, _) => { if (!_running) Close(); };
-        Closed += (_, _) => { _selection?.Operation.InvalidateIfCurrent(); _manualOperations.Invalidate(); };
+        Closed += (_, _) =>
+        {
+            if (_selectionTransferred) return; // the result view revokes it when it closes
+            _selection?.Operation.InvalidateIfCurrent();
+            _manualOperations.Invalidate();
+        };
     }
 
     private void RebuildActions()
@@ -110,6 +115,7 @@ public partial class ActionPalette : Window
                 Close(); return;
             }
             var result = await ActionRunner.ExecuteAsync(action, selection);
+            _selectionTransferred = result.SelectionTransferred;
             if (result.Success && result.ResultText != null)
                 result = await ActionRunner.ApplyTextAsync(result.ResultText, selection,
                     DestinationBox.SelectedIndex == 1 ? ResultDestination.Replace : ResultDestination.Copy);

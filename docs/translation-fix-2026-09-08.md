@@ -1,5 +1,7 @@
 # Inline translation repair — September 8, 2026
 
+> **Update (v2.5.0):** Translate now shows its result in a native card and keeps this page out of view unless you open it. See [Translation card](translation-card-2026-09-27.md).
+
 The chosen repair displays Google's normal, visible Translate website inside a native SnapActions popup through Microsoft Edge WebView2. It keeps translation beside the selected text and uses the service that worked in the live browser comparison, without opening an external browser tab.
 
 This decision followed historical request replay, transport measurements, hosted-provider checks, a real WebView2 prototype, native on-device API detection and an isolated offline-model feasibility test. The measurements below describe those probes; final release validation is recorded separately at the end.

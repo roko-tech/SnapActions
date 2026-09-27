@@ -116,16 +116,36 @@ internal static class PackageSelfTest
             var translationHandle = new System.Windows.Interop.WindowInteropHelper(translation).EnsureHandle();
             Require(System.Windows.Interop.HwndSource.FromHwnd(translationHandle).CompositionTarget.RenderMode == System.Windows.Interop.RenderMode.SoftwareOnly,
                 "Translation native frame did not use the compatible render mode");
-            typeof(TranslationPopup).GetMethod("ShowFailure", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                .Invoke(translation, ["Google Translate couldn't open. Check your connection and try again."]);
+            Require((GetWindowLongPtr(translationHandle, -20).ToInt64() & 0x08000000) != 0, "Translation card can take focus from the selected app");
+            void Card(string method, params object[] arguments) => typeof(TranslationPopup)
+                .GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(translation, arguments);
+            void RenderCard(string name)
+            {
+                var content = (FrameworkElement)translation.Content;
+                content.Measure(new Size(translation.Width, double.PositiveInfinity));
+                Render(translation, name, translation.Width, Math.Ceiling(content.DesiredSize.Height));
+            }
+            Card("ShowResult", "الدفتر الأزرق على الطاولة.\nالفانوس الأحمر بجوار النافذة.");
+            Require(((TextBlock)translation.FindName("ResultText")).FlowDirection == FlowDirection.RightToLeft, "Arabic translation is not right-to-left");
+            Require(((Button)translation.FindName("CopyButton")).Visibility == Visibility.Visible, "Translation has no Copy");
+            Require(((Button)translation.FindName("ReplaceButton")).Visibility == Visibility.Collapsed, "Replace offered without an editable selection");
+            Require(((TextBlock)translation.FindName("StatusText")).Visibility == Visibility.Collapsed, "Translation status hides the result");
+            RenderCard("translation-card");
+            Card("ShowFailure", "Google Translate couldn't open. Check your connection and try again.");
             Require(((Button)translation.FindName("RetryButton")).Visibility == Visibility.Visible, "Translation failure has no retry");
-            Require(((StackPanel)translation.FindName("StatusPanel")).Visibility == Visibility.Visible, "Translation failure message is hidden");
+            Require(((TextBlock)translation.FindName("StatusText")).Visibility == Visibility.Visible, "Translation failure message is hidden");
+            Require(((Button)translation.FindName("CopyButton")).Visibility == Visibility.Collapsed, "Translation failure can be copied");
             Require(((Grid)translation.FindName("BrowserHost")).Visibility == Visibility.Collapsed, "Translation failure left browser visible");
-            Render(translation, "translation-unavailable", translation.Width, translation.Height);
+            RenderCard("translation-unavailable");
+            Card("ShowPage");
+            Require(((FrameworkElement)translation.FindName("PageArea")).Visibility == Visibility.Visible
+                && ((FrameworkElement)translation.FindName("CardPanel")).Visibility == Visibility.Collapsed, "Google Translate page view did not replace the card");
+            Require((GetWindowLongPtr(translationHandle, -20).ToInt64() & 0x08000000) == 0, "Google Translate page view cannot take keyboard focus");
+            Render(translation, "translation-page", translation.Width, translation.Height);
             translation.Close();
             Require((bool)typeof(TranslationPopup).GetField("_closed", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                 .GetValue(translation)!, "Translation close did not dispose its lifetime");
-            checks.Add("Native translation failure and Retry render, close lifetime disposal without network or WebView2 initialization");
+            checks.Add("Translation card result (right-to-left), failure/Retry and Google page view render; the card never takes focus; close disposal without network or WebView2 initialization");
 
             var recipe = new TextRecipeEditor(new() { Name = "Clean", Steps = ["ws_trim", "case_upper"] });
             Render(recipe, "recipe-editor", 530, 600); recipe.Close();
@@ -400,4 +420,7 @@ internal static class PackageSelfTest
         var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));
         using var file = File.Create(Path.Combine(RuntimePaths.DataDirectory, name + ".png")); png.Save(file);
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
 }

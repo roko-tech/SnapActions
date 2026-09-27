@@ -67,7 +67,9 @@ Detection runs entirely in-process, without network calls.
 
 Translate, Dictionary and Currency Converter show results inside SnapActions. The first time you use an online action, SnapActions asks before sending data. You can change this through **Allow online lookups** in Settings.
 
-**Translate** displays Google's normal, visible Translate website inside a compact SnapActions popup using Microsoft Edge WebView2. The selected text and saved source/target languages initialize the page. Google's controls let you change languages, swap them, edit the text and copy the translation. Drag the resize grip for more room, or scroll inside the page for longer text. Use the popup's **Close** control to dismiss it, or **Retry** if the page fails to load. Translate does not open an external browser tab.
+**Translate** shows the translation in a compact card that follows your light or dark theme. The header names the languages. **⇄** swaps them and translates the selection again; it is hidden while the source is **Detect language**. **Copy** copies the translation and closes the card. **Replace selection** appears for editable selections and pastes the translation over them, keeping any spaces or line breaks around the selection. Use **Retry** if the translation fails to load. Translate does not open an external browser tab.
+
+The card gets its result from Google's Translate website. SnapActions loads that page, initialized with the selected text and saved languages, in a Microsoft Edge WebView2 view kept out of sight, and reads the translated text from it. **Open in Google Translate** shows that page in the popup, where Google's controls let you edit the text, choose other languages and listen to the translation; drag its resize grip for more room. The popup also shows the page if the translation can't be read within about six seconds of loading, for example after Google changes its page or asks for consent.
 
 The default source is **Detect language**, with English as the target. Changes to language choices supported by SnapActions are saved for the next selection. Google may offer additional languages that are usable on the current page without becoming saved SnapActions preferences.
 
@@ -77,7 +79,7 @@ Install the [Microsoft Edge WebView2 Evergreen Runtime](https://developer.micros
 
 **Dictionary** uses dictionaryapi.dev's English endpoint. An unsupported saved language produces an error instead of silently looking up another language. **Currency Converter** uses exchange rates from open.er-api.com, cached for 6 hours per source currency.
 
-Dictionary and Currency popups stay open until you press **Esc**, click the **X**, successfully **Copy**, click outside or trigger another lookup. They do not dismiss when the cursor leaves. Their timeouts and service failures offer Retry and cannot be copied as successful results.
+Translate, Dictionary and Currency popups stay open until you press **Esc**, click the **X**, successfully **Copy** (or **Replace**), click outside or trigger another lookup. They do not dismiss when the cursor leaves. Their timeouts and service failures offer Retry and cannot be copied as successful results.
 
 ## Transforms
 
@@ -120,7 +122,7 @@ URL · Base64 · HTML · Hex · ROT13 · MD5 / SHA-1 / SHA-256 / SHA-512 (under 
 | Restore previous clipboard after copy action | On / Off | Off |
 | Suggested actions on toolbar | 1 / 2 / 3 / 4 / 6 / 8 (rest fall into `…` overflow) | 8 |
 | Search language filter | Supported search languages or no filter | No filter |
-| Initial translation languages | Saved source and target; adjustable in the Google Translate popup | Detect language → English |
+| Initial translation languages | Saved source and target; ⇄ in the translation card or Google's page also changes them | Detect language → English |
 | Dictionary language | English | English |
 | Theme | System / Light / Dark | System |
 | Target currency | 15 (USD, EUR, SAR, GBP, JPY, …) | USD |
@@ -142,7 +144,7 @@ Logs go to `%AppData%\SnapActions\logs\YYYY-MM-DD.log`, capped at 10 MB per file
 ## Privacy
 
 - **Detection is local.** All detectors run in-process. No network calls for detection.
-- **Inline cloud popups (opt-in).** Translate sends the selection and chosen languages to Google and displays the Google Translate website inside SnapActions. Dictionary sends the selected word to dictionaryapi.dev. Currency requests exchange rates for the source currency from open.er-api.com; the selected amount stays local. These services use HTTPS and run only after you allow online lookups. Any custom "fetch" action you add is gated the same way.
+- **Inline cloud popups (opt-in).** Translate sends the selection and chosen languages to Google by loading the Google Translate website inside SnapActions, then shows the result in its card. Dictionary sends the selected word to dictionaryapi.dev. Currency requests exchange rates for the source currency from open.er-api.com; the selected amount stays local. These services use HTTPS and run only after you allow online lookups. Any custom "fetch" action you add is gated the same way.
 - **Separate translation profile.** The popup uses a translation-specific WebView2 InPrivate profile and its own application data directory. It does not reuse your regular browser profile.
 - **Browser-handoff actions.** IP Lookup (ipinfo.io) opens a URL containing your selection in your default browser; SnapActions itself never makes the request. Web search engines work the same way.
 - **Everything else stays local.** Format/minify, transform, encode/decode, hash, color/unit/timezone/JWT/Base64 — none of these touch the network.
@@ -161,7 +163,7 @@ Without the companion, mouse drag, double-click, and triple-click selection use 
 
 UI Automation coverage is not universal. Java Swing, some browser/Electron contexts, and custom text renderers may expose no selected text, so the automatic toolbar cannot appear there without a copy operation. A Chromium gesture fails closed when its geometry cannot be mapped safely (including cross-line bidi drags), when its range extends outside the provider's document, or when a double-click word cannot confirm the provider-reported selection length. Enable **Show toolbar when I press Ctrl+C** for those cases: your physical copy supplies the exact text, and SnapActions validates and reads the resulting clipboard value.
 
-**Clipboard behavior is explicit.** Automatic highlighting never touches it. A physical Ctrl+C changes it because you requested a copy. Native result previews close after a successful explicit copy; **Restore previous clipboard after copy action** can put the prior contents back after about 3 seconds. Google's embedded Copy control does not close the translation popup or use SnapActions' clipboard-restoration setting.
+**Clipboard behavior is explicit.** Automatic highlighting never touches it. A physical Ctrl+C changes it because you requested a copy. Native result previews, including the translation card, close after a successful explicit copy; **Restore previous clipboard after copy action** can put the prior contents back after about 3 seconds. Google's own Copy control on the full Google Translate page does not close the popup or use SnapActions' clipboard-restoration setting.
 
 **Editable-field detection.** Native Delete, Paste and Replace require an enabled control with affirmative writable evidence from UI Automation, plus the captured selection's exact text and endpoints at execution. Missing evidence keeps captured-text actions available but disables edits. Browser capture additionally checks the companion's editable flag and revalidates the captured document and selection. A caret or control type alone cannot authorize an edit.
 
@@ -210,6 +212,6 @@ The browser suite checks exact text, input/password restrictions, frames, naviga
 
 Selection events create an operation generation tied to the original target. `SelectionCoordinator` chooses the browser or UIA provider and returns an immutable `SelectionSnapshot`. The registry matches actions, the toolbar/palette presents them, and `ActionRunner` coordinates explicit effects. `ClipboardTransaction` owns native snapshots and rollback; `InputExecutor` owns guarded paste/delete. Automatic capture has no synthetic-copy branch.
 
-`LookupService` owns dictionary/currency/custom-fetch HTTP response budgets, provider parsing and successful exchange-rate caching. `ResultPopup` owns their loading/success/empty/error/cancelled presentation and stale-retry suppression. Translation uses a separate WebView2 popup hosting the visible Google Translate page. Settings parsing normalizes semantic data before migrations; native host and test instances have explicit runtime paths.
+`LookupService` owns dictionary/currency/custom-fetch HTTP response budgets, provider parsing and successful exchange-rate caching. `ResultPopup` owns their loading/success/empty/error/cancelled presentation and stale-retry suppression. `TranslationPopup` presents translations as a native card: it lays out the Google Translate page in a WebView2 control parked below the window, where Windows clips it but the page still counts as visible, and reads the result into the card. It switches to showing that page on request or when the result can't be read. The toolbar and palette hand the selection to the card (`ISelectionPresenter`), so Copy and Replace use the same guarded `ActionRunner` path as transform results. Settings parsing normalizes semantic data before migrations; native host and test instances have explicit runtime paths.
 
 Settings → Browser shows connection/capture health and a rolling 256-sample timing summary, without selected text. Timings separate event-time target identification, dispatcher queue, browser/UIA reads, validation, classification, matching and render-ready latency. Busy/timeout counters expose the cost of unavailable UIA providers. Render-ready excludes physical screen paint; these measurements are not a blanket performance claim. A hung UIA worker retains the single-flight gate to prevent thread accumulation. Process isolation remains conditional on measured provider hangs.

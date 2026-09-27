@@ -1,3 +1,6 @@
+using SnapActions.Actions;
+using SnapActions.Core;
+using SnapActions.Detection;
 using SnapActions.Services;
 using Xunit;
 
@@ -5,6 +8,97 @@ namespace SnapActions.Tests;
 
 public class TranslationPageTests
 {
+    [Theory]
+    [InlineData("\"مرحبا\\nبالعالم\"", "مرحبا\nبالعالم")]
+    [InlineData("\"  The library is open today. \\n\"", "The library is open today.")]
+    [InlineData("\"First. Second.\\n\\nThird.\"", "First. Second.\n\nThird.")]
+    public void PageResultIsDecodedWithItsLineBreaks(string scriptResult, string expected) =>
+        Assert.Equal(expected, TranslationPage.ReadResult(scriptResult));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("null")]
+    [InlineData("\"\"")]
+    [InlineData("\" \\n \"")]
+    [InlineData("42")]
+    [InlineData("{\"text\":\"hi\"}")]
+    [InlineData("\"unterminated")]
+    public void MissingOrMalformedPageResultIsNotATranslation(string? scriptResult) =>
+        Assert.Null(TranslationPage.ReadResult(scriptResult));
+
+    [Theory]
+    [InlineData("Hello world\r\n", "مرحبا بالعالم", "مرحبا بالعالم\r\n")]
+    [InlineData("  \tHello ", "مرحبا", "  \tمرحبا ")]
+    [InlineData("Hello", "مرحبا", "مرحبا")]
+    public void ReplacementKeepsTheSelectionsOuterWhitespace(string original, string translation, string expected) =>
+        Assert.Equal(expected, TranslationPage.WithOuterWhitespace(original, translation));
+
+    [Fact]
+    public void LanguageNamesMatchTheSettingsList()
+    {
+        Assert.Equal("Detect language", TranslationPage.LanguageName(""));
+        Assert.Equal("English", TranslationPage.LanguageName("en"));
+        Assert.Equal("العربية — Arabic", TranslationPage.LanguageName("ar"));
+    }
+
+    [Fact]
+    public async Task ShownTranslationCardKeepsTheSelectionForReplace()
+    {
+        var operation = new SelectionOperationSource().Begin(default);
+        var selection = new SelectionSnapshot("Hello", TextAnalysis.PlainText, operation, true, SelectionProviderKind.Manual);
+        var presenter = new Presenter(shows: true);
+
+        var result = await ActionRunner.ExecuteAsync(presenter, selection);
+
+        Assert.True(result.Success);
+        Assert.True(result.SelectionTransferred);
+        Assert.Same(selection, presenter.Presented);
+        Assert.True(operation.IsCurrent);
+    }
+
+    [Fact]
+    public async Task DeclinedTranslationLeavesTheSelectionWithItsCaller()
+    {
+        var selection = new SelectionSnapshot("Hello", TextAnalysis.PlainText,
+            new SelectionOperationSource().Begin(default), true, SelectionProviderKind.Manual);
+
+        var result = await ActionRunner.ExecuteAsync(new Presenter(shows: false), selection);
+
+        Assert.True(result.Success);
+        Assert.False(result.SelectionTransferred);
+    }
+
+    [Fact]
+    public async Task StaleSelectionIsNeverPresented()
+    {
+        var source = new SelectionOperationSource();
+        var selection = new SelectionSnapshot("Hello", TextAnalysis.PlainText, source.Begin(default), true, SelectionProviderKind.Manual);
+        source.Invalidate();
+        var presenter = new Presenter(shows: true);
+
+        var result = await ActionRunner.ExecuteAsync(presenter, selection);
+
+        Assert.False(result.Success);
+        Assert.False(result.SelectionTransferred);
+        Assert.Null(presenter.Presented);
+    }
+
+    private sealed class Presenter(bool shows) : IAction, ISelectionPresenter
+    {
+        public SelectionSnapshot? Presented { get; private set; }
+        public string Id => "presenter";
+        public string Name => "Presenter";
+        public string IconKey => "IconTransform";
+        public ActionCategory Category => ActionCategory.Context;
+        public bool CanExecute(string text, TextAnalysis analysis) => true;
+        public ActionResult Execute(string text, TextAnalysis analysis) => throw new InvalidOperationException("Presenters receive the selection");
+        public bool Present(SelectionSnapshot selection)
+        {
+            Presented = selection;
+            return shows;
+        }
+    }
+
     [Fact]
     public void SelectionLimitCountsUtf8Bytes()
     {

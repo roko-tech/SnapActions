@@ -1,38 +1,52 @@
 <Window x:Class="SnapActions.UI.TranslationPopup"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Translate" WindowStyle="None" ResizeMode="CanResizeWithGrip"
+        Title="Translate" WindowStyle="None" ResizeMode="NoResize" SizeToContent="Height"
         Background="{DynamicResource BackgroundBrush}"
-        ShowInTaskbar="False" ShowActivated="False" Topmost="True"
-        Width="440" Height="440" MinWidth="360" MinHeight="320">
-    <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="10">
-        <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
-            <DockPanel Margin="0,0,0,8" MouseLeftButtonDown="Header_MouseLeftButtonDown">
-                <Button DockPanel.Dock="Right" Content="X" Width="28" Height="28"
-                        AutomationProperties.Name="Close translation" Click="Close_Click"
-                        Background="Transparent" Foreground="{DynamicResource TextSecondaryBrush}"
-                        BorderThickness="0" Cursor="Hand"/>
-                <StackPanel>
-                    <TextBlock Text="Translate" FontSize="16" FontWeight="SemiBold"
-                               Foreground="{DynamicResource AccentBrush}"/>
-                    <TextBlock Text="Google Translate" FontSize="11"
+        ShowInTaskbar="False" ShowActivated="False" Topmost="True" Width="400">
+    <Grid>
+        <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="12">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <DockPanel Margin="0,0,0,8" Background="Transparent" MouseLeftButtonDown="Header_MouseLeftButtonDown">
+                    <Button DockPanel.Dock="Right" Content="X" Width="24" Height="24" FontSize="11"
+                            AutomationProperties.Name="Close translation" Click="Close_Click"
+                            Background="Transparent" Foreground="{DynamicResource TextSecondaryBrush}" BorderThickness="0"/>
+                    <Button x:Name="SwapButton" DockPanel.Dock="Right" Content="⇄" Width="28" Height="24" FontSize="14"
+                            ToolTip="Swap languages" AutomationProperties.Name="Swap languages" Click="Swap_Click"
+                            Background="Transparent" Foreground="{DynamicResource TextSecondaryBrush}" BorderThickness="0"/>
+                    <TextBlock x:Name="TitleText" Text="Translate" FontSize="12" FontWeight="SemiBold"
+                               Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
+                <StackPanel x:Name="CardPanel" Grid.Row="1">
+                    <TextBlock x:Name="StatusText" Text="Translating…" TextWrapping="Wrap" FontSize="12"
                                Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    <ScrollViewer x:Name="ResultScroller" MaxHeight="280" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                        <TextBlock x:Name="ResultText" FontSize="15" TextWrapping="Wrap" Foreground="{DynamicResource TextBrush}"/>
+                    </ScrollViewer>
+                    <DockPanel Margin="0,12,0,0">
+                        <Button x:Name="OpenPageButton" DockPanel.Dock="Right" Content="Open in Google Translate"
+                                Click="OpenPage_Click" Padding="6,4" FontSize="12" VerticalAlignment="Center"
+                                Background="Transparent" Foreground="{DynamicResource AccentBrush}" BorderThickness="0"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="CopyButton" Content="Copy" Visibility="Collapsed" Padding="12,4" Margin="0,0,8,0" Click="Copy_Click"/>
+                            <Button x:Name="ReplaceButton" Content="Replace selection" Visibility="Collapsed" Padding="12,4" Margin="0,0,8,0" Click="Replace_Click"/>
+                            <Button x:Name="RetryButton" Content="Retry" Visibility="Collapsed" Padding="12,4" Click="Retry_Click"/>
+                        </StackPanel>
+                    </DockPanel>
                 </StackPanel>
-            </DockPanel>
-            <StackPanel x:Name="StatusPanel" Grid.Row="1" Margin="0,0,0,10">
-                <TextBlock x:Name="StatusText" Text="Opening Google Translate…" TextWrapping="Wrap"
-                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="13"/>
-                <Button x:Name="RetryButton" Content="Retry" Visibility="Collapsed" HorizontalAlignment="Left"
-                        Margin="0,8,0,0" Padding="12,5" Click="Retry_Click" Cursor="Hand"
-                        Background="{DynamicResource SurfaceBrush}" Foreground="{DynamicResource TextBrush}"
-                        BorderBrush="{DynamicResource BorderBrush}"/>
-            </StackPanel>
-            <Grid x:Name="BrowserHost" Grid.Row="2" Background="White"/>
-        </Grid>
-    </Border>
+                <Border x:Name="PageArea" Grid.Row="2" Visibility="Collapsed" SizeChanged="PageArea_SizeChanged"/>
+            </Grid>
+        </Border>
+        <!-- Google only finishes translating in a page it considers visible. The card keeps the page
+             laid out at full size but parked below the window, where Windows clips it from view. -->
+        <Canvas x:Name="BrowserLayer">
+            <Grid x:Name="BrowserHost" Background="White"/>
+        </Canvas>
+    </Grid>
 </Window>

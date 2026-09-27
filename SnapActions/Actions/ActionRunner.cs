@@ -24,6 +24,12 @@ internal static class ActionRunner
                 if (!selection.CanReplace || !operation.TryClaim()) return Cancelled();
                 return await targeted.ExecuteAsync(selection.Text, selection.Analysis, operation);
             }
+            if (action is ISelectionPresenter presenter)
+            {
+                bool shown = false;
+                return operation.TryCommit(() => { shown = presenter.Present(selection); return true; })
+                    ? new(true) { SelectionTransferred = shown } : Cancelled();
+            }
             ActionResult? result = null;
             return operation.TryCommit(() => { result = action.Execute(selection.Text, selection.Analysis); return true; })
                 ? result! : Cancelled();

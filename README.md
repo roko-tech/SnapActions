@@ -40,13 +40,13 @@ Prefer the keyboard? Press **Ctrl+Shift+Space**, search for an action, and use *
 
 ## Translate without leaving your work
 
-**Translate** opens Google Translate inside a SnapActions popup, with your selected text and saved language choices ready to use. Edit the text, change or swap languages, and copy the result using Google's controls. Translation stays in the popup without opening a browser tab.
+**Translate** shows just the translation in a compact card beside your selection, in your light or dark theme. **Copy** it, or use **Replace selection** to paste it over editable text. **⇄** swaps the languages and translates again. **Open in Google Translate** turns the card into Google's full page when you want to edit the text or choose other languages. Translation stays inside SnapActions without opening a browser tab.
 
-Use **Detect language** to choose the source automatically. Language choices supported by SnapActions are remembered for the next selection. The compact popup can be resized from its lower-right corner; scroll inside it for longer text.
+Use **Detect language** to choose the source automatically. Language choices supported by SnapActions are remembered for the next selection.
 
-<img src="docs/images/inline-translation.png" alt="English to Arabic translation inside the SnapActions popup" width="520">
+<img src="docs/images/inline-translation.png" alt="English to Arabic translation in the SnapActions translation card" width="400">
 
-Translation needs an internet connection and Google's website to be available; no paid API or account configuration is required. The popup has its own **Close** control and offers **Retry** if the page cannot load.
+Translation needs an internet connection and Google's website to be available; no paid API or account configuration is required. The card reads its result from Google Translate's page, loaded out of view. If it can't, the popup shows that page instead. **Retry** appears if the page cannot load.
 
 Translate, Dictionary and Currency ask for permission on first use. You can turn them off with **Allow online lookups** in Settings. English definitions use dictionaryapi.dev and currency rates use open.er-api.com. See [lookup details](docs/user-guide.md#inline-popups).
 

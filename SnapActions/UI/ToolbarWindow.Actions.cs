@@ -29,14 +29,14 @@ public partial class ToolbarWindow
             await ShowFailureAndHide(result.Message ?? "The action could not be completed");
             return;
         }
-        if (result.ResultText != null)
+        if (result.ResultText != null || result.SelectionTransferred)
         {
             // Transfer this operation to the result preview; hiding its old view must not invalidate it.
             Volatile.Write(ref _operationContext, null);
             _dismissTimer.Stop();
             SubMenuPopup.IsOpen = false;
             Hide();
-            ResultPopup.ShowActionResult(action.Name, result.ResultText, selection);
+            if (result.ResultText != null) ResultPopup.ShowActionResult(action.Name, result.ResultText, selection);
             return;
         }
         HideToolbar();
