@@ -49,13 +49,14 @@ def main():
         raise RuntimeError(result["failure"])
     run(os.sys.executable, "browser-extension/tests/native-host-smoke.py", str(publish / "SnapActions.exe"), timeout=45)
     files = sorted(p for p in publish.rglob("*") if p.is_file())
-    (publish / "SHA256SUMS").write_text("".join(f"{checksum(p)}  {p.relative_to(publish).as_posix()}\n" for p in files), encoding="utf-8")
+    # LF on every platform: `sha256sum -c` reads a CRLF line's carriage return as part of the file name.
+    (publish / "SHA256SUMS").write_text("".join(f"{checksum(p)}  {p.relative_to(publish).as_posix()}\n" for p in files), encoding="utf-8", newline="\n")
     version = ET.parse(ROOT / "SnapActions" / "SnapActions.csproj").findtext(".//Version")
     archive = output / f"SnapActions-{version}-win-x64.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
         for path in sorted(p for p in publish.rglob("*") if p.is_file()):
             package.write(path, path.relative_to(publish))
-    (output / "SHA256SUMS").write_text(f"{checksum(archive)}  {archive.name}\n", encoding="utf-8")
+    (output / "SHA256SUMS").write_text(f"{checksum(archive)}  {archive.name}\n", encoding="utf-8", newline="\n")
     print(json.dumps({"package": str(archive), "sha256": checksum(archive), "checks": result["checks"]}, indent=2))
 
 
